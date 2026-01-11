@@ -1,0 +1,16 @@
+{
+  "name": "web-terminal",
+  "version": "1.0.0",
+  "description": "Remote web-based terminal with floating tiling window manager",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run backend/index.ts",
+    "start": "bun run backend/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.10.4"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

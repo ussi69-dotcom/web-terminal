@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+    <title>OpenCode Web Terminal</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23238636'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='white'>❯</text></svg>" />
+    <!-- Nerd Font for terminal icons (Claude Code statusline, etc.) -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.0.0/400.css" />
+    <style>
+      /* Nerd Font symbols fallback - loaded from CDN */
+      @font-face {
+        font-family: 'Symbols Nerd Font';
+        src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@master/patched-fonts/NerdFontsSymbolsOnly/SymbolsNerdFontMono-Regular.ttf') format('truetype');
+        font-display: swap;
+      }
+    </style>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/styles.css" />
+    <!-- Lucide Icons for modern UI -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top bar -->
+      <header class="toolbar">
+        <!-- ROW 1: Always visible - toggle, new, tabs, status -->
+        <div class="toolbar-row-1">
+          <button id="toolbar-toggle" class="toolbar-toggle" title="Menu">
+            <i data-lucide="menu"></i>
+          </button>
+
+          <button id="new-terminal" class="btn btn-new" title="New Terminal (Ctrl+N)">
+            <i data-lucide="plus"></i>
+            <span class="btn-label">New</span>
+          </button>
+
+          <div id="terminals-tabs" class="tabs"></div>
+
+          <span id="connection-status" class="status-dot" title="Connected">●</span>
+        </div>
+
+        <!-- ROW 2: Desktop always visible, Mobile hidden with toggle -->
+        <div class="toolbar-row-2">
+          <div class="dir-input">
+            <input id="directory" placeholder="Working directory..." />
+            <button id="browse" class="btn-icon" title="Browse">
+              <i data-lucide="folder"></i>
+            </button>
+          </div>
+
+          <button id="file-manager-btn" class="btn-icon" data-action="file-manager" title="File Manager">
+            <i data-lucide="folder-open"></i>
+          </button>
+
+          <button id="copy-btn" class="btn-icon" data-action="copy" title="Copy">
+            <i data-lucide="copy"></i>
+          </button>
+
+          <button id="paste-btn" class="btn-icon" data-action="paste" title="Paste">
+            <i data-lucide="clipboard-paste"></i>
+          </button>
+
+          <button id="font-decrease-btn" class="btn-icon" data-action="font-decrease" title="Font -">
+            <i data-lucide="zoom-out"></i>
+          </button>
+
+          <button id="font-increase-btn" class="btn-icon" data-action="font-increase" title="Font +">
+            <i data-lucide="zoom-in"></i>
+          </button>
+
+          <button id="fullscreen-btn" class="btn-icon" data-action="fullscreen" title="Fullscreen">
+            <i data-lucide="maximize-2"></i>
+          </button>
+
+          <div id="server-stats" class="server-stats">
+            <span class="stat" id="stat-cpu" title="CPU">--%</span>
+            <span class="stat" id="stat-ram" title="RAM">--%</span>
+            <span class="stat" id="stat-disk" title="Disk">--%</span>
+          </div>
+
+          <button id="help-btn" class="btn-icon" title="Help (F1)">
+            <i data-lucide="help-circle"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- Terminal container - tiles created dynamically by TileManager -->
+      <div id="terminal-container">
+        <!-- Tiles will be created dynamically -->
+      </div>
+
+      <!-- Extra Keys Bar (Termux style) -->
+      <div id="extra-keys" class="extra-keys">
+        <div class="extra-keys-row">
+          <button data-key="ESC" class="ek-btn">ESC</button>
+          <button data-key="TAB" class="ek-btn">TAB</button>
+          <button data-key="CTRL" class="ek-btn ek-modifier">CTRL</button>
+          <button data-key="ALT" class="ek-btn ek-modifier">ALT</button>
+          <button data-key="SHIFT" class="ek-btn ek-modifier">SHIFT</button>
+          <button data-key="UP" class="ek-btn ek-icon"><i data-lucide="chevron-up"></i></button>
+          <button data-key="DOWN" class="ek-btn ek-icon"><i data-lucide="chevron-down"></i></button>
+          <button data-key="LEFT" class="ek-btn ek-icon"><i data-lucide="chevron-left"></i></button>
+          <button data-key="RIGHT" class="ek-btn ek-icon"><i data-lucide="chevron-right"></i></button>
+          <button data-key="HOME" class="ek-btn">HOME</button>
+          <button data-key="END" class="ek-btn">END</button>
+          <button data-key="INS" class="ek-btn">INS</button>
+          <button data-key="DEL" class="ek-btn">DEL</button>
+        </div>
+        <div class="extra-keys-row extra-keys-row-2 hidden">
+          <button data-key="F1" class="ek-btn">F1</button>
+          <button data-key="F2" class="ek-btn">F2</button>
+          <button data-key="F3" class="ek-btn">F3</button>
+          <button data-key="F4" class="ek-btn">F4</button>
+          <button data-key="F5" class="ek-btn">F5</button>
+          <button data-key="F6" class="ek-btn">F6</button>
+          <button data-key="F7" class="ek-btn">F7</button>
+          <button data-key="F8" class="ek-btn">F8</button>
+          <button data-key="F9" class="ek-btn">F9</button>
+          <button data-key="F10" class="ek-btn">F10</button>
+          <button data-key="F11" class="ek-btn">F11</button>
+          <button data-key="F12" class="ek-btn">F12</button>
+          <button data-key="PGUP" class="ek-btn">PgUp</button>
+          <button data-key="PGDN" class="ek-btn">PgDn</button>
+        </div>
+        <button id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</button>
+      </div>
+
+      <!-- Search Bar -->
+      <div id="search-bar" class="search-bar hidden">
+        <input type="text" id="search-input" placeholder="Search..." />
+        <button id="search-prev" class="btn-icon" title="Previous">
+          <i data-lucide="chevron-left"></i>
+        </button>
+        <button id="search-next" class="btn-icon" title="Next">
+          <i data-lucide="chevron-right"></i>
+        </button>
+        <span id="search-count"></span>
+        <button id="search-close" class="btn-icon" title="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <!-- Fullscreen exit button -->
+      <button id="fullscreen-exit" class="fullscreen-exit hidden" title="Exit fullscreen (Esc)">
+        <i data-lucide="minimize-2"></i>
+      </button>
+    </div>
+
+    <!-- Directory Picker Modal -->
+    <div id="dir-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Select Directory</h3>
+          <button class="modal-close" id="dir-close">&times;</button>
+        </div>
+        <div id="dir-breadcrumb" class="breadcrumb"></div>
+        <div id="dir-list" class="dir-list"></div>
+        <div class="modal-actions">
+          <button id="dir-cancel" class="btn">Cancel</button>
+          <button id="dir-select" class="btn btn-primary">Select</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- File Manager Modal -->
+    <div id="file-modal" class="modal hidden">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3>File Manager</h3>
+          <button class="modal-close" id="file-close">&times;</button>
+        </div>
+        <div id="file-breadcrumb" class="breadcrumb"></div>
+        <div class="file-toolbar">
+          <button id="file-upload-btn" class="btn">
+            <i data-lucide="upload"></i>
+            <span>Upload</span>
+          </button>
+          <button id="file-mkdir-btn" class="btn">
+            <i data-lucide="folder-plus"></i>
+            <span>New Folder</span>
+          </button>
+          <button id="file-refresh-btn" class="btn-icon" title="Refresh">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <input type="file" id="file-upload-input" multiple hidden />
+        </div>
+        <div id="file-list" class="file-list"></div>
+        <div id="file-drop-zone" class="file-drop-zone hidden">
+          <span>Drop files here to upload</span>
+        </div>
+        <div class="modal-actions">
+          <button id="file-modal-close" class="btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal hidden">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3>Help - Keyboard Shortcuts</h3>
+          <button class="modal-close" id="help-close">&times;</button>
+        </div>
+        <div class="help-content">
+          <div class="help-grid">
+            <div class="help-column">
+              <h4>Workspaces & Tabs</h4>
+              <table class="help-table">
+                <tr><td><kbd>Ctrl</kbd> + <kbd>N</kbd></td><td>New workspace tab</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>W</kbd></td><td>Close current workspace</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>Tab</kbd></td><td>Next tab</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>1-9</kbd></td><td>Switch to tab number</td></tr>
+                <tr><td>Drag tab → tab</td><td>Merge workspaces</td></tr>
+              </table>
+
+              <h4>Terminals</h4>
+              <table class="help-table">
+                <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd></td><td>Split workspace (add terminal)</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>Undo layout change</td></tr>
+                <tr><td>Drag tile edge</td><td>Resize terminals</td></tr>
+              </table>
+            </div>
+
+            <div class="help-column">
+              <h4>Groups</h4>
+              <table class="help-table">
+                <tr><td><kbd>Ctrl</kbd> + <kbd>G</kbd></td><td>Group with previous</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td><td>Ungroup current</td></tr>
+                <tr><td>Drag tab → tab</td><td>Merge into group</td></tr>
+              </table>
+
+              <h4>General</h4>
+              <table class="help-table">
+                <tr><td><kbd>Ctrl</kbd> + <kbd>F</kbd></td><td>Search</td></tr>
+                <tr><td><kbd>F11</kbd></td><td>Toggle fullscreen</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + <kbd>+</kbd>/<kbd>-</kbd></td><td>Font size</td></tr>
+                <tr><td><kbd>F1</kbd> or <kbd>?</kbd></td><td>Show this help</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="help-legend">
+            <h4>Tab Colors</h4>
+            <p><span class="legend-dot" style="background: #58a6ff;"></span> <strong>Single color dot</strong> = 1 terminal</p>
+            <p><span class="legend-gradient"></span> <strong>Gradient with badge</strong> = Multiple terminals (shows count)</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="help-modal-close" class="btn btn-primary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/vendor/xterm.min.js"></script>
+    <script src="/vendor/xterm-addon-fit.min.js"></script>
+    <script src="/vendor/xterm-addon-web-links.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
