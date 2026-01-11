@@ -1000,7 +1000,7 @@ class TileManager {
 class ExtraKeysManager {
   constructor(terminalManager) {
     this.tm = terminalManager;
-    this.modifiers = { ctrl: false, alt: false };
+    this.modifiers = { ctrl: false, alt: false, shift: false };
     this.init();
   }
 
@@ -1019,10 +1019,13 @@ class ExtraKeysManager {
     }
 
     extraKeys.querySelectorAll(".ek-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
+      const handler = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         this.handleKey(btn.dataset.key);
-      });
+      };
+      btn.addEventListener("click", handler);
+      btn.addEventListener("touchend", handler, { passive: false });
     });
   }
 
@@ -1030,12 +1033,9 @@ class ExtraKeysManager {
     const active = this.tm.terminals.get(this.tm.activeId);
     if (!active?.ws) return;
 
-    if (key === "CTRL") {
-      this.toggleModifier("ctrl");
-      return;
-    }
-    if (key === "ALT") {
-      this.toggleModifier("alt");
+    const upperKey = key.toUpperCase();
+    if (upperKey === "CTRL" || upperKey === "ALT" || upperKey === "SHIFT") {
+      this.toggleModifier(upperKey.toLowerCase());
       return;
     }
 
@@ -1043,15 +1043,19 @@ class ExtraKeysManager {
 
     if (this.modifiers.ctrl && key.length === 1) {
       const charCode = key.toUpperCase().charCodeAt(0);
-      if (charCode >= 65 && charCode <= 90)
+      if (charCode >= 65 && charCode <= 90) {
         sequence = String.fromCharCode(charCode - 64);
+      }
     }
 
     if (this.modifiers.alt) sequence = "\x1b" + sequence;
 
+    if (this.modifiers.shift && key.length === 1) {
+      sequence = sequence.toUpperCase();
+    }
+
     active.ws.send(JSON.stringify({ type: "input", data: sequence }));
     this.resetModifiers();
-    active.terminal.focus();
   }
 
   toggleModifier(mod) {
@@ -1060,16 +1064,14 @@ class ExtraKeysManager {
   }
 
   resetModifiers() {
-    this.modifiers = { ctrl: false, alt: false };
+    this.modifiers = { ctrl: false, alt: false, shift: false };
     this.updateModifierUI();
   }
 
   updateModifierUI() {
     document.querySelectorAll(".ek-btn.ek-modifier").forEach((btn) => {
-      btn.classList.toggle(
-        "active",
-        this.modifiers[btn.dataset.key.toLowerCase()],
-      );
+      const mod = btn.dataset.key.toLowerCase();
+      btn.classList.toggle("active", this.modifiers[mod] || false);
     });
   }
 }
@@ -1657,7 +1659,26 @@ class TerminalManager {
       },
     );
 
-    terminal.onData((data) => ws.send(JSON.stringify({ type: "input", data })));
+    terminal.onData((data) => {
+      let finalData = data;
+      if (this.extraKeys && data.length === 1) {
+        const mods = this.extraKeys.modifiers;
+        if (mods.ctrl) {
+          const charCode = data.toUpperCase().charCodeAt(0);
+          if (charCode >= 65 && charCode <= 90) {
+            finalData = String.fromCharCode(charCode - 64);
+          }
+          this.extraKeys.resetModifiers();
+        } else if (mods.alt) {
+          finalData = "\x1b" + data;
+          this.extraKeys.resetModifiers();
+        } else if (mods.shift) {
+          finalData = data.toUpperCase();
+          this.extraKeys.resetModifiers();
+        }
+      }
+      ws.send(JSON.stringify({ type: "input", data: finalData }));
+    });
 
     this.tabIndex++;
     const tabNum = this.tabIndex;
@@ -1856,9 +1877,26 @@ class TerminalManager {
         },
       );
 
-      terminal.onData((data) =>
-        ws.send(JSON.stringify({ type: "input", data })),
-      );
+      terminal.onData((data) => {
+        let finalData = data;
+        if (this.extraKeys && data.length === 1) {
+          const mods = this.extraKeys.modifiers;
+          if (mods.ctrl) {
+            const charCode = data.toUpperCase().charCodeAt(0);
+            if (charCode >= 65 && charCode <= 90) {
+              finalData = String.fromCharCode(charCode - 64);
+            }
+            this.extraKeys.resetModifiers();
+          } else if (mods.alt) {
+            finalData = "\x1b" + data;
+            this.extraKeys.resetModifiers();
+          } else if (mods.shift) {
+            finalData = data.toUpperCase();
+            this.extraKeys.resetModifiers();
+          }
+        }
+        ws.send(JSON.stringify({ type: "input", data: finalData }));
+      });
 
       this.tabIndex++;
       const tabNum = this.tabIndex;
