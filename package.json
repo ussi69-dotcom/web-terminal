@@ -1,7 +1,7 @@
 {
-  "name": "web-terminal",
+  "name": "deckterm",
   "version": "1.0.0",
-  "description": "Remote web-based terminal with floating tiling window manager",
+  "description": "Web-based terminal with PTY support, tiling window manager, and mobile-friendly UI",
   "type": "module",
   "scripts": {
     "dev": "bun run backend/index.ts",
