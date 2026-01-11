@@ -1619,6 +1619,58 @@ class ClipboardManager {
 }
 
 // =============================================================================
+// OPENCODE MANAGER - OpenCode panel integration
+// =============================================================================
+
+class OpenCodeManager {
+  constructor() {
+    this.panel = document.getElementById("opencode-panel");
+    this.iframe = document.getElementById("opencode-iframe");
+    this.status = document.getElementById("opencode-status");
+    this.init();
+  }
+
+  init() {
+    document
+      .querySelector('[data-action="opencode"]')
+      ?.addEventListener("click", () => this.toggle());
+    this.panel
+      ?.querySelector(".app-panel-close")
+      ?.addEventListener("click", () => this.hide());
+    this.checkHealth();
+    setInterval(() => this.checkHealth(), 30000);
+  }
+
+  async checkHealth() {
+    try {
+      const res = await fetch("/api/apps/opencode/health");
+      const data = await res.json();
+      this.status.textContent =
+        data.status === "running" ? "running" : "offline";
+      this.status.className = `app-status ${data.status === "running" ? "online" : "offline"}`;
+    } catch {
+      this.status.textContent = "error";
+      this.status.className = "app-status offline";
+    }
+  }
+
+  show() {
+    this.panel?.classList.remove("hidden");
+    if (this.iframe && !this.iframe.src) {
+      this.iframe.src = "/apps/opencode/";
+    }
+  }
+
+  hide() {
+    this.panel?.classList.add("hidden");
+  }
+
+  toggle() {
+    this.panel?.classList.contains("hidden") ? this.show() : this.hide();
+  }
+}
+
+// =============================================================================
 // TERMINAL MANAGER - Main orchestrator
 // =============================================================================
 
@@ -2686,4 +2738,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.terminalManager = new TerminalManager();
   window.statsManager = new StatsManager();
+  window.openCodeManager = new OpenCodeManager();
 });

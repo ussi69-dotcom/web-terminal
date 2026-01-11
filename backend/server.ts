@@ -61,6 +61,22 @@ const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || "")
   .split(",")
   .filter(Boolean);
 
+// OpenCode proxy configuration
+const OPENCODE_UPSTREAM =
+  process.env.OPENCODE_UPSTREAM || "http://127.0.0.1:4096";
+
+// Hop-by-hop headers to strip from proxied requests/responses
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+];
+
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
@@ -171,6 +187,74 @@ export function createWebApp() {
       memory: { percent: Math.round(memUsage) },
       disk: { percent: Math.round(diskUsage) },
     });
+  });
+
+  // OpenCode health check
+  app.get("/api/apps/opencode/health", async (c) => {
+    try {
+      const res = await fetch(`${OPENCODE_UPSTREAM}/api/health`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      return c.json({
+        status: res.ok ? "running" : "error",
+        upstream: OPENCODE_UPSTREAM,
+      });
+    } catch {
+      return c.json({ status: "not_running", upstream: OPENCODE_UPSTREAM });
+    }
+  });
+
+  // OpenCode HTTP proxy
+  app.all("/apps/opencode/*", async (c) => {
+    const path = c.req.path.replace("/apps/opencode", "") || "/";
+    const url = `${OPENCODE_UPSTREAM}${path}${c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : ""}`;
+
+    const headers = new Headers();
+    for (const [key, value] of c.req.raw.headers) {
+      if (!HOP_BY_HOP_HEADERS.includes(key.toLowerCase())) {
+        headers.set(key, value);
+      }
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: c.req.method,
+        headers,
+        body:
+          c.req.method !== "GET" && c.req.method !== "HEAD"
+            ? await c.req.raw.arrayBuffer()
+            : undefined,
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream")) {
+        return new Response(response.body, {
+          status: response.status,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
+
+      const responseHeaders = new Headers();
+      for (const [key, value] of response.headers) {
+        if (!HOP_BY_HOP_HEADERS.includes(key.toLowerCase())) {
+          responseHeaders.set(key, value);
+        }
+      }
+
+      return new Response(response.body, {
+        status: response.status,
+        headers: responseHeaders,
+      });
+    } catch (err) {
+      return c.json(
+        { error: "OpenCode unavailable", message: String(err) },
+        502,
+      );
+    }
   });
 
   // Create new terminal running shell
@@ -564,6 +648,30 @@ export function startWebServer(host: string, port: number) {
     async fetch(req, server) {
       const url = new URL(req.url);
 
+      // OpenCode WebSocket proxy
+      if (url.pathname.startsWith("/apps/opencode/ws")) {
+        const wsUrl =
+          OPENCODE_UPSTREAM.replace("http", "ws") +
+          url.pathname.replace("/apps/opencode", "") +
+          url.search;
+
+        try {
+          const upstream = new WebSocket(wsUrl);
+
+          const success = server.upgrade(req, {
+            data: { type: "opencode_proxy", upstream },
+          });
+
+          if (success) {
+            return undefined;
+          }
+        } catch (err) {
+          debug("OpenCode WebSocket proxy error:", err);
+        }
+
+        return new Response("WebSocket upgrade failed", { status: 500 });
+      }
+
       // WebSocket upgrade for terminal connection
       if (url.pathname.startsWith("/ws/terminals/")) {
         const id = url.pathname.split("/").pop();
@@ -617,7 +725,35 @@ export function startWebServer(host: string, port: number) {
 
     websocket: {
       open(ws: ServerWebSocket<WsData>) {
-        const terminalId = ws.data.terminalId;
+        const data = ws.data as
+          | WsData
+          | { type: "opencode_proxy"; upstream: WebSocket };
+
+        if ("type" in data && data.type === "opencode_proxy") {
+          const upstream = data.upstream;
+
+          upstream.onmessage = (event) => {
+            try {
+              ws.send(event.data);
+            } catch (err) {
+              debug("OpenCode proxy upstream->client error:", err);
+            }
+          };
+
+          upstream.onerror = (err) => {
+            debug("OpenCode proxy upstream error:", err);
+            ws.close();
+          };
+
+          upstream.onclose = () => {
+            ws.close();
+          };
+
+          debug("OpenCode WebSocket proxy connected");
+          return;
+        }
+
+        const terminalId = (data as WsData).terminalId;
         const term = terminals.get(terminalId);
         const sockets = terminalSockets.get(terminalId);
 
@@ -631,7 +767,20 @@ export function startWebServer(host: string, port: number) {
       },
 
       message(ws: ServerWebSocket<WsData>, message) {
-        const terminalId = ws.data.terminalId;
+        const data = ws.data as
+          | WsData
+          | { type: "opencode_proxy"; upstream: WebSocket };
+
+        if ("type" in data && data.type === "opencode_proxy") {
+          try {
+            data.upstream.send(message);
+          } catch (err) {
+            debug("OpenCode proxy client->upstream error:", err);
+          }
+          return;
+        }
+
+        const terminalId = (data as WsData).terminalId;
         const term = terminals.get(terminalId);
 
         if (!term) {
@@ -680,7 +829,20 @@ export function startWebServer(host: string, port: number) {
       },
 
       close(ws: ServerWebSocket<WsData>) {
-        const terminalId = ws.data.terminalId;
+        const data = ws.data as
+          | WsData
+          | { type: "opencode_proxy"; upstream: WebSocket };
+
+        if ("type" in data && data.type === "opencode_proxy") {
+          try {
+            data.upstream.close();
+          } catch (err) {
+            debug("OpenCode proxy upstream close error:", err);
+          }
+          return;
+        }
+
+        const terminalId = (data as WsData).terminalId;
         const sockets = terminalSockets.get(terminalId);
         if (sockets) {
           sockets.delete(ws as unknown as WebSocket);
