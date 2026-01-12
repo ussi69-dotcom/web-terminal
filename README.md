@@ -185,13 +185,44 @@ deckterm/
 │   ├── index.ts        # Entry point
 │   └── server.ts       # Hono server + PTY
 ├── web/
-│   ├── app.js          # Frontend app
-│   ├── index.html      # UI
-│   ├── styles.css      # Styles
-│   └── vendor/         # xterm.js
+│   ├── app.js          # Frontend app (~3200 lines)
+│   ├── index.html      # UI shell
+│   ├── styles.css      # GitHub dark theme
+│   ├── terminal-colors.js  # Workspace color hashing
+│   ├── terminal-colors.test.js  # Unit tests
+│   └── vendor/         # xterm.js libs
 ├── .env
 └── package.json
 ```
+
+## Testing
+
+```bash
+# Run all tests
+bun test
+
+# Run specific test file
+bun test ./web/terminal-colors.test.js
+```
+
+### Test Coverage
+
+| Module             | Tests | Status     |
+| ------------------ | ----- | ---------- |
+| terminal-colors.js | 2     | ✅ Passing |
+
+### Browser Compatibility
+
+The `terminal-colors.js` module uses CommonJS-style exports for browser compatibility:
+
+```javascript
+// Works in both Node.js/Bun and browser <script> tags
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { hashCwdToColor, blendWorkspaceColors, hexToRgba };
+}
+```
+
+**Note:** ESM `export {}` syntax breaks in browser `<script>` tags. Always use the CommonJS pattern above for browser-loaded modules.
 
 ## Tech Stack
 
