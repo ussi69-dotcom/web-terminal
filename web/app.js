@@ -205,6 +205,7 @@ class Tile {
     this.element = null;
     this.terminalWrapper = null;
     this.closeConfirmVisible = false;
+    this.onDocumentClick = null;
 
     this.bounds = { x: 0, y: 0, width: 100, height: 100 };
 
@@ -269,11 +270,12 @@ class Tile {
         this.hideCloseConfirm();
       });
 
-    document.addEventListener("click", (e) => {
+    this.onDocumentClick = (e) => {
       if (this.closeConfirmVisible && !closeContainer.contains(e.target)) {
         this.hideCloseConfirm();
       }
-    });
+    };
+    document.addEventListener("click", this.onDocumentClick);
 
     closeContainer.appendChild(closeBtn);
     closeContainer.appendChild(confirmPopup);
@@ -455,6 +457,9 @@ class Tile {
   }
 
   destroy() {
+    if (this.onDocumentClick) {
+      document.removeEventListener("click", this.onDocumentClick);
+    }
     this.element.remove();
   }
 }
@@ -2457,7 +2462,7 @@ class TerminalManager {
       },
     );
 
-    terminal.onData((data) => {
+    const onDataDisposable = terminal.onData((data) => {
       let finalData = data;
       const mods = this.extraKeys?.modifiers;
       if (this.extraKeys && data.length === 1 && mods) {
@@ -2492,6 +2497,7 @@ class TerminalManager {
       resizeObserver: null,
       resizeTimer: null,
       preferredCols: 0,
+      onDataDisposable,
     });
     this.addTab(id, cwd, tabNum, workspaceId);
     this.switchTo(id);
@@ -2777,7 +2783,7 @@ class TerminalManager {
         },
       );
 
-      terminal.onData((data) => {
+      const onDataDisposable = terminal.onData((data) => {
         let finalData = data;
         if (this.extraKeys && data.length === 1) {
           const mods = this.extraKeys.modifiers;
@@ -2812,6 +2818,7 @@ class TerminalManager {
         resizeObserver: null,
         resizeTimer: null,
         preferredCols: 0,
+        onDataDisposable,
       });
 
       // Only add tab for new workspaces, not splits
@@ -3084,6 +3091,14 @@ class TerminalManager {
     if (!t) return;
 
     t.ws?.close();
+    if (t.resizeObserver) t.resizeObserver.disconnect();
+    if (t.resizeTimer) clearTimeout(t.resizeTimer);
+    t.onDataDisposable?.dispose?.();
+    try {
+      t.terminal?.dispose?.();
+    } catch (err) {
+      if (DEBUG) dbg("terminal.dispose error", { id, err });
+    }
     this.tileManager.removeTile(id);
 
     this.tabs.querySelector(`[data-id="${id}"]`)?.remove();
