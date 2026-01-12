@@ -289,18 +289,8 @@
         script.src = "/dev/diagnostics.js";
         document.head.appendChild(script);
       }
-      const v = Date.now().toString(36);
-      const loadScript = (src) =>
-        new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = src;
-          script.onload = resolve;
-          script.onerror = reject;
-          document.body.appendChild(script);
-        });
-      loadScript(`/terminal-colors.js?v=${v}`)
-        .catch(() => {})
-        .then(() => loadScript(`/app.js?v=${v}`));
     </script>
+    <script src="/terminal-colors.js?v=20260112g"></script>
+    <script src="/app.js?v=20260112g"></script>
   </body>
 </html>
