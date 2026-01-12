@@ -50,5 +50,3 @@ if (typeof window !== "undefined") {
     hexToRgba,
   };
 }
-
-export { hashCwdToColor, blendWorkspaceColors, hexToRgba };
