@@ -364,6 +364,86 @@ body {
   z-index: 5;
 }
 
+.tile-close-container {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.tile:hover .tile-close-container {
+  opacity: 1;
+}
+
+.tile-close-btn {
+  width: 24px;
+  height: 24px;
+  background: rgba(22, 27, 34, 0.9);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.tile-close-btn:hover {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: #fff;
+}
+
+.tile-close-confirm {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  display: none;
+  flex-direction: row;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.tile-close-confirm.visible {
+  display: flex;
+}
+
+.tile-close-confirm button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tile-close-confirm .confirm-close {
+  background: var(--accent-red);
+  color: #fff;
+}
+
+.tile-close-confirm .confirm-close:hover {
+  background: #da3633;
+}
+
+.tile-close-confirm .confirm-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.tile-close-confirm .confirm-cancel:hover {
+  background: var(--bg-hover);
+}
+
 /* Resize handles */
 .tile-resize-handle {
   position: absolute;
@@ -458,6 +538,7 @@ body {
 
 .terminal-wrapper .xterm-viewport {
   overflow-y: scroll !important;
+  overflow-x: auto !important;
   scrollbar-gutter: stable;
 }
 
@@ -1890,5 +1971,14 @@ body.virtual-keyboard-open .extra-keys {
   .app-panel {
     width: 100%;
     max-width: 100vw;
+    top: 0;
+    height: 100vh;
+    z-index: 1000;
+  }
+
+  .side-panel {
+    top: 0;
+    height: 100vh;
+    z-index: 1000;
   }
 }

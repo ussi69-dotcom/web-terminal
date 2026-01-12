@@ -179,16 +179,17 @@ class ReconnectingWebSocket {
 // =============================================================================
 
 class Tile {
-  constructor(id, terminalId, container) {
+  constructor(id, terminalId, container, onCloseRequest) {
     this.id = id;
     this.terminalId = terminalId;
     this.container = container;
+    this.onCloseRequest = onCloseRequest;
     this.groupId = null;
     this.element = null;
     this.terminalWrapper = null;
+    this.closeConfirmVisible = false;
 
-    // Bounds in percentages (0-100)
-    this.bounds = { x: 0, y: 0, width: 50, height: 100 };
+    this.bounds = { x: 0, y: 0, width: 100, height: 100 };
 
     this.isResizing = false;
     this.resizeEdge = null;
@@ -209,7 +210,71 @@ class Tile {
     this.terminalWrapper.id = `terminal-${this.terminalId}`;
     this.element.appendChild(this.terminalWrapper);
 
-    // Resize handles
+    this.createCloseButton();
+    this.createResizeHandles();
+    this.setupResizeHandlers();
+    this.container.appendChild(this.element);
+  }
+
+  createCloseButton() {
+    const closeContainer = document.createElement("div");
+    closeContainer.className = "tile-close-container";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "tile-close-btn";
+    closeBtn.innerHTML = "&times;";
+    closeBtn.title = "Close terminal";
+
+    const confirmPopup = document.createElement("div");
+    confirmPopup.className = "tile-close-confirm";
+    confirmPopup.innerHTML = `
+      <button class="confirm-close">Close</button>
+      <button class="confirm-cancel">Cancel</button>
+    `;
+
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.showCloseConfirm();
+    });
+
+    confirmPopup
+      .querySelector(".confirm-close")
+      .addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.hideCloseConfirm();
+        if (this.onCloseRequest) this.onCloseRequest(this.terminalId);
+      });
+
+    confirmPopup
+      .querySelector(".confirm-cancel")
+      .addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.hideCloseConfirm();
+      });
+
+    document.addEventListener("click", (e) => {
+      if (this.closeConfirmVisible && !closeContainer.contains(e.target)) {
+        this.hideCloseConfirm();
+      }
+    });
+
+    closeContainer.appendChild(closeBtn);
+    closeContainer.appendChild(confirmPopup);
+    this.element.appendChild(closeContainer);
+    this.closeConfirm = confirmPopup;
+  }
+
+  showCloseConfirm() {
+    this.closeConfirmVisible = true;
+    this.closeConfirm.classList.add("visible");
+  }
+
+  hideCloseConfirm() {
+    this.closeConfirmVisible = false;
+    this.closeConfirm.classList.remove("visible");
+  }
+
+  createResizeHandles() {
     const edges = [
       "top",
       "right",
@@ -226,9 +291,6 @@ class Tile {
       handle.dataset.edge = edge;
       this.element.appendChild(handle);
     });
-
-    this.setupResizeHandlers();
-    this.container.appendChild(this.element);
   }
 
   setupResizeHandlers() {
@@ -459,11 +521,9 @@ class TileManager {
     });
   }
 
-  // Create a new tile for a terminal
-  // split=false means new independent workspace, split=true means split current workspace
-  createTile(terminalId, workspaceId, split = false) {
+  createTile(terminalId, workspaceId, split = false, onCloseRequest = null) {
     const tileId = `tile-${terminalId}`;
-    const tile = new Tile(tileId, terminalId, this.container);
+    const tile = new Tile(tileId, terminalId, this.container, onCloseRequest);
     tile.workspaceId = workspaceId;
     this.tiles.set(terminalId, tile);
 
@@ -1631,12 +1691,18 @@ class OpenCodeManager {
   }
 
   init() {
+    this.opencodeUrl = null;
+    this.serverStatus = "unknown";
+
     document
       .querySelector('[data-action="opencode"]')
       ?.addEventListener("click", () => this.toggle());
     this.panel
       ?.querySelector(".app-panel-close")
       ?.addEventListener("click", () => this.hide());
+    document
+      .getElementById("opencode-popout")
+      ?.addEventListener("click", () => this.openInNewWindow());
     this.checkHealth();
     setInterval(() => this.checkHealth(), 30000);
   }
@@ -1645,9 +1711,19 @@ class OpenCodeManager {
     try {
       const res = await fetch("/api/apps/opencode/health");
       const data = await res.json();
-      this.status.textContent =
-        data.status === "running" ? "running" : "offline";
-      this.status.className = `app-status ${data.status === "running" ? "online" : "offline"}`;
+      this.opencodeUrl = data.url || null;
+      this.serverStatus = data.status;
+
+      if (!this.opencodeUrl) {
+        this.status.textContent = "not configured";
+        this.status.className = "app-status offline";
+      } else if (data.status === "running") {
+        this.status.textContent = "running";
+        this.status.className = "app-status online";
+      } else {
+        this.status.textContent = "offline";
+        this.status.className = "app-status offline";
+      }
     } catch {
       this.status.textContent = "error";
       this.status.className = "app-status offline";
@@ -1655,9 +1731,62 @@ class OpenCodeManager {
   }
 
   show() {
+    if (!this.opencodeUrl) {
+      this.showSetupMessage();
+      return;
+    }
+    if (this.serverStatus !== "running") {
+      this.showOfflineMessage();
+      return;
+    }
     this.panel?.classList.remove("hidden");
     if (this.iframe && !this.iframe.src) {
-      this.iframe.src = "/apps/opencode/";
+      this.iframe.src = this.opencodeUrl;
+    }
+  }
+
+  showSetupMessage() {
+    this.panel?.classList.remove("hidden");
+    if (this.iframe) {
+      this.iframe.srcdoc = `
+        <html>
+        <head><style>
+          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
+          h2 { color: #58a6ff; }
+          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
+          ol { line-height: 2; }
+        </style></head>
+        <body>
+          <h2>OpenCode Not Configured</h2>
+          <p>To enable OpenCode integration:</p>
+          <ol>
+            <li>Run <code>opencode web --port 4096</code> on your server</li>
+            <li>Expose port 4096 via Cloudflare Tunnel (e.g., opencode.yourdomain.com)</li>
+            <li>Set <code>OPENCODE_URL=https://opencode.yourdomain.com</code> in .env</li>
+            <li>Restart DeckTerm</li>
+          </ol>
+        </body>
+        </html>`;
+    }
+  }
+
+  showOfflineMessage() {
+    this.panel?.classList.remove("hidden");
+    if (this.iframe) {
+      this.iframe.srcdoc = `
+        <html>
+        <head><style>
+          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
+          h2 { color: #f85149; }
+          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
+        </style></head>
+        <body>
+          <h2>OpenCode Server Offline</h2>
+          <p>The OpenCode server is not responding.</p>
+          <p>Start it with: <code>opencode web --port 4096</code></p>
+          <p>Or run in tmux: <code>tmux new -d -s opencode "opencode web --port 4096"</code></p>
+        </body>
+        </html>`;
     }
   }
 
@@ -1665,8 +1794,20 @@ class OpenCodeManager {
     this.panel?.classList.add("hidden");
   }
 
+  openInNewWindow() {
+    if (this.opencodeUrl) {
+      window.open(this.opencodeUrl, "opencode", "width=1200,height=800");
+    } else {
+      alert("OpenCode not configured. Set OPENCODE_URL in .env");
+    }
+  }
+
   toggle() {
-    this.panel?.classList.contains("hidden") ? this.show() : this.hide();
+    if (this.panel?.classList.contains("hidden")) {
+      this.show();
+    } else {
+      this.hide();
+    }
   }
 }
 
@@ -2106,15 +2247,13 @@ class TerminalManager {
       const terminals = await res.json();
 
       if (terminals.length > 0) {
-        const reconnect = confirm(
-          `Found ${terminals.length} existing terminal(s). Reconnect?`,
+        console.log(
+          `[DeckTerm] Reconnecting to ${terminals.length} existing terminal(s)...`,
         );
-        if (reconnect) {
-          for (const t of terminals) {
-            await this.reconnectToTerminal(t.id, t.cwd);
-          }
-          return;
+        for (const t of terminals) {
+          await this.reconnectToTerminal(t.id, t.cwd);
         }
+        return;
       }
     } catch (err) {
       console.error("Failed to check existing terminals:", err);
@@ -2127,7 +2266,9 @@ class TerminalManager {
     this.workspaceIndex++;
     const workspaceId = `ws-${this.workspaceIndex}`;
 
-    const element = this.tileManager.createTile(id, workspaceId, false);
+    const element = this.tileManager.createTile(id, workspaceId, false, (tid) =>
+      this.closeTerminal(tid),
+    );
     const overlay = this.createOverlay(element.parentElement);
 
     const terminal = this.createXtermInstance();
@@ -2363,7 +2504,12 @@ class TerminalManager {
         workspaceId = `ws-${this.workspaceIndex}`;
       }
 
-      const element = this.tileManager.createTile(id, workspaceId, split);
+      const element = this.tileManager.createTile(
+        id,
+        workspaceId,
+        split,
+        (tid) => this.closeTerminal(tid),
+      );
       const overlay = this.createOverlay(element.parentElement);
 
       const terminal = this.createXtermInstance();
