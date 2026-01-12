@@ -1351,9 +1351,10 @@ body.virtual-keyboard-open .extra-keys {
   .tabs {
     flex: 1;
     margin: 0;
-    flex-wrap: wrap;
-    overflow-x: visible;
-    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 4px;
+    max-width: calc(100vw - 120px);
   }
 
   .toolbar .status-dot {
