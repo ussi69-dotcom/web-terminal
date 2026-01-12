@@ -1861,8 +1861,7 @@ class GitManager {
   }
 
   async show(cwd) {
-    this.currentCwd =
-      cwd || document.getElementById("directory")?.value || process.env.HOME;
+    this.currentCwd = cwd || document.getElementById("directory")?.value || "~";
     this.panel.classList.remove("hidden");
     await this.refresh();
   }
