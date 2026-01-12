@@ -1741,7 +1741,7 @@ class OpenCodeManager {
     }
     this.panel?.classList.remove("hidden");
     if (this.iframe && !this.iframe.src) {
-      this.iframe.src = this.opencodeUrl;
+      this.iframe.src = "/apps/opencode/";
     }
   }
 
@@ -1807,6 +1807,19 @@ class OpenCodeManager {
       this.show();
     } else {
       this.hide();
+    }
+  }
+
+  notifyResize() {
+    if (
+      this.iframe?.contentWindow &&
+      !this.panel?.classList.contains("hidden")
+    ) {
+      try {
+        this.iframe.contentWindow.postMessage({ type: "resize" }, "*");
+      } catch (e) {
+        console.warn("[OpenCode] Failed to send resize message:", e);
+      }
     }
   }
 }
@@ -2077,6 +2090,7 @@ class TerminalManager {
           active.fitAddon.fit();
           this.sendResize(this.activeId);
         }
+        window.openCodeManager?.notifyResize();
       }, 150);
     });
 
@@ -2462,6 +2476,24 @@ class TerminalManager {
   handleStatusChange(id, status, extra) {
     this.updateOverlay(id, status, extra);
     this.updateConnectionStatus(status);
+
+    if (status === "connected") {
+      const t = this.terminals.get(id);
+      if (t && t.fitAddon && t.terminal && t.ws) {
+        requestAnimationFrame(() => {
+          try {
+            t.fitAddon.fit();
+            const { cols, rows } = t.terminal;
+            console.log(
+              `[resize] Initial sync for terminal ${id}: ${cols}x${rows}`,
+            );
+            t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+          } catch (e) {
+            console.warn(`[resize] Failed initial sync for ${id}:`, e);
+          }
+        });
+      }
+    }
 
     const tab = this.tabs.querySelector(`[data-id="${id}"]`);
     if (tab) {
