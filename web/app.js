@@ -51,6 +51,11 @@ const GROUP_COLORS = [
   "#7ee787",
 ];
 
+const DEBUG = location.search.includes("debug=1");
+const dbg = (...args) => {
+  if (DEBUG) console.log("[deckterm]", ...args);
+};
+
 // =============================================================================
 // RECONNECTING WEBSOCKET
 // =============================================================================
@@ -613,6 +618,17 @@ class TileManager {
     tile.updatePosition();
     this.showWorkspace(workspaceId);
 
+    if (DEBUG) {
+      const rect = this.container.getBoundingClientRect();
+      dbg("createTile", {
+        terminalId,
+        workspaceId,
+        split,
+        bounds: { ...tile.bounds },
+        container: { w: rect.width, h: rect.height },
+      });
+    }
+
     return tile.terminalWrapper;
   }
 
@@ -626,6 +642,12 @@ class TileManager {
         tile.element.style.display = "none";
       }
     });
+    if (DEBUG) {
+      dbg("showWorkspace", {
+        workspaceId,
+        tiles: this.getWorkspaceTiles(workspaceId).length,
+      });
+    }
   }
 
   // Get tiles for a workspace
@@ -679,6 +701,9 @@ class TileManager {
       };
       tile.updatePosition();
     });
+    if (DEBUG) {
+      dbg("relayoutWorkspace", { workspaceId, count: tiles.length });
+    }
   }
 
   // Position a new tile next to the active one
@@ -960,6 +985,9 @@ class TileManager {
       tile.element.style.display = "block";
       tile.updatePosition();
     });
+    if (DEBUG) {
+      dbg("relayout", { count: tileArray.length });
+    }
   }
 
   // Set active tile
@@ -2161,6 +2189,14 @@ class TerminalManager {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
         const active = this.terminals.get(this.activeId);
+        if (DEBUG) {
+          dbg("window.resize", {
+            activeId: this.activeId,
+            workspaceId: active?.workspaceId || null,
+            cols: active?.terminal?.cols,
+            rows: active?.terminal?.rows,
+          });
+        }
         if (active) {
           active.fitAddon.fit();
           this.sendResize(this.activeId);
@@ -2873,6 +2909,14 @@ class TerminalManager {
       this.tileManager.showWorkspace(t.workspaceId);
     }
     this.tileManager.setActive(id);
+    if (DEBUG) {
+      dbg("switchTo", {
+        terminalId: id,
+        workspaceId: t?.workspaceId || null,
+        cols: t?.terminal?.cols,
+        rows: t?.terminal?.rows,
+      });
+    }
 
     // Highlight tab by workspaceId (works for multi-terminal workspaces)
     const activeWorkspaceId = t?.workspaceId;
