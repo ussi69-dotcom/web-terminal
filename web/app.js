@@ -55,6 +55,18 @@ const DEBUG = location.search.includes("debug=1");
 const dbg = (...args) => {
   if (DEBUG) console.log("[deckterm]", ...args);
 };
+const TerminalColors = window.TerminalColors || {
+  hashCwdToColor: () => "#58a6ff",
+  blendWorkspaceColors: (colors) => colors,
+  hexToRgba: (hex, alpha = 1) => {
+    const raw = (hex || "#58a6ff").replace("#", "");
+    if (raw.length !== 6) return `rgba(88, 166, 255, ${alpha})`;
+    const r = parseInt(raw.slice(0, 2), 16);
+    const g = parseInt(raw.slice(2, 4), 16);
+    const b = parseInt(raw.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  },
+};
 
 // =============================================================================
 // RECONNECTING WEBSOCKET
@@ -2893,10 +2905,15 @@ class TerminalManager {
   updateTabGroups() {
     // Count terminals per workspace
     const workspaceCounts = new Map();
+    const workspaceColors = new Map();
     this.terminals.forEach((t) => {
       if (t.workspaceId) {
         const count = workspaceCounts.get(t.workspaceId) || 0;
         workspaceCounts.set(t.workspaceId, count + 1);
+        const cwdColor = TerminalColors.hashCwdToColor(t.cwd || "terminal");
+        const colors = workspaceColors.get(t.workspaceId) || [];
+        colors.push(cwdColor);
+        workspaceColors.set(t.workspaceId, colors);
       }
     });
 
@@ -2906,26 +2923,39 @@ class TerminalManager {
       const dot = tab.querySelector(".tab-dot");
       const countBadge = tab.querySelector(".tab-count");
       const count = workspaceCounts.get(workspaceId) || 0;
+      const blended = TerminalColors.blendWorkspaceColors(
+        workspaceColors.get(workspaceId) || [],
+      );
 
       if (count > 1) {
         // Multicolor workspace tab (multiple terminals)
         tab.classList.add("multicolor");
         tab.classList.remove("grouped");
-        // Use predefined colors for gradient
-        const colorIndex = parseInt(workspaceId?.replace("ws-", "") || "1") - 1;
-        const color1 = GROUP_COLORS[colorIndex % GROUP_COLORS.length];
-        const color2 = GROUP_COLORS[(colorIndex + 1) % GROUP_COLORS.length];
-        const color3 = GROUP_COLORS[(colorIndex + 2) % GROUP_COLORS.length];
-        tab.style.setProperty("--color-1", color1);
-        tab.style.setProperty("--color-2", color2);
-        tab.style.setProperty("--color-3", color3);
+        const color1 = blended[0] || "#58a6ff";
+        const color2 = blended[1] || color1;
+        const color3 = blended[2] || color2;
+        tab.style.setProperty("--color-1", TerminalColors.hexToRgba(color1, 0.2));
+        tab.style.setProperty("--color-2", TerminalColors.hexToRgba(color2, 0.2));
+        tab.style.setProperty("--color-3", TerminalColors.hexToRgba(color3, 0.2));
+        tab.style.setProperty("--color-1-solid", color1);
+        tab.style.setProperty("--color-2-solid", color2);
+        tab.style.setProperty("--color-3-solid", color3);
+        tab.style.setProperty("--tab-border", TerminalColors.hexToRgba(color1, 0.35));
 
         if (countBadge) countBadge.textContent = count;
-        if (dot) dot.style.backgroundColor = "transparent";
+        if (dot) dot.style.removeProperty("background-color");
       } else {
         // Single terminal workspace
         tab.classList.remove("multicolor", "grouped");
-        if (dot) dot.style.backgroundColor = "#58a6ff";
+        const singleColor = blended[0] || "#58a6ff";
+        if (dot) dot.style.backgroundColor = singleColor;
+        tab.style.setProperty("--color-1-solid", singleColor);
+        tab.style.removeProperty("--color-1");
+        tab.style.removeProperty("--color-2");
+        tab.style.removeProperty("--color-3");
+        tab.style.removeProperty("--color-2-solid");
+        tab.style.removeProperty("--color-3-solid");
+        tab.style.removeProperty("--tab-border");
         tab.style.removeProperty("--group-color");
         if (countBadge) countBadge.textContent = "";
       }
