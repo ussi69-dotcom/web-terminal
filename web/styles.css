@@ -135,6 +135,12 @@ body {
   transform: translateY(-1px);
 }
 
+.btn-icon.active {
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+  box-shadow: 0 0 6px rgba(88, 166, 255, 0.25);
+}
+
 .btn-icon svg {
   width: 18px;
   height: 18px;
@@ -543,6 +549,38 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
+}
+
+@media (max-width: 767px) {
+  .terminal-wrapper::before,
+  .terminal-wrapper::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    pointer-events: none;
+    opacity: 0.45;
+    z-index: 5;
+  }
+
+  .terminal-wrapper::before {
+    left: 0;
+    background: linear-gradient(
+      90deg,
+      rgba(13, 17, 23, 0.9),
+      rgba(13, 17, 23, 0)
+    );
+  }
+
+  .terminal-wrapper::after {
+    right: 0;
+    background: linear-gradient(
+      270deg,
+      rgba(13, 17, 23, 0.9),
+      rgba(13, 17, 23, 0)
+    );
+  }
 }
 
 .terminal-wrapper .xterm {

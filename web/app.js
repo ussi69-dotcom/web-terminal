@@ -2126,6 +2126,8 @@ class TerminalManager {
     this.tabIndex = 0;
     this.workspaceIndex = 0;
     this.fontSize = parseInt(localStorage.getItem("opencode-font-size")) || 14;
+    const storedWrap = localStorage.getItem("opencode-wrap-lines");
+    this.wrapLines = storedWrap ? storedWrap === "1" : false;
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
     this.resizeDebounceMs = 120;
@@ -2168,6 +2170,7 @@ class TerminalManager {
 
     // Toolbar action buttons
     this.setupToolbarActions();
+    this.updateWrapButton();
 
     // Fullscreen
     document
@@ -2205,7 +2208,7 @@ class TerminalManager {
         }
         if (active) {
           active.fitAddon.fit();
-          this.sendResize(this.activeId);
+          this.syncTerminalSize(this.activeId);
         }
         window.openCodeManager?.notifyResize();
       }, 150);
@@ -2241,8 +2244,30 @@ class TerminalManager {
         else if (action === "font-decrease") this.changeFontSize(-1);
         else if (action === "font-increase") this.changeFontSize(1);
         else if (action === "fullscreen") this.toggleFullscreen();
+        else if (action === "wrap-lines") this.toggleWrapLines();
       });
     });
+  }
+
+  updateWrapButton() {
+    const btn = document.getElementById("wrap-lines-btn");
+    if (!btn) return;
+    btn.classList.toggle("active", this.wrapLines);
+    btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+  }
+
+  toggleWrapLines() {
+    this.wrapLines = !this.wrapLines;
+    localStorage.setItem("opencode-wrap-lines", this.wrapLines ? "1" : "0");
+    this.updateWrapButton();
+    for (const [, t] of this.terminals) {
+      t.preferredCols = 0;
+    }
+    if (this.activeId) {
+      const active = this.terminals.get(this.activeId);
+      active?.fitAddon?.fit();
+      this.syncTerminalSize(this.activeId);
+    }
   }
 
   setupHelpModal() {
@@ -2454,6 +2479,7 @@ class TerminalManager {
       workspaceId,
       resizeObserver: null,
       resizeTimer: null,
+      preferredCols: 0,
     });
     this.addTab(id, cwd, tabNum, workspaceId);
     this.switchTo(id);
@@ -2461,7 +2487,7 @@ class TerminalManager {
 
     setTimeout(() => {
       fitAddon.fit();
-      this.sendResize(id);
+      this.syncTerminalSize(id);
 
       const textarea = element.querySelector(".xterm-helper-textarea");
       if (textarea) {
@@ -2603,11 +2629,14 @@ class TerminalManager {
         requestAnimationFrame(() => {
           try {
             t.fitAddon.fit();
-            const { cols, rows } = t.terminal;
-            console.log(
-              `[resize] Initial sync for terminal ${id}: ${cols}x${rows}`,
-            );
-            t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+            this.syncTerminalSize(id);
+            if (DEBUG) {
+              dbg("initial resize sync", {
+                id,
+                cols: t.terminal.cols,
+                rows: t.terminal.rows,
+              });
+            }
           } catch (e) {
             console.warn(`[resize] Failed initial sync for ${id}:`, e);
           }
@@ -2633,8 +2662,31 @@ class TerminalManager {
     if (!t) return;
     if (t.resizeTimer) clearTimeout(t.resizeTimer);
     t.resizeTimer = setTimeout(() => {
-      this.sendResize(id);
+      this.syncTerminalSize(id);
     }, this.resizeDebounceMs);
+  }
+
+  syncTerminalSize(id) {
+    const t = this.terminals.get(id);
+    if (!t?.terminal) return;
+    const fitCols = t.terminal.cols;
+    const fitRows = t.terminal.rows;
+    if (this.wrapLines) {
+      t.preferredCols = fitCols;
+    } else if (!t.preferredCols || t.preferredCols < fitCols) {
+      t.preferredCols = fitCols;
+    }
+    const targetCols = this.wrapLines
+      ? fitCols
+      : Math.max(fitCols, t.preferredCols);
+    if (targetCols !== fitCols) {
+      try {
+        t.terminal.resize(targetCols, fitRows);
+      } catch (err) {
+        if (DEBUG) dbg("terminal.resize error", { id, err });
+      }
+    }
+    this.sendResize(id, targetCols, fitRows);
   }
 
   attachResizeObserver(id) {
@@ -2747,6 +2799,7 @@ class TerminalManager {
         workspaceId,
         resizeObserver: null,
         resizeTimer: null,
+        preferredCols: 0,
       });
 
       // Only add tab for new workspaces, not splits
@@ -2976,7 +3029,7 @@ class TerminalManager {
     if (active) {
       active.fitAddon.fit();
       active.terminal.focus();
-      this.sendResize(id);
+      this.syncTerminalSize(id);
       this.updateConnectionStatus(
         active.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected",
       );
@@ -3022,10 +3075,11 @@ class TerminalManager {
     }
   }
 
-  sendResize(id) {
+  sendResize(id, colsOverride = null, rowsOverride = null) {
     const t = this.terminals.get(id);
     if (!t?.ws) return;
-    const { cols, rows } = t.terminal;
+    const cols = colsOverride ?? t.terminal.cols;
+    const rows = rowsOverride ?? t.terminal.rows;
     t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
   }
 
@@ -3041,9 +3095,10 @@ class TerminalManager {
     localStorage.setItem("opencode-font-size", this.fontSize.toString());
     for (const [, t] of this.terminals) {
       t.terminal.options.fontSize = this.fontSize;
+      t.preferredCols = 0;
       t.fitAddon.fit();
     }
-    if (this.activeId) this.sendResize(this.activeId);
+    if (this.activeId) this.syncTerminalSize(this.activeId);
   }
 
   handleViewportResize() {
@@ -3074,7 +3129,7 @@ class TerminalManager {
     if (active) {
       setTimeout(() => {
         active.fitAddon.fit();
-        this.sendResize(this.activeId);
+        this.syncTerminalSize(this.activeId);
       }, 50);
     }
   }
@@ -3110,7 +3165,7 @@ class TerminalManager {
     if (active)
       setTimeout(() => {
         active.fitAddon.fit();
-        this.sendResize(this.activeId);
+        this.syncTerminalSize(this.activeId);
       }, 100);
   }
 
