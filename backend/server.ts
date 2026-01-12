@@ -231,7 +231,18 @@ export function createWebApp() {
 
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
-    const memUsage = ((totalMem - freeMem) / totalMem) * 100;
+    let availableMem = freeMem;
+    try {
+      const meminfo = await fs.readFile("/proc/meminfo", "utf8");
+      const match = meminfo.match(/^MemAvailable:\s+(\\d+)\\s+kB/m);
+      if (match) {
+        availableMem = parseInt(match[1], 10) * 1024;
+      }
+    } catch {
+      // /proc/meminfo not available, fall back to freeMem
+    }
+
+    const memUsage = ((totalMem - availableMem) / totalMem) * 100;
 
     let diskUsage = 0;
     try {
@@ -243,7 +254,12 @@ export function createWebApp() {
 
     return c.json({
       cpu: { usage: Math.round(cpuUsage) },
-      memory: { percent: Math.round(memUsage) },
+      memory: {
+        percent: Math.round(memUsage),
+        availableBytes: Math.round(availableMem),
+        freeBytes: Math.round(freeMem),
+        totalBytes: Math.round(totalMem),
+      },
       disk: { percent: Math.round(diskUsage) },
     });
   });
