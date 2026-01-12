@@ -61,9 +61,10 @@ const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || "")
   .split(",")
   .filter(Boolean);
 
-// OpenCode proxy configuration
+// OpenCode configuration
 const OPENCODE_UPSTREAM =
   process.env.OPENCODE_UPSTREAM || "http://127.0.0.1:4096";
+const OPENCODE_URL = process.env.OPENCODE_URL || "";
 
 // Hop-by-hop headers to strip from proxied requests/responses
 const HOP_BY_HOP_HEADERS = [
@@ -198,13 +199,18 @@ export function createWebApp() {
       return c.json({
         status: res.ok ? "running" : "error",
         upstream: OPENCODE_UPSTREAM,
+        url: OPENCODE_URL,
       });
     } catch {
-      return c.json({ status: "not_running", upstream: OPENCODE_UPSTREAM });
+      return c.json({
+        status: "not_running",
+        upstream: OPENCODE_UPSTREAM,
+        url: OPENCODE_URL,
+      });
     }
   });
 
-  // OpenCode HTTP proxy
+  // OpenCode HTTP proxy with HTML rewriting for asset paths
   app.all("/apps/opencode/*", async (c) => {
     const path = c.req.path.replace("/apps/opencode", "") || "/";
     const url = `${OPENCODE_UPSTREAM}${path}${c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : ""}`;
@@ -227,6 +233,7 @@ export function createWebApp() {
       });
 
       const contentType = response.headers.get("content-type") || "";
+
       if (contentType.includes("text/event-stream")) {
         return new Response(response.body, {
           status: response.status,
