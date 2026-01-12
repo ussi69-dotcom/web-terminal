@@ -7,6 +7,20 @@ import {
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
 
+// =============================================================================
+// GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
+// =============================================================================
+
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception:", err);
+  // Don't exit - try to keep serving
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[FATAL] Unhandled rejection at:", promise, "reason:", reason);
+  // Don't exit - try to keep serving
+});
+
 // Bun.Terminal API types (Bun 1.3.5+) - not yet in bun-types
 interface BunTerminalOptions {
   cols: number;
@@ -35,11 +49,14 @@ type Terminal = {
   cols: number;
   rows: number;
   createdAt: number;
+  lastActivityAt: number; // Last user input timestamp for idle detection
   ownerId: string; // User sub from JWT
   ownerEmail: string; // User email for display
 };
 
-type WsData = { terminalId: string; ownerId: string };
+type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
+type OpenCodeWsData = { type: "opencode_proxy"; upstream: WebSocket };
+type WsData = TerminalWsData | OpenCodeWsData;
 
 // Configuration
 const DEBUG = process.env.OPENCODE_WEB_DEBUG === "1";
@@ -53,6 +70,10 @@ const MAX_TERMINALS_PER_USER = parseInt(
 );
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = 20; // max terminals per minute
+const TERMINAL_IDLE_TIMEOUT_MS = parseInt(
+  process.env.TERMINAL_IDLE_TIMEOUT_MS || String(2 * 60 * 60 * 1000),
+  10,
+); // 2 hours default
 
 const CF_ACCESS_REQUIRED = process.env.CF_ACCESS_REQUIRED === "1";
 const CF_ACCESS_TEAM_NAME = process.env.CF_ACCESS_TEAM_NAME || "";
@@ -81,6 +102,36 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
+
+const openCodeCircuit = {
+  failures: 0,
+  lastFailure: 0,
+  isOpen: false,
+  threshold: 5,
+  resetTimeout: 30_000,
+  recordFailure() {
+    this.failures++;
+    this.lastFailure = Date.now();
+    if (this.failures >= this.threshold) {
+      this.isOpen = true;
+      debug("OpenCode circuit OPEN - too many failures");
+    }
+  },
+  recordSuccess() {
+    this.failures = 0;
+    this.isOpen = false;
+  },
+  canRequest(): boolean {
+    if (!this.isOpen) return true;
+    if (Date.now() - this.lastFailure > this.resetTimeout) {
+      this.isOpen = false;
+      this.failures = 0;
+      debug("OpenCode circuit HALF-OPEN - testing");
+      return true;
+    }
+    return false;
+  },
+};
 
 // Rate limiting state (simple in-memory)
 const rateLimitState = {
@@ -121,7 +172,14 @@ function getCurrentUser(c: {
 export function createWebApp() {
   const app = new Hono();
 
-  // Hardened CORS - reject unknown origins
+  app.onError((err, c) => {
+    console.error("[Hono] Route error:", err);
+    return c.json(
+      { error: "Internal server error", message: String(err) },
+      500,
+    );
+  });
+
   app.use(
     "/*",
     cors({
@@ -210,8 +268,18 @@ export function createWebApp() {
     }
   });
 
-  // OpenCode HTTP proxy with HTML rewriting for asset paths
   app.all("/apps/opencode/*", async (c) => {
+    if (!openCodeCircuit.canRequest()) {
+      return c.json(
+        {
+          error: "OpenCode temporarily unavailable",
+          message: "Circuit breaker open - too many failures",
+          retryAfter: Math.ceil(openCodeCircuit.resetTimeout / 1000),
+        },
+        503,
+      );
+    }
+
     const path = c.req.path.replace("/apps/opencode", "") || "/";
     const url = `${OPENCODE_UPSTREAM}${path}${c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : ""}`;
 
@@ -230,7 +298,10 @@ export function createWebApp() {
           c.req.method !== "GET" && c.req.method !== "HEAD"
             ? await c.req.raw.arrayBuffer()
             : undefined,
+        signal: AbortSignal.timeout(30_000),
       });
+
+      openCodeCircuit.recordSuccess();
 
       const contentType = response.headers.get("content-type") || "";
 
@@ -257,8 +328,13 @@ export function createWebApp() {
         headers: responseHeaders,
       });
     } catch (err) {
+      openCodeCircuit.recordFailure();
+      const isTimeout = err instanceof Error && err.name === "TimeoutError";
       return c.json(
-        { error: "OpenCode unavailable", message: String(err) },
+        {
+          error: "OpenCode unavailable",
+          message: isTimeout ? "Request timeout" : String(err),
+        },
         502,
       );
     }
@@ -369,6 +445,7 @@ export function createWebApp() {
       },
     });
 
+    const now = Date.now();
     terminals.set(id, {
       id,
       proc,
@@ -376,7 +453,8 @@ export function createWebApp() {
       cwd,
       cols,
       rows,
-      createdAt: Date.now(),
+      createdAt: now,
+      lastActivityAt: now,
       ownerId,
       ownerEmail,
     });
@@ -883,9 +961,11 @@ export function startWebServer(host: string, port: number) {
         return new Response("WebSocket upgrade failed", { status: 500 });
       }
 
-      // WebSocket upgrade for terminal connection
       if (url.pathname.startsWith("/ws/terminals/")) {
         const id = url.pathname.split("/").pop();
+        if (!id) {
+          return new Response("Terminal ID required", { status: 400 });
+        }
         const term = terminals.get(id);
 
         if (!term) {
@@ -923,7 +1003,7 @@ export function startWebServer(host: string, port: number) {
         }
 
         const success = server.upgrade(req, {
-          data: { terminalId: id, ownerId },
+          data: { type: "terminal" as const, terminalId: id, ownerId },
         });
         if (success) return undefined;
 
@@ -936,11 +1016,9 @@ export function startWebServer(host: string, port: number) {
 
     websocket: {
       open(ws: ServerWebSocket<WsData>) {
-        const data = ws.data as
-          | WsData
-          | { type: "opencode_proxy"; upstream: WebSocket };
+        const data = ws.data;
 
-        if ("type" in data && data.type === "opencode_proxy") {
+        if (data.type === "opencode_proxy") {
           const upstream = data.upstream;
 
           upstream.onmessage = (event) => {
@@ -964,7 +1042,7 @@ export function startWebServer(host: string, port: number) {
           return;
         }
 
-        const terminalId = (data as WsData).terminalId;
+        const { terminalId } = data;
         const term = terminals.get(terminalId);
         const sockets = terminalSockets.get(terminalId);
 
@@ -978,73 +1056,83 @@ export function startWebServer(host: string, port: number) {
       },
 
       message(ws: ServerWebSocket<WsData>, message) {
-        const data = ws.data as
-          | WsData
-          | { type: "opencode_proxy"; upstream: WebSocket };
+        try {
+          const data = ws.data;
 
-        if ("type" in data && data.type === "opencode_proxy") {
-          try {
-            data.upstream.send(message);
-          } catch (err) {
-            debug("OpenCode proxy client->upstream error:", err);
-          }
-          return;
-        }
-
-        const terminalId = (data as WsData).terminalId;
-        const term = terminals.get(terminalId);
-
-        if (!term) {
-          debug(`Terminal ${terminalId} not found for message`);
-          return;
-        }
-
-        // Handle different message types
-        if (typeof message === "string") {
-          debug(`WS message for ${terminalId}`);
-          try {
-            const parsed = JSON.parse(message);
-            if (parsed.type === "ping") {
-              // Respond to heartbeat
-              ws.send(JSON.stringify({ type: "pong" }));
-              return;
+          if (data.type === "opencode_proxy") {
+            try {
+              data.upstream.send(message);
+            } catch (err) {
+              debug("OpenCode proxy client->upstream error:", err);
             }
-            if (parsed.type === "resize") {
-              debug(`Resize ${terminalId}: ${parsed.cols}x${parsed.rows}`);
-              term.cols = parsed.cols;
-              term.rows = parsed.rows;
-              // Use Bun.Terminal resize - sends SIGWINCH
-              try {
-                term.terminal.resize(parsed.cols, parsed.rows);
-              } catch (err) {
-                debug(`Resize error for ${terminalId}:`, err);
+            return;
+          }
+
+          const { terminalId } = data;
+          const term = terminals.get(terminalId);
+
+          if (!term) {
+            debug(`Terminal ${terminalId} not found for message`);
+            return;
+          }
+
+          if (typeof message === "string") {
+            debug(`WS message for ${terminalId}`);
+            try {
+              const parsed = JSON.parse(message);
+              if (parsed.type === "ping") {
+                ws.send(JSON.stringify({ type: "pong" }));
+                return;
               }
-              return;
+              if (parsed.type === "resize") {
+                debug(`Resize ${terminalId}: ${parsed.cols}x${parsed.rows}`);
+                term.cols = parsed.cols;
+                term.rows = parsed.rows;
+                try {
+                  term.terminal.resize(parsed.cols, parsed.rows);
+                } catch (err) {
+                  debug(`Resize error for ${terminalId}:`, err);
+                }
+                return;
+              }
+              if (parsed.type === "input") {
+                debug(`Input ${terminalId}`);
+                term.lastActivityAt = Date.now();
+                try {
+                  term.terminal.write(parsed.data);
+                } catch (err) {
+                  debug(`Write error for ${terminalId}:`, err);
+                }
+                return;
+              }
+            } catch {
+              debug(`Raw input ${terminalId}`);
+              term.lastActivityAt = Date.now();
+              try {
+                term.terminal.write(message);
+              } catch (err) {
+                debug(`Write error for ${terminalId}:`, err);
+              }
             }
-            if (parsed.type === "input") {
-              debug(`Input ${terminalId}`);
-              term.terminal.write(parsed.data);
-              return;
+          } else {
+            const buf = message as unknown as Uint8Array;
+            debug(`Binary input ${terminalId}: ${buf.byteLength} bytes`);
+            term.lastActivityAt = Date.now();
+            try {
+              term.terminal.write(new TextDecoder().decode(buf));
+            } catch (err) {
+              debug(`Binary write error for ${terminalId}:`, err);
             }
-          } catch {
-            // Not JSON, treat as raw input
-            debug(`Raw input ${terminalId}`);
-            term.terminal.write(message);
           }
-        } else {
-          // Binary data (Buffer in Bun WebSocket)
-          const buf = message as unknown as Uint8Array;
-          debug(`Binary input ${terminalId}: ${buf.byteLength} bytes`);
-          term.terminal.write(new TextDecoder().decode(buf));
+        } catch (err) {
+          console.error("[WebSocket] Message handler error:", err);
         }
       },
 
       close(ws: ServerWebSocket<WsData>) {
-        const data = ws.data as
-          | WsData
-          | { type: "opencode_proxy"; upstream: WebSocket };
+        const data = ws.data;
 
-        if ("type" in data && data.type === "opencode_proxy") {
+        if (data.type === "opencode_proxy") {
           try {
             data.upstream.close();
           } catch (err) {
@@ -1053,7 +1141,7 @@ export function startWebServer(host: string, port: number) {
           return;
         }
 
-        const terminalId = (data as WsData).terminalId;
+        const { terminalId } = data;
         const sockets = terminalSockets.get(terminalId);
         if (sockets) {
           sockets.delete(ws as unknown as WebSocket);
@@ -1064,10 +1152,53 @@ export function startWebServer(host: string, port: number) {
 
   console.log(`🚀 OpenCode Web Terminal running at http://${host}:${port}`);
 
-  // Cleanup on exit
+  const cleanupIdleTerminals = () => {
+    const now = Date.now();
+
+    for (const [id, term] of terminals) {
+      const idleTime = now - term.lastActivityAt;
+
+      if (idleTime > TERMINAL_IDLE_TIMEOUT_MS) {
+        const sockets = terminalSockets.get(id);
+        console.log(
+          `[cleanup] Closing idle terminal ${id} (idle: ${Math.round(idleTime / 1000 / 60)}min, owner: ${term.ownerEmail})`,
+        );
+        if (sockets) {
+          for (const ws of sockets) {
+            try {
+              ws.send(JSON.stringify({ type: "idle_timeout" }));
+              ws.close();
+            } catch {}
+          }
+        }
+        try {
+          term.proc.kill();
+          term.terminal.close();
+        } catch (err) {
+          debug(`Cleanup error for ${id}:`, err);
+        }
+        terminals.delete(id);
+        terminalSockets.delete(id);
+      }
+    }
+  };
+
+  setInterval(cleanupIdleTerminals, 5 * 60 * 1000);
+
   process.on("SIGINT", () => {
     for (const term of terminals.values()) {
-      term.proc.kill();
+      try {
+        term.proc.kill();
+      } catch {}
+    }
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", () => {
+    for (const term of terminals.values()) {
+      try {
+        term.proc.kill();
+      } catch {}
     }
     process.exit(0);
   });

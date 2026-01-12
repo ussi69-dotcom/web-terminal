@@ -99,6 +99,7 @@ If `OPENCODE_URL` is not set, clicking the OpenCode button shows setup instructi
 | `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)           |
 | `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)    |
 | `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                     |
+| `TERMINAL_IDLE_TIMEOUT_MS`   | 7200000 (2 hours)          | Auto-close terminals after idle time (ms)  |
 | `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)  |
 | `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                |
 | `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag      |

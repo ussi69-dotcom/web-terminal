@@ -398,10 +398,34 @@ class Tile {
   };
 
   updatePosition() {
-    this.element.style.left = `${this.bounds.x}%`;
-    this.element.style.top = `${this.bounds.y}%`;
-    this.element.style.width = `${this.bounds.width}%`;
-    this.element.style.height = `${this.bounds.height}%`;
+    const isMobile = window.innerWidth < 768;
+
+    if (isMobile) {
+      const containerRect = this.container.getBoundingClientRect();
+      const minWidth = 360;
+      const minHeight = 400;
+
+      const width = Math.max(
+        minWidth,
+        (this.bounds.width / 100) * containerRect.width,
+      );
+      const height = Math.max(
+        minHeight,
+        (this.bounds.height / 100) * containerRect.height,
+      );
+      const left = (this.bounds.x / 100) * containerRect.width;
+      const top = (this.bounds.y / 100) * containerRect.height;
+
+      this.element.style.left = `${left}px`;
+      this.element.style.top = `${top}px`;
+      this.element.style.width = `${width}px`;
+      this.element.style.height = `${height}px`;
+    } else {
+      this.element.style.left = `${this.bounds.x}%`;
+      this.element.style.top = `${this.bounds.y}%`;
+      this.element.style.width = `${this.bounds.width}%`;
+      this.element.style.height = `${this.bounds.height}%`;
+    }
   }
 
   setActive(active) {
@@ -519,6 +543,57 @@ class TileManager {
         this.undo();
       }
     });
+
+    this.setupTouchGestures();
+  }
+
+  setupTouchGestures() {
+    if (!this.isMobile) return;
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let scrollLeft = 0;
+    let scrollTop = 0;
+    let isTwoFingerPan = false;
+
+    this.container.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 2) {
+          isTwoFingerPan = true;
+          touchStartX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          touchStartY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          scrollLeft = this.container.scrollLeft;
+          scrollTop = this.container.scrollTop;
+        }
+      },
+      { passive: true },
+    );
+
+    this.container.addEventListener(
+      "touchmove",
+      (e) => {
+        if (isTwoFingerPan && e.touches.length === 2) {
+          const touchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const touchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+          const deltaX = touchStartX - touchX;
+          const deltaY = touchStartY - touchY;
+
+          this.container.scrollLeft = scrollLeft + deltaX;
+          this.container.scrollTop = scrollTop + deltaY;
+        }
+      },
+      { passive: true },
+    );
+
+    this.container.addEventListener(
+      "touchend",
+      () => {
+        isTwoFingerPan = false;
+      },
+      { passive: true },
+    );
   }
 
   createTile(terminalId, workspaceId, split = false, onCloseRequest = null) {

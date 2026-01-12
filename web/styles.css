@@ -316,8 +316,16 @@ body {
 #terminal-container {
   flex: 1;
   position: relative;
-  overflow: auto; /* Allow scrolling when tiles overflow */
+  overflow: auto;
   background: var(--bg-primary);
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+@media (max-width: 767px) {
+  #terminal-container {
+    overflow: scroll;
+  }
 }
 
 /* Tile - floating window */
@@ -330,6 +338,15 @@ body {
   transition:
     box-shadow 0.2s,
     border-color 0.2s;
+  min-width: 360px;
+  min-height: 400px;
+}
+
+@media (max-width: 767px) {
+  .tile {
+    min-width: 320px;
+    min-height: 400px;
+  }
 }
 
 .tile.active {
