@@ -60,20 +60,51 @@ DeckTerm is designed to run behind **Cloudflare Tunnel** with **Cloudflare Acces
 - [ ] Test authentication from a new device
 - [ ] Verify terminal ownership isolation (users can't see each other's terminals)
 
+### OpenCode Integration (Optional)
+
+To enable the embedded AI coding assistant:
+
+1. **Start OpenCode server:**
+
+   ```bash
+   # Run in tmux for persistence
+   tmux new -d -s opencode "opencode web --port 4096"
+   ```
+
+2. **Expose via Cloudflare Tunnel:**
+
+   ```bash
+   # Add to your tunnel config (e.g., ~/.cloudflared/config.yml)
+   # - hostname: opencode.yourdomain.com
+   #   service: http://localhost:4096
+   ```
+
+3. **Configure DeckTerm:**
+
+   ```bash
+   # Add to .env
+   OPENCODE_URL=https://opencode.yourdomain.com
+   ```
+
+4. **Restart DeckTerm** - The OpenCode button will now open the embedded panel.
+
+If `OPENCODE_URL` is not set, clicking the OpenCode button shows setup instructions.
+
 ## Configuration
 
-| Variable                     | Default                    | Description                               |
-| ---------------------------- | -------------------------- | ----------------------------------------- |
-| `PORT`                       | 4173                       | Server port                               |
-| `HOST`                       | 0.0.0.0                    | Bind address                              |
-| `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)          |
-| `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)   |
-| `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                    |
-| `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled) |
-| `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name               |
-| `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag     |
-| `TRUSTED_ORIGINS`            | (empty = allow all in dev) | Comma-separated allowed origins for CORS  |
-| `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode server upstream URL              |
+| Variable                     | Default                    | Description                                |
+| ---------------------------- | -------------------------- | ------------------------------------------ |
+| `PORT`                       | 4173                       | Server port                                |
+| `HOST`                       | 0.0.0.0                    | Bind address                               |
+| `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)           |
+| `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)    |
+| `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                     |
+| `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)  |
+| `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                |
+| `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag      |
+| `TRUSTED_ORIGINS`            | (empty = allow all in dev) | Comma-separated allowed origins for CORS   |
+| `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode backend URL (for health checks)   |
+| `OPENCODE_URL`               | (empty = disabled)         | OpenCode frontend URL (Cloudflare-exposed) |
 
 ## Keyboard Shortcuts
 
