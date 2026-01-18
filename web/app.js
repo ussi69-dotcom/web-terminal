@@ -2175,6 +2175,99 @@ class GitManager {
 }
 
 // =============================================================================
+// SESSION REGISTRY - Persistent session tracking for reconnection
+// =============================================================================
+
+class SessionRegistry {
+  constructor() {
+    this.storageKey = "deckterm-session-registry";
+    this.sessions = this.load();
+  }
+
+  load() {
+    try {
+      const stored = localStorage.getItem(this.storageKey);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  save() {
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(this.sessions));
+    } catch (err) {
+      console.warn("[SessionRegistry] Failed to save:", err);
+    }
+  }
+
+  // Register a new terminal session
+  register(terminalId, data) {
+    this.sessions[terminalId] = {
+      workspaceId: data.workspaceId,
+      cwd: data.cwd,
+      tabNum: data.tabNum,
+      createdAt: Date.now(),
+      ...data,
+    };
+    this.save();
+    dbg("[SessionRegistry] Registered:", terminalId, this.sessions[terminalId]);
+  }
+
+  // Update session data (e.g., when cwd changes)
+  update(terminalId, data) {
+    if (this.sessions[terminalId]) {
+      Object.assign(this.sessions[terminalId], data);
+      this.save();
+    }
+  }
+
+  // Remove a session when terminal is closed
+  remove(terminalId) {
+    delete this.sessions[terminalId];
+    this.save();
+    dbg("[SessionRegistry] Removed:", terminalId);
+  }
+
+  // Get session data for a terminal ID (for reconnection)
+  get(terminalId) {
+    return this.sessions[terminalId] || null;
+  }
+
+  // Check if we have saved state for a terminal ID
+  has(terminalId) {
+    return terminalId in this.sessions;
+  }
+
+  // Get all saved session IDs
+  getAllIds() {
+    return Object.keys(this.sessions);
+  }
+
+  // Clean up sessions that don't exist on server
+  cleanup(serverTerminalIds) {
+    const serverIdSet = new Set(serverTerminalIds);
+    let removed = 0;
+    for (const id of Object.keys(this.sessions)) {
+      if (!serverIdSet.has(id)) {
+        delete this.sessions[id];
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      this.save();
+      dbg("[SessionRegistry] Cleaned up", removed, "stale sessions");
+    }
+  }
+
+  // Clear all sessions
+  clear() {
+    this.sessions = {};
+    this.save();
+  }
+}
+
+// =============================================================================
 // TERMINAL MANAGER - Main orchestrator
 // =============================================================================
 
@@ -2190,6 +2283,9 @@ class TerminalManager {
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
     this.resizeDebounceMs = 120;
+
+    // Session registry for reconnection persistence
+    this.sessionRegistry = new SessionRegistry();
 
     this.container = document.getElementById("terminal-container");
     this.tabs = document.getElementById("terminals-tabs");
@@ -2353,6 +2449,8 @@ class TerminalManager {
         this.updateWorkspaceLabel(t.workspaceId, cwd);
       }
       this.updateTabGroups();
+      // Update session registry with new cwd
+      this.sessionRegistry.update(id, { cwd });
       if (DEBUG) dbg("osc7 cwd", { id, cwd });
       return true;
     });
@@ -2508,14 +2606,20 @@ class TerminalManager {
   async checkExistingTerminals() {
     try {
       const res = await fetch("/api/terminals");
-      const terminals = await res.json();
+      const serverTerminals = await res.json();
 
-      if (terminals.length > 0) {
+      if (serverTerminals.length > 0) {
         console.log(
-          `[DeckTerm] Reconnecting to ${terminals.length} existing terminal(s)...`,
+          `[DeckTerm] Reconnecting to ${serverTerminals.length} existing terminal(s)...`,
         );
-        for (const t of terminals) {
-          await this.reconnectToTerminal(t.id, t.cwd);
+
+        // Clean up stale sessions from registry
+        this.sessionRegistry.cleanup(serverTerminals.map((t) => t.id));
+
+        // Reconnect terminals, using saved session data where available
+        for (const t of serverTerminals) {
+          const savedSession = this.sessionRegistry.get(t.id);
+          await this.reconnectToTerminal(t.id, t.cwd, savedSession);
         }
         return;
       }
@@ -2525,15 +2629,34 @@ class TerminalManager {
     this.createTerminal();
   }
 
-  async reconnectToTerminal(id, cwd) {
-    // Each reconnected terminal gets its own workspace
-    this.workspaceIndex++;
-    const workspaceId = `ws-${this.workspaceIndex}`;
+  async reconnectToTerminal(id, cwd, savedSession = null) {
+    // Use saved workspace info if available, otherwise create new
+    let workspaceId;
+    let tabNum;
+
+    if (savedSession?.workspaceId) {
+      // Restore from saved session
+      workspaceId = savedSession.workspaceId;
+      tabNum = savedSession.tabNum || ++this.tabIndex;
+      // Ensure workspaceIndex stays in sync
+      const wsNum = parseInt(workspaceId.replace("ws-", ""), 10);
+      if (wsNum > this.workspaceIndex) this.workspaceIndex = wsNum;
+      if (tabNum > this.tabIndex) this.tabIndex = tabNum;
+      dbg("[Reconnect] Restoring session:", id, savedSession);
+    } else {
+      // New workspace for this terminal
+      this.workspaceIndex++;
+      workspaceId = `ws-${this.workspaceIndex}`;
+      this.tabIndex++;
+      tabNum = this.tabIndex;
+      dbg("[Reconnect] New workspace for:", id, workspaceId);
+    }
 
     const element = this.tileManager.createTile(id, workspaceId, false, (tid) =>
       this.closeTerminal(tid),
     );
     const overlay = this.createOverlay(element.parentElement);
+    const dimensionOverlay = this.createDimensionOverlay(element.parentElement);
 
     const terminal = this.createXtermInstance();
     terminal.open(element);
@@ -2576,14 +2699,14 @@ class TerminalManager {
       ws.send(JSON.stringify({ type: "input", data: finalData }));
     });
 
-    this.tabIndex++;
-    const tabNum = this.tabIndex;
     this.terminals.set(id, {
       terminal,
       fitAddon,
       ws,
       element,
       overlay,
+      dimensionOverlay,
+      dimensionTimer: null,
       cwd,
       tabNum,
       workspaceId,
@@ -2593,6 +2716,10 @@ class TerminalManager {
       onDataDisposable,
       osc7Disposable,
     });
+
+    // Register with session registry for future reconnection
+    this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
+
     this.addTab(id, cwd, tabNum, workspaceId);
     this.switchTo(id);
     this.attachResizeObserver(id);
@@ -2675,6 +2802,14 @@ class TerminalManager {
       </div>
     `;
     parentElement.appendChild(overlay);
+    return overlay;
+  }
+
+  createDimensionOverlay(container) {
+    const overlay = document.createElement("div");
+    overlay.className = "dimension-overlay";
+    overlay.textContent = "80x24";
+    container.appendChild(overlay);
     return overlay;
   }
 
@@ -2778,6 +2913,25 @@ class TerminalManager {
     }, this.resizeDebounceMs);
   }
 
+  showDimensionOverlay(id) {
+    const t = this.terminals.get(id);
+    if (!t?.dimensionOverlay || !t.terminal) return;
+
+    const cols = t.terminal.cols;
+    const rows = t.terminal.rows;
+
+    t.dimensionOverlay.textContent = `${cols}x${rows}`;
+    t.dimensionOverlay.classList.add("visible");
+
+    // Clear existing timer
+    if (t.dimensionTimer) clearTimeout(t.dimensionTimer);
+
+    // Hide after 1 second
+    t.dimensionTimer = setTimeout(() => {
+      t.dimensionOverlay.classList.remove("visible");
+    }, 1000);
+  }
+
   syncTerminalSize(id) {
     const t = this.terminals.get(id);
     if (!t?.terminal) return;
@@ -2815,6 +2969,7 @@ class TerminalManager {
         try {
           t.fitAddon.fit();
           this.scheduleResize(id);
+          this.showDimensionOverlay(id);
         } catch (err) {
           if (DEBUG) dbg("resizeObserver error", { id, err });
         }
@@ -2859,6 +3014,9 @@ class TerminalManager {
         (tid) => this.closeTerminal(tid),
       );
       const overlay = this.createOverlay(element.parentElement);
+      const dimensionOverlay = this.createDimensionOverlay(
+        element.parentElement,
+      );
 
       const terminal = this.createXtermInstance();
       terminal.open(element);
@@ -2907,6 +3065,8 @@ class TerminalManager {
         ws,
         element,
         overlay,
+        dimensionOverlay,
+        dimensionTimer: null,
         cwd,
         tabNum,
         workspaceId,
@@ -2916,6 +3076,9 @@ class TerminalManager {
         onDataDisposable,
         osc7Disposable,
       });
+
+      // Register with session registry for reconnection persistence
+      this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
 
       // Only add tab for new workspaces, not splits
       if (!split) {
@@ -3038,13 +3201,25 @@ class TerminalManager {
         const color1 = blended[0] || "#58a6ff";
         const color2 = blended[1] || color1;
         const color3 = blended[2] || color2;
-        tab.style.setProperty("--color-1", TerminalColors.hexToRgba(color1, 0.2));
-        tab.style.setProperty("--color-2", TerminalColors.hexToRgba(color2, 0.2));
-        tab.style.setProperty("--color-3", TerminalColors.hexToRgba(color3, 0.2));
+        tab.style.setProperty(
+          "--color-1",
+          TerminalColors.hexToRgba(color1, 0.2),
+        );
+        tab.style.setProperty(
+          "--color-2",
+          TerminalColors.hexToRgba(color2, 0.2),
+        );
+        tab.style.setProperty(
+          "--color-3",
+          TerminalColors.hexToRgba(color3, 0.2),
+        );
         tab.style.setProperty("--color-1-solid", color1);
         tab.style.setProperty("--color-2-solid", color2);
         tab.style.setProperty("--color-3-solid", color3);
-        tab.style.setProperty("--tab-border", TerminalColors.hexToRgba(color1, 0.35));
+        tab.style.setProperty(
+          "--tab-border",
+          TerminalColors.hexToRgba(color1, 0.35),
+        );
 
         if (countBadge) countBadge.textContent = count;
         if (dot) dot.style.removeProperty("background-color");
@@ -3210,6 +3385,9 @@ class TerminalManager {
     } catch {}
 
     this.terminals.delete(id);
+
+    // Remove from session registry (terminal is explicitly closed)
+    this.sessionRegistry.remove(id);
 
     if (this.activeId === id) {
       const remaining = Array.from(this.terminals.keys());
