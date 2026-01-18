@@ -2658,6 +2658,11 @@ class TerminalManager {
     const overlay = this.createOverlay(element.parentElement);
     const dimensionOverlay = this.createDimensionOverlay(element.parentElement);
 
+    const sizeWarning = document.createElement("div");
+    sizeWarning.className = "size-warning";
+    sizeWarning.textContent = "Terminal too small. Minimum size: 80x24";
+    element.parentElement.appendChild(sizeWarning);
+
     const terminal = this.createXtermInstance();
     terminal.open(element);
     const osc7Disposable = this.attachOsc7Handler(id, terminal);
@@ -2706,6 +2711,7 @@ class TerminalManager {
       element,
       overlay,
       dimensionOverlay,
+      sizeWarning,
       dimensionTimer: null,
       cwd,
       tabNum,
@@ -2968,7 +2974,21 @@ class TerminalManager {
       requestAnimationFrame(() => {
         try {
           t.fitAddon.fit();
-          this.scheduleResize(id);
+
+          // Enforce minimum size
+          const cols = t.terminal.cols;
+          const rows = t.terminal.rows;
+          const isTooSmall = cols < 80 || rows < 24;
+
+          if (t.sizeWarning) {
+            t.sizeWarning.classList.toggle("visible", isTooSmall);
+          }
+
+          // Only send resize if meets minimum
+          if (!isTooSmall) {
+            this.scheduleResize(id);
+          }
+
           this.showDimensionOverlay(id);
         } catch (err) {
           if (DEBUG) dbg("resizeObserver error", { id, err });
@@ -3018,6 +3038,11 @@ class TerminalManager {
         element.parentElement,
       );
 
+      const sizeWarning = document.createElement("div");
+      sizeWarning.className = "size-warning";
+      sizeWarning.textContent = "Terminal too small. Minimum size: 80x24";
+      element.parentElement.appendChild(sizeWarning);
+
       const terminal = this.createXtermInstance();
       terminal.open(element);
       const osc7Disposable = this.attachOsc7Handler(id, terminal);
@@ -3066,6 +3091,7 @@ class TerminalManager {
         element,
         overlay,
         dimensionOverlay,
+        sizeWarning,
         dimensionTimer: null,
         cwd,
         tabNum,
