@@ -2282,7 +2282,7 @@ class TerminalManager {
     this.wrapLines = storedWrap ? storedWrap === "1" : false;
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
-    this.resizeDebounceMs = 120;
+    this.resizeDebounceMs = 80;
     this.debugMode = false;
 
     // Session registry for reconnection persistence
