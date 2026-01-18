@@ -5,7 +5,7 @@
 | Phase | Name                 | Description                                          | Status       |
 | ----- | -------------------- | ---------------------------------------------------- | ------------ |
 | 1     | Terminal Scaling Fix | Fix content not filling window, remove gaps          | **COMPLETE** |
-| 2     | Platform-Adaptive UI | Hide extra keys on desktop, improve mobile detection | pending      |
+| 2     | Platform-Adaptive UI | Hide extra keys on desktop, improve mobile detection | **COMPLETE** |
 | 3     | Clipboard Overhaul   | Ctrl+V paste, auto-copy selection, image support     | pending      |
 | 4     | Session Lifecycle    | Fast reconnect, auto-cleanup orphaned sessions       | pending      |
 | 5     | Polish & Testing     | Regression tests, performance benchmarks             | pending      |
@@ -57,14 +57,14 @@
 
 **Deliverables:**
 
-- [ ] Implement reliable platform detection (not just user-agent)
+- [x] Implement reliable platform detection (not just user-agent)
   - `window.visualViewport` for keyboard detection
   - `'ontouchstart' in window` for touch capability
   - Screen width threshold (< 768px = mobile)
-- [ ] Hide extra keys bar on desktop by default
-- [ ] Show extra keys bar on mobile when virtual keyboard appears
-- [ ] Add toggle button for manual show/hide on desktop (power users)
-- [ ] Ensure keyboard shortcuts still work on desktop
+- [x] Hide extra keys bar on desktop by default
+- [x] Show extra keys bar on mobile when virtual keyboard appears
+- [x] Add toggle button for manual show/hide on desktop (power users)
+- [x] Ensure keyboard shortcuts still work on desktop
 
 **Key Files:**
 
