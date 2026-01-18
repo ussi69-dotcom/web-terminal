@@ -9,7 +9,7 @@ import { test as base, expect, Page } from "@playwright/test";
  */
 export async function checkServer(): Promise<boolean> {
   try {
-    const response = await fetch("http://localhost:4173");
+    const response = await fetch("http://localhost:4174");
     return response.ok;
   } catch {
     return false;

@@ -17,7 +17,7 @@ import {
 } from "./fixtures";
 
 // Test constants
-const APP_URL = "http://localhost:4173";
+const APP_URL = "http://localhost:4174";
 const NORMAL_WIDTH = 1200;
 const NORMAL_HEIGHT = 800;
 const SMALL_WIDTH = 400;

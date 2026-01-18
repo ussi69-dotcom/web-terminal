@@ -10,7 +10,7 @@
 
 import { test, expect, waitForTerminal, resizeWindow } from "./fixtures";
 
-const BASE_URL = "http://localhost:4173";
+const BASE_URL = "http://localhost:4174";
 
 // Helper to get visible elements (handles multiple tabs)
 const visibleXterm = ".xterm:visible";

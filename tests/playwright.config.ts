@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  baseURL: "http://localhost:4173",
+  baseURL: "http://localhost:4174",
   use: {
     browserName: "chromium",
     headless: true,

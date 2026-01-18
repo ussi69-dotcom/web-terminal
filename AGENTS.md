@@ -33,12 +33,14 @@ bun run dev            # Start dev server (default: http://localhost:4174)
 bun run start          # Production
 ```
 
-## Development Instances
+## Environments
 
-| Port | Purpose          | Folder                    |
-| ---- | ---------------- | ------------------------- |
-| 4173 | Stable (private) | /home/deploy/web-terminal |
-| 4174 | Development      | /home/deploy/deckterm     |
+| Port | Purpose     | Folder                    | Systemd Service      |
+| ---- | ----------- | ------------------------- | -------------------- |
+| 4173 | Production  | /home/deploy/deckterm     | deckterm.service     |
+| 4174 | Development | /home/deploy/deckterm_dev | deckterm-dev.service |
+
+**IMPORTANT:** Tests must ALWAYS run against port 4174 (dev), NEVER 4173 (prod).
 
 ## Code Map
 
@@ -89,7 +91,7 @@ raw string                         // PTY output
 
 | Variable                     | Default | Description         |
 | ---------------------------- | ------- | ------------------- |
-| `PORT`                       | 4174    | Server port         |
+| `PORT`                       | 4174    | Server port (dev)   |
 | `HOST`                       | 0.0.0.0 | Bind address        |
 | `OPENCODE_WEB_DEBUG`         | 0       | Debug logging       |
 | `OPENCODE_WEB_MAX_TERMINALS` | 10      | Max concurrent PTYs |

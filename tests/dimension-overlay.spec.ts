@@ -23,7 +23,7 @@ test.describe("Dimension Overlay", () => {
 
   test("dimension overlay exists on terminal creation", async ({ page }) => {
     // Navigate to the terminal application
-    await page.goto("http://localhost:4173");
+    await page.goto("http://localhost:4174");
 
     // Wait for the terminal to fully load
     await waitForTerminal(page);
@@ -36,7 +36,7 @@ test.describe("Dimension Overlay", () => {
 
   test("dimension overlay appears on resize", async ({ page }) => {
     // Navigate to the terminal application
-    await page.goto("http://localhost:4173");
+    await page.goto("http://localhost:4174");
 
     // Wait for the terminal to fully load
     await waitForTerminal(page);
@@ -58,7 +58,7 @@ test.describe("Dimension Overlay", () => {
 
   test("dimension overlay fades after 1 second", async ({ page }) => {
     // Navigate to the terminal application
-    await page.goto("http://localhost:4173");
+    await page.goto("http://localhost:4174");
 
     // Wait for the terminal to fully load
     await waitForTerminal(page);
@@ -84,7 +84,7 @@ test.describe("Dimension Overlay", () => {
 
   test("dimension overlay updates on multiple resizes", async ({ page }) => {
     // Navigate to the terminal application
-    await page.goto("http://localhost:4173");
+    await page.goto("http://localhost:4174");
 
     // Wait for the terminal to fully load
     await waitForTerminal(page);
