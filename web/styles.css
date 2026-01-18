@@ -878,6 +878,28 @@ body {
   color: var(--text-primary);
 }
 
+/* Hide extra keys on desktop by default (JS will show if saved state) */
+@media (pointer: fine), (hover: hover) {
+  #extra-keys {
+    display: none;
+  }
+
+  #extra-keys:not(.hidden) {
+    display: flex;
+  }
+}
+
+/* On mobile, always use flex (visibility controlled by JS for keyboard) */
+@media (pointer: coarse) and (hover: none) {
+  #extra-keys {
+    display: flex;
+  }
+
+  #extra-keys.hidden {
+    display: none;
+  }
+}
+
 /* =============================================================================
    SEARCH BAR
    ============================================================================= */
