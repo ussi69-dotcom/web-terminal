@@ -2137,3 +2137,29 @@ body.virtual-keyboard-open .extra-keys {
 .debug-overlay .debug-value.mismatch {
   color: var(--accent-red);
 }
+
+/* =============================================================================
+   EXTRA KEYS TOGGLE BUTTON
+   ============================================================================= */
+
+#extra-keys-toggle-btn.active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+}
+
+#extra-keys-toggle-btn.active:hover {
+  background: var(--accent-hover);
+}
+
+/* Hide toggle button on mobile (extra keys managed by keyboard) */
+@media (pointer: coarse) and (hover: none) {
+  #extra-keys-toggle-btn {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  #extra-keys-toggle-btn {
+    display: none;
+  }
+}
