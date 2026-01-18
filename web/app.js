@@ -1274,6 +1274,8 @@ class ExtraKeysManager {
   constructor(terminalManager) {
     this.tm = terminalManager;
     this.modifiers = { ctrl: false, alt: false, shift: false };
+    this.visible = this.loadVisibilityState();
+    this.extraKeysEl = null;
     this.init();
   }
 
@@ -1338,6 +1340,27 @@ class ExtraKeysManager {
         toggle.textContent = row2.classList.contains("hidden") ? "⋯" : "⋮";
       }
     });
+
+    // Store reference and apply initial visibility
+    this.extraKeysEl = extraKeys;
+
+    // On desktop, apply saved state (default: hidden)
+    if (platformDetector.isDesktop) {
+      this.updateVisibility();
+    }
+
+    // Setup toggle button handler
+    document
+      .querySelector('[data-action="toggle-extra-keys"]')
+      ?.addEventListener("click", () => this.toggle());
+
+    // Keyboard shortcut: Ctrl+.
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.key === ".") {
+        e.preventDefault();
+        this.toggle();
+      }
+    });
   }
 
   handleKey(key) {
@@ -1391,6 +1414,60 @@ class ExtraKeysManager {
     const active = this.tm.terminals.get(this.tm.activeId);
     if (active?.terminal) {
       active.terminal.focus();
+    }
+  }
+
+  loadVisibilityState() {
+    // On mobile, always start visible (managed by keyboard)
+    if (platformDetector.isMobile) return true;
+
+    // On desktop, load from localStorage (default: hidden)
+    const saved = localStorage.getItem("extraKeysVisible");
+    return saved === "true";
+  }
+
+  saveVisibilityState() {
+    localStorage.setItem("extraKeysVisible", String(this.visible));
+  }
+
+  setVisible(visible) {
+    this.visible = visible;
+    this.updateVisibility();
+    if (platformDetector.isDesktop) {
+      this.saveVisibilityState();
+    }
+  }
+
+  toggle() {
+    this.setVisible(!this.visible);
+  }
+
+  updateVisibility() {
+    if (!this.extraKeysEl) return;
+
+    const toggleBtn = document.getElementById("extra-keys-toggle-btn");
+
+    if (this.visible) {
+      this.extraKeysEl.classList.remove("hidden");
+      toggleBtn?.classList.add("active");
+    } else {
+      this.extraKeysEl.classList.add("hidden");
+      toggleBtn?.classList.remove("active");
+    }
+  }
+
+  // Called by viewport resize handler for mobile keyboard
+  showForKeyboard() {
+    if (platformDetector.isMobile) {
+      this.visible = true;
+      this.updateVisibility();
+    }
+  }
+
+  hideForKeyboard() {
+    if (platformDetector.isMobile) {
+      this.visible = false;
+      this.updateVisibility();
     }
   }
 }
