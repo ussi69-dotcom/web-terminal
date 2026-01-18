@@ -459,7 +459,7 @@ class Tile {
   };
 
   updatePosition() {
-    const isMobile = window.innerWidth < 768;
+    const isMobile = platformDetector.isMobile;
 
     if (isMobile) {
       const containerRect = this.container.getBoundingClientRect();
@@ -562,6 +562,56 @@ class Workspace {
 }
 
 // =============================================================================
+// PLATFORM DETECTOR - Enhanced mobile/desktop detection
+// =============================================================================
+
+class PlatformDetector {
+  constructor() {
+    this.hasTouch = navigator.maxTouchPoints > 0;
+    this.isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    this.noHover = window.matchMedia("(hover: none)").matches;
+    this.smallScreen = window.innerWidth < 768;
+
+    // Listen for changes
+    window.matchMedia("(pointer: coarse)").addEventListener("change", (e) => {
+      this.isCoarsePointer = e.matches;
+      this.notifyChange();
+    });
+
+    window.addEventListener("resize", () => {
+      this.smallScreen = window.innerWidth < 768;
+      this.notifyChange();
+    });
+
+    this.listeners = [];
+  }
+
+  get isMobile() {
+    return (
+      (this.isCoarsePointer && this.noHover) ||
+      (this.hasTouch && this.smallScreen)
+    );
+  }
+
+  get isDesktop() {
+    return !this.isMobile;
+  }
+
+  onChange(callback) {
+    this.listeners.push(callback);
+    return () => {
+      this.listeners = this.listeners.filter((cb) => cb !== callback);
+    };
+  }
+
+  notifyChange() {
+    this.listeners.forEach((cb) => cb(this));
+  }
+}
+
+const platformDetector = new PlatformDetector();
+
+// =============================================================================
 // TILE MANAGER - Smart tiling window manager
 // =============================================================================
 
@@ -575,7 +625,7 @@ class TileManager {
     this.activeWorkspaceId = null;
     this.colorIndex = 0;
     this.workspaceIndex = 0;
-    this.isMobile = window.innerWidth < 768;
+    this.isMobile = platformDetector.isMobile;
 
     // Undo stack
     this.undoStack = [];
@@ -592,12 +642,8 @@ class TileManager {
 
     // Handle window resize
     window.addEventListener("resize", () => {
-      const wasMobile = this.isMobile;
-      this.isMobile = window.innerWidth < 768;
-
-      if (wasMobile !== this.isMobile) {
-        this.relayout(this.activeWorkspaceId);
-      }
+      this.isMobile = platformDetector.isMobile;
+      // Platform change handled by PlatformDetector
     });
 
     // Keyboard shortcuts
