@@ -3692,8 +3692,11 @@ class TerminalManager {
     const keyboardHeight = windowHeight - viewportHeight - viewport.offsetTop;
 
     const extraKeys = document.getElementById("extra-keys");
+    const isKeyboardOpen = keyboardHeight > 100;
 
-    if (keyboardHeight > 100) {
+    if (isKeyboardOpen) {
+      // Show extra keys above virtual keyboard
+      this.extraKeys?.showForKeyboard();
       extraKeys.style.position = "fixed";
       extraKeys.style.bottom = `${keyboardHeight}px`;
       extraKeys.style.left = "0";
@@ -3702,6 +3705,8 @@ class TerminalManager {
       this.container.style.height = `calc(${viewportHeight}px - var(--toolbar-height, 50px) - var(--extra-keys-height, 52px))`;
       document.body.classList.add("virtual-keyboard-open");
     } else {
+      // Hide extra keys when keyboard closes (mobile only)
+      this.extraKeys?.hideForKeyboard();
       extraKeys.style.cssText = "";
       this.container.style.height = "";
       document.body.classList.remove("virtual-keyboard-open");
