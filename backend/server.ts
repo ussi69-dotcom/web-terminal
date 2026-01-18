@@ -6,6 +6,8 @@ import {
   cloudflareAccess,
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
+import { mkdir, readdir, unlink, stat } from "node:fs/promises";
+import { join } from "node:path";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -91,6 +93,11 @@ const OPENCODE_UPSTREAM =
   process.env.OPENCODE_UPSTREAM || "http://127.0.0.1:4096";
 const OPENCODE_URL = process.env.OPENCODE_URL || "";
 
+// Clipboard image configuration
+const CLIPBOARD_IMAGES_DIR = "/tmp/deckterm-clipboard";
+const CLIPBOARD_IMAGE_MAX_SIZE = 10 * 1024 * 1024; // 10MB
+const CLIPBOARD_IMAGE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 // Hop-by-hop headers to strip from proxied requests/responses
 const HOP_BY_HOP_HEADERS = [
   "connection",
@@ -154,6 +161,47 @@ const rateLimitState = {
     this.timestamps.push(Date.now());
   },
 };
+
+// =============================================================================
+// CLIPBOARD IMAGE HELPERS
+// =============================================================================
+
+// Ensure clipboard directory exists
+async function ensureClipboardDir() {
+  try {
+    await mkdir(CLIPBOARD_IMAGES_DIR, { recursive: true });
+  } catch {
+    // Directory exists
+  }
+}
+
+// Cleanup old clipboard images (called periodically)
+async function cleanupClipboardImages() {
+  try {
+    const files = await readdir(CLIPBOARD_IMAGES_DIR);
+    const now = Date.now();
+
+    for (const file of files) {
+      const filePath = join(CLIPBOARD_IMAGES_DIR, file);
+      try {
+        const fileStat = await stat(filePath);
+        if (now - fileStat.mtimeMs > CLIPBOARD_IMAGE_TTL_MS) {
+          await unlink(filePath);
+          console.log(`[Clipboard] Cleaned up old image: ${file}`);
+        }
+      } catch {
+        // File may have been deleted
+      }
+    }
+  } catch {
+    // Directory may not exist yet
+  }
+}
+
+// Run cleanup every 15 minutes
+setInterval(cleanupClipboardImages, 15 * 60 * 1000);
+// Ensure directory exists on startup
+ensureClipboardDir();
 
 // Recover existing tmux sessions on startup (for TMUX_BACKEND)
 async function recoverTmuxSessions(): Promise<number> {
@@ -1178,6 +1226,104 @@ export function createWebApp() {
       return c.json({ branches, cwd });
     } catch (err) {
       return c.json({ error: "Git branch failed", message: String(err) }, 400);
+    }
+  });
+
+  // =============================================================================
+  // CLIPBOARD IMAGE UPLOAD
+  // =============================================================================
+
+  // Whitelist of allowed image types for security
+  const ALLOWED_IMAGE_TYPES = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+  ];
+
+  app.post("/api/clipboard/image", async (c) => {
+    try {
+      const contentType = c.req.header("content-type") || "";
+
+      // Validate content type against whitelist
+      const isAllowedType = ALLOWED_IMAGE_TYPES.some((t) =>
+        contentType.includes(t),
+      );
+      if (!contentType.includes("multipart/form-data") && !isAllowedType) {
+        return c.json(
+          { error: "Invalid image type. Allowed: PNG, JPEG, GIF, WEBP" },
+          400,
+        );
+      }
+
+      let imageData: Uint8Array;
+      let extension = "png";
+
+      if (contentType.includes("multipart/form-data")) {
+        const formData = await c.req.formData();
+        const file = formData.get("image") as File | null;
+
+        if (!file) {
+          return c.json({ error: "No image file provided" }, 400);
+        }
+
+        if (file.size > CLIPBOARD_IMAGE_MAX_SIZE) {
+          return c.json({ error: "Image too large (max 10MB)" }, 400);
+        }
+
+        imageData = new Uint8Array(await file.arrayBuffer());
+
+        // Determine extension from mime type
+        if (file.type.includes("jpeg") || file.type.includes("jpg")) {
+          extension = "jpg";
+        } else if (file.type.includes("gif")) {
+          extension = "gif";
+        } else if (file.type.includes("webp")) {
+          extension = "webp";
+        }
+      } else {
+        // Raw image data in body
+        const body = await c.req.arrayBuffer();
+
+        if (body.byteLength === 0) {
+          return c.json({ error: "Empty image data" }, 400);
+        }
+
+        if (body.byteLength > CLIPBOARD_IMAGE_MAX_SIZE) {
+          return c.json({ error: "Image too large (max 10MB)" }, 400);
+        }
+
+        imageData = new Uint8Array(body);
+
+        if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+          extension = "jpg";
+        } else if (contentType.includes("gif")) {
+          extension = "gif";
+        } else if (contentType.includes("webp")) {
+          extension = "webp";
+        }
+      }
+
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).slice(2, 8);
+      const filename = `clipboard-${timestamp}-${random}.${extension}`;
+      const filePath = join(CLIPBOARD_IMAGES_DIR, filename);
+
+      await Bun.write(filePath, imageData);
+
+      console.log(
+        `[Clipboard] Image saved: ${filePath} (${imageData.length} bytes)`,
+      );
+
+      return c.json({
+        success: true,
+        path: filePath,
+        filename,
+        size: imageData.length,
+      });
+    } catch (e) {
+      console.error("[Clipboard] Image upload error:", e);
+      return c.json({ error: "Upload failed" }, 500);
     }
   });
 
