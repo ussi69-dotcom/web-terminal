@@ -3368,6 +3368,7 @@ class TerminalManager {
     t.ws?.close();
     if (t.resizeObserver) t.resizeObserver.disconnect();
     if (t.resizeTimer) clearTimeout(t.resizeTimer);
+    if (t.dimensionTimer) clearTimeout(t.dimensionTimer);
     t.onDataDisposable?.dispose?.();
     t.osc7Disposable?.dispose?.();
     try {
