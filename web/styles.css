@@ -602,6 +602,43 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* xterm scrollbar - ensure consistent styling with high specificity */
+.terminal-wrapper .xterm .xterm-viewport,
+.xterm .xterm-viewport {
+  scrollbar-width: auto !important;
+  scrollbar-color: #6e7681 #161b22 !important;
+}
+
+.terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar,
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 14px !important;
+  display: block !important;
+}
+
+.terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-track,
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: #161b22 !important;
+  border-left: 1px solid #30363d !important;
+}
+
+.terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-thumb,
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #6e7681 !important;
+  border-radius: 7px !important;
+  border: 3px solid #161b22 !important;
+  min-height: 40px !important;
+}
+
+.terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover,
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #8b949e !important;
+}
+
+.terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-thumb:active,
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
+  background: #58a6ff !important;
+}
+
 /* =============================================================================
    TERMINAL OVERLAY (reconnect/error states)
    ============================================================================= */
@@ -1385,25 +1422,42 @@ body.virtual-keyboard-open .extra-keys {
 }
 
 /* =============================================================================
-   SCROLLBAR
+   SCROLLBAR - wider, more visible, easier to grab
    ============================================================================= */
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 14px;
+  height: 14px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-primary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-primary);
-  border-radius: 4px;
+  background: var(--text-muted);
+  border-radius: 7px;
+  border: 3px solid var(--bg-secondary);
+  min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
+  background: var(--text-secondary);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--accent-blue);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg-secondary);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--text-muted) var(--bg-secondary);
 }
 
 /* =============================================================================
@@ -1532,9 +1586,24 @@ body.virtual-keyboard-open .extra-keys {
     max-height: 90vh;
   }
 
+  /* Mobile scrollbars - still visible and usable */
   ::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-width: 2px;
+  }
+
+  .terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar,
+  .xterm .xterm-viewport::-webkit-scrollbar {
+    width: 10px !important;
+  }
+
+  .terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-thumb,
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+    border-width: 2px !important;
   }
 
   /* Mobile: tiles become full-screen stack */
