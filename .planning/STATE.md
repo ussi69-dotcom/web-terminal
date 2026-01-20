@@ -6,12 +6,12 @@
 
 ## Current Focus
 
-**Phase:** v2.0 Refactor - Phase 1 (Terminal Scaling Fix)
-**Status:** COMPLETE
-**Last Updated:** 2026-01-18 21:10
+**Phase:** Lazygit-inspired Git Panel
+**Status:** PLAN READY
+**Last Updated:** 2026-01-20 19:50
 
-**Active Plan:** `.planning/ROADMAP.md`
-**Worktree:** feature/pr4-git-panel (will create new branch for refactor)
+**Active Plan:** `docs/plans/2026-01-20-lazygit-git-panel.md`
+**Design Doc:** `docs/plans/2026-01-20-lazygit-git-panel-design.md`
 
 ## What's Done
 
