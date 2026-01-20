@@ -17,6 +17,7 @@
       }
     </style>
     <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css" />
     <link rel="stylesheet" href="/styles.css?v=20260112f" />
     <!-- Lucide Icons for modern UI -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
@@ -145,6 +146,15 @@
           <span data-key="PGDN" class="ek-btn">PgDn</span>
         </div>
         <span id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</span>
+      </div>
+
+      <!-- Debug Panel (temporary) -->
+      <div id="debug-panel" style="position:fixed;top:0;left:0;right:0;max-height:150px;overflow-y:auto;background:rgba(0,0,0,0.9);color:#0f0;font-family:monospace;font-size:11px;padding:5px;z-index:9999;display:none;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+          <span>DEBUG LOG</span>
+          <button onclick="document.getElementById('debug-panel').style.display='none'" style="background:#f00;color:#fff;border:none;padding:2px 8px;">X</button>
+        </div>
+        <div id="debug-log"></div>
       </div>
 
       <!-- Search Bar -->
@@ -315,6 +325,7 @@
       }
     </script>
     <script src="/terminal-colors.js?v=20260112g"></script>
-    <script src="/app.js?v=20260112g"></script>
+    <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html.min.js"></script>
+    <script src="/app.js?v=20260120h"></script>
   </body>
 </html>
