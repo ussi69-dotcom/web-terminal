@@ -1229,6 +1229,109 @@ export function createWebApp() {
     }
   });
 
+  // GET /api/git/log?cwd=...&limit=50
+  app.get("/api/git/log", async (c) => {
+    const cwd = c.req.query("cwd") || process.env.HOME;
+    const limit = parseInt(c.req.query("limit") || "50");
+
+    if (!cwd || !(await validateGitCwd(cwd))) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
+
+    try {
+      const proc = Bun.spawn(
+        [
+          "git",
+          "log",
+          `--max-count=${Math.min(limit, 200)}`,
+          "--format=%h|%H|%s|%an|%aI",
+          "--graph",
+          "--",
+        ],
+        {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+
+      const timeoutId = setTimeout(() => proc.kill(), 10000);
+      const output = await new Response(proc.stdout).text();
+      clearTimeout(timeoutId);
+
+      const commits = output
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          // Parse graph prefix (*, |, etc) and commit data
+          const graphMatch = line.match(/^([*|\\ \/]+)\s*(.*)$/);
+          const graph = graphMatch ? graphMatch[1] : "";
+          const data = graphMatch ? graphMatch[2] : line;
+
+          const parts = data.split("|");
+          if (parts.length >= 5) {
+            return {
+              hash: parts[0],
+              fullHash: parts[1],
+              message: parts[2],
+              author: parts[3],
+              date: parts[4],
+              graph: graph.trim(),
+            };
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      return c.json({ commits, cwd });
+    } catch (err) {
+      return c.json({ error: "Git log failed", message: String(err) }, 400);
+    }
+  });
+
+  // POST /api/git/checkout { cwd, branch }
+  app.post("/api/git/checkout", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { cwd, branch } = body;
+
+    if (!cwd || !(await validateGitCwd(cwd))) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
+
+    if (
+      !branch ||
+      typeof branch !== "string" ||
+      !/^[\w\-\/\.]+$/.test(branch)
+    ) {
+      return c.json({ error: "Invalid branch name" }, 400);
+    }
+
+    try {
+      const proc = Bun.spawn(["git", "checkout", branch, "--"], {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const timeoutId = setTimeout(() => proc.kill(), 10000);
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      clearTimeout(timeoutId);
+
+      if (exitCode !== 0) {
+        return c.json({ error: "Checkout failed", message: stderr }, 400);
+      }
+
+      return c.json({ success: true, branch });
+    } catch (err) {
+      return c.json(
+        { error: "Git checkout failed", message: String(err) },
+        400,
+      );
+    }
+  });
+
   // =============================================================================
   // CLIPBOARD IMAGE UPLOAD
   // =============================================================================
