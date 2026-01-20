@@ -2,6 +2,69 @@
 // Version 2.0 - Complete rewrite with smart tiling, groups, and mobile support
 
 // =============================================================================
+// DEBUG PANEL (temporary - remove after fixing)
+// =============================================================================
+(function () {
+  const APP_VERSION = "20260119a";
+  const DEBUG_MODE = location.search.includes("debug=1");
+  const originalLog = console.log;
+  console.log = function (...args) {
+    originalLog.apply(console, args);
+    // Only show debug panel when ?debug=1 is in URL
+    if (!DEBUG_MODE) return;
+    const msg = args
+      .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
+      .join(" ");
+    if (msg.includes("[ExtraKeys]") || msg.includes("[Debug]")) {
+      const panel = document.getElementById("debug-panel");
+      const log = document.getElementById("debug-log");
+      if (panel && log) {
+        panel.style.display = "block";
+        const line = document.createElement("div");
+        line.textContent = new Date().toLocaleTimeString() + " " + msg;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+        // Keep only last 20 lines
+        while (log.children.length > 20) log.removeChild(log.firstChild);
+      }
+    }
+  };
+
+  // Track where keyboard input goes
+  document.addEventListener(
+    "input",
+    (e) => {
+      console.log(
+        "[Debug] INPUT event on:",
+        e.target.tagName,
+        e.target.className,
+        "value:",
+        e.data,
+      );
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key.length === 1 || e.key === "Enter") {
+        console.log(
+          "[Debug] KEYDOWN:",
+          e.key,
+          "target:",
+          e.target.tagName,
+          e.target.className,
+        );
+      }
+    },
+    true,
+  );
+
+  console.log("[Debug] App version:", APP_VERSION);
+})();
+
+// =============================================================================
 // CONSTANTS
 // =============================================================================
 
@@ -1276,12 +1339,79 @@ class ExtraKeysManager {
     this.modifiers = { ctrl: false, alt: false, shift: false };
     this.visible = this.loadVisibilityState();
     this.extraKeysEl = null;
+    this.debugEl = null;
+    this.lastInput = "";
     this.init();
+  }
+
+  createDebugOverlay() {
+    // Create visible debug overlay for mobile testing
+    const el = document.createElement("div");
+    el.id = "modifier-debug";
+    el.style.cssText = `
+      position: fixed;
+      top: 50px;
+      right: 10px;
+      background: rgba(0,0,0,0.9);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      z-index: 99999;
+      max-width: 200px;
+      pointer-events: none;
+    `;
+    el.textContent = "MOD: --- | IN: --- | OUT: ---";
+    document.body.appendChild(el);
+    this.debugEl = el;
+  }
+
+  updateDebug(input = null, output = null) {
+    if (!this.debugEl) return;
+    const m = this.modifiers;
+    const modStr =
+      [m.ctrl ? "CTRL" : "", m.alt ? "ALT" : "", m.shift ? "SHIFT" : ""]
+        .filter(Boolean)
+        .join("+") || "---";
+
+    let text = `MOD: ${modStr}`;
+    if (input !== null) {
+      this.lastInput = input;
+      text += ` | IN: "${input}"`;
+    }
+    if (output !== null) {
+      text += ` | OUT: "${output}"`;
+      if (output !== input) {
+        text += " ✓";
+      }
+    }
+    this.debugEl.textContent = text;
   }
 
   init() {
     const extraKeys = document.getElementById("extra-keys");
     if (!extraKeys) return;
+
+    // Create visible debug overlay for mobile testing
+    this.createDebugOverlay();
+
+    // GLOBAL input listener to catch ALL input events
+    document.addEventListener(
+      "input",
+      (e) => {
+        const dbg = document.getElementById("modifier-debug");
+        if (dbg) {
+          const mods = this.modifiers;
+          const modStr =
+            [mods.ctrl ? "C" : "", mods.alt ? "A" : "", mods.shift ? "S" : ""]
+              .filter(Boolean)
+              .join("+") || "-";
+          dbg.textContent = `[INPUT] data="${e.data}" mod=${modStr} tgt=${e.target?.className?.slice(0, 15)}`;
+        }
+      },
+      true,
+    );
 
     const toggle = document.getElementById("extra-keys-toggle");
     const row2 = document.querySelector(".extra-keys-row-2");
@@ -1292,12 +1422,17 @@ class ExtraKeysManager {
       "touchstart",
       (e) => {
         const btn = e.target.closest(".ek-btn, .ek-toggle");
+        console.log(
+          "[ExtraKeys] touchstart, btn:",
+          btn?.dataset?.key || btn?.id,
+        );
         if (btn) {
           e.preventDefault();
           e.stopImmediatePropagation();
           touchedKey =
             btn.dataset.key ||
             (btn.id === "extra-keys-toggle" ? "TOGGLE" : null);
+          console.log("[ExtraKeys] touchedKey set to:", touchedKey);
         }
       },
       { passive: false, capture: true },
@@ -1306,6 +1441,7 @@ class ExtraKeysManager {
     extraKeys.addEventListener(
       "touchend",
       (e) => {
+        console.log("[ExtraKeys] touchend, touchedKey:", touchedKey);
         e.preventDefault();
         e.stopImmediatePropagation();
         if (touchedKey) {
@@ -1364,15 +1500,26 @@ class ExtraKeysManager {
   }
 
   handleKey(key) {
+    console.log("[ExtraKeys] handleKey called:", key);
     if (!key) return;
-    const active = this.tm.terminals.get(this.tm.activeId);
-    if (!active?.ws) return;
 
+    // Handle modifiers FIRST - they don't need an active terminal
     const upperKey = key.toUpperCase();
     if (upperKey === "CTRL" || upperKey === "ALT" || upperKey === "SHIFT") {
+      console.log("[ExtraKeys] Toggling modifier:", upperKey);
       this.toggleModifier(upperKey.toLowerCase());
       return;
     }
+
+    // For actual key sequences, we need an active terminal
+    const active = this.tm.terminals.get(this.tm.activeId);
+    console.log(
+      "[ExtraKeys] Active terminal:",
+      this.tm.activeId,
+      "ws:",
+      !!active?.ws,
+    );
+    if (!active?.ws) return;
 
     let sequence = KEY_SEQUENCES[key] || key;
 
@@ -1395,16 +1542,37 @@ class ExtraKeysManager {
 
   toggleModifier(mod) {
     this.modifiers[mod] = !this.modifiers[mod];
+    console.log(
+      "[ExtraKeys] toggleModifier:",
+      mod,
+      "->",
+      this.modifiers[mod],
+      "all:",
+      JSON.stringify(this.modifiers),
+    );
     this.updateModifierUI();
+    this.updateDebug(); // Update visible debug overlay
   }
 
   resetModifiers() {
+    console.log(
+      "[ExtraKeys] resetModifiers called (stack):",
+      new Error().stack?.split("\n").slice(1, 4).join(" <- "),
+    );
     this.modifiers = { ctrl: false, alt: false, shift: false };
     this.updateModifierUI();
+    this.updateDebug(); // Update visible debug overlay
   }
 
   updateModifierUI() {
-    document.querySelectorAll(".ek-btn.ek-modifier").forEach((btn) => {
+    const btns = document.querySelectorAll(".ek-btn.ek-modifier");
+    console.log(
+      "[ExtraKeys] updateModifierUI, found buttons:",
+      btns.length,
+      "modifiers:",
+      this.modifiers,
+    );
+    btns.forEach((btn) => {
       const mod = btn.dataset.key.toLowerCase();
       btn.classList.toggle("active", this.modifiers[mod] || false);
     });
@@ -1412,8 +1580,11 @@ class ExtraKeysManager {
 
   refocusTerminal() {
     const active = this.tm.terminals.get(this.tm.activeId);
+    console.log("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
     if (active?.terminal) {
+      // MUST use terminal.focus() so xterm.js processes input correctly
       active.terminal.focus();
+      console.log("[ExtraKeys] terminal.focus() called");
     }
   }
 
@@ -3058,25 +3229,26 @@ class TerminalManager {
       },
     );
 
+    const inputState = { lastOnDataAt: 0, lastOnDataValue: "" };
     const onDataDisposable = terminal.onData((data) => {
-      let finalData = data;
-      const mods = this.extraKeys?.modifiers;
-      if (this.extraKeys && data.length === 1 && mods) {
-        if (mods.ctrl) {
-          const charCode = data.toUpperCase().charCodeAt(0);
-          if (charCode >= 65 && charCode <= 90) {
-            finalData = String.fromCharCode(charCode - 64);
-          }
-          this.extraKeys.resetModifiers();
-        } else if (mods.alt) {
-          finalData = "\x1b" + data;
-          this.extraKeys.resetModifiers();
-        } else if (mods.shift) {
-          finalData = data.toUpperCase();
-          this.extraKeys.resetModifiers();
-        }
-      }
+      // Debug: direct DOM update
+      const dbg = document.getElementById("modifier-debug");
+      if (dbg)
+        dbg.textContent = `onData1: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+      inputState.lastOnDataAt = performance.now();
+      inputState.lastOnDataValue = data;
+      const finalData = this.applyExtraKeyModifiers(data);
       ws.send(JSON.stringify({ type: "input", data: finalData }));
+    });
+
+    const inputFallbackCleanup = this.attachMobileInputFallback(
+      ws,
+      element,
+      inputState,
+    );
+    console.log("[ExtraKeys] attachMobileInputFallback (reconnect)", {
+      id,
+      attached: !!inputFallbackCleanup,
     });
 
     this.terminals.set(id, {
@@ -3097,6 +3269,8 @@ class TerminalManager {
       preferredCols: 0,
       onDataDisposable,
       osc7Disposable,
+      inputFallbackCleanup,
+      inputState,
     });
 
     // Register with session registry for future reconnection
@@ -3109,15 +3283,282 @@ class TerminalManager {
     setTimeout(() => {
       fitAddon.fit();
       this.syncTerminalSize(id);
-
-      const textarea = element.querySelector(".xterm-helper-textarea");
-      if (textarea) {
-        textarea.autocomplete = "off";
-        textarea.autocorrect = "off";
-        textarea.autocapitalize = "off";
-        textarea.spellcheck = false;
-      }
+      this.disableMobileKeyboardFeatures(element);
     }, 200);
+  }
+
+  // Disable autocorrect, autocomplete, etc. on mobile - must use setAttribute for mobile browsers
+  disableMobileKeyboardFeatures(element) {
+    const textarea = element.querySelector(".xterm-helper-textarea");
+    if (textarea) {
+      textarea.setAttribute("autocomplete", "off");
+      textarea.setAttribute("autocorrect", "off");
+      textarea.setAttribute("autocapitalize", "off");
+      textarea.setAttribute("spellcheck", "false");
+      textarea.setAttribute("data-gramm", "false"); // Grammarly
+      textarea.setAttribute("data-gramm_editor", "false");
+      // For iOS
+      textarea.setAttribute("inputmode", "text");
+      console.log("[ExtraKeys] Mobile keyboard features disabled on textarea");
+    }
+  }
+
+  applyExtraKeyModifiers(data, options = {}) {
+    let finalData = data;
+    const mods = this.extraKeys?.modifiers;
+
+    // ALWAYS log for debugging mobile issues
+    console.log("[ExtraKeys] applyExtraKeyModifiers called:", {
+      data: JSON.stringify(data),
+      hasExtraKeys: !!this.extraKeys,
+      mods: mods ? JSON.stringify(mods) : "null",
+    });
+
+    // Always update debug overlay to show input was received
+    this.extraKeys?.updateDebug(data, null);
+
+    if (!this.extraKeys || !mods || !data) {
+      console.log(
+        "[ExtraKeys] applyExtraKeyModifiers: early return - no extraKeys or mods or data",
+      );
+      this.extraKeys?.updateDebug(data, "[NO MODS]");
+      return finalData;
+    }
+
+    const hasModifier = mods.ctrl || mods.alt || mods.shift;
+    if (!hasModifier) {
+      console.log("[ExtraKeys] applyExtraKeyModifiers: no modifier active");
+      this.extraKeys?.updateDebug(data, data + " [no mod]");
+      return finalData;
+    }
+
+    console.log("[ExtraKeys] applyExtraKeyModifiers: APPLYING modifier!", {
+      mods,
+    });
+
+    if (mods.ctrl) {
+      // CTRL: convert each alphabetic char to control code
+      finalData = "";
+      for (const char of data) {
+        const charCode = char.toUpperCase().charCodeAt(0);
+        if (charCode >= 65 && charCode <= 90) {
+          finalData += String.fromCharCode(charCode - 64);
+        } else {
+          finalData += char;
+        }
+      }
+      if (options.log) {
+        console.log(
+          "[ExtraKeys] Applied CTRL, finalData:",
+          JSON.stringify(finalData),
+        );
+      }
+      this.extraKeys.resetModifiers();
+    } else if (mods.alt) {
+      // ALT: prefix entire string with ESC
+      finalData = "\x1b" + data;
+      if (options.log) console.log("[ExtraKeys] Applied ALT");
+      this.extraKeys.resetModifiers();
+    } else if (mods.shift) {
+      // SHIFT: uppercase entire string
+      finalData = data.toUpperCase();
+      if (options.log) {
+        console.log(
+          "[ExtraKeys] Applied SHIFT, finalData:",
+          JSON.stringify(finalData),
+        );
+      }
+      this.extraKeys.resetModifiers();
+    }
+
+    // Update visible debug overlay with input/output
+    this.extraKeys?.updateDebug(data, finalData);
+
+    return finalData;
+  }
+
+  attachMobileInputFallback(ws, element, inputState = null) {
+    if (!ws || !element) {
+      console.log("[ExtraKeys] mobile input fallback skipped", {
+        reason: !ws ? "no-ws" : "no-element",
+      });
+      return null;
+    }
+    const textarea = element.querySelector(".xterm-helper-textarea");
+    if (!textarea) {
+      console.log("[ExtraKeys] mobile input fallback skipped", {
+        reason: "no-textarea",
+        childCount: element.childElementCount,
+      });
+      return null;
+    }
+
+    if (DEBUG) {
+      console.log("[ExtraKeys] mobile input fallback attached", {
+        isMobile: platformDetector.isMobile,
+        hasTouch: platformDetector.hasTouch,
+        isCoarsePointer: platformDetector.isCoarsePointer,
+        noHover: platformDetector.noHover,
+        smallScreen: platformDetector.smallScreen,
+      });
+    }
+
+    let lastValue = textarea.value || "";
+    let lastCompositionCommitAt = 0;
+    let lastCompositionCommitData = "";
+
+    const commitTextareaValue = (source, e) => {
+      // Debug: direct DOM update
+      const dbg = document.getElementById("modifier-debug");
+      if (dbg)
+        dbg.textContent = `commit:${source} | touch:${platformDetector.hasTouch}`;
+
+      // Use hasTouch instead of isMobile - any touch device needs this fallback
+      // because xterm.js onData may not fire properly after extra keys tap
+      if (!platformDetector.hasTouch) {
+        if (dbg) dbg.textContent = `!touch - skipping`;
+        return;
+      }
+      const inputType = e?.inputType || source || "";
+      let data = typeof e?.data === "string" ? e.data : "";
+      const currentValue = textarea.value || "";
+
+      if (!data) {
+        if (currentValue.startsWith(lastValue)) {
+          data = currentValue.slice(lastValue.length);
+        } else if (lastValue.startsWith(currentValue)) {
+          const diff = lastValue.length - currentValue.length;
+          if (diff > 0) data = "\x7f".repeat(diff);
+        } else {
+          data = currentValue;
+        }
+      }
+
+      if (!data) {
+        lastValue = currentValue;
+        return;
+      }
+
+      const finalData = this.applyExtraKeyModifiers(data);
+      ws.send(JSON.stringify({ type: "input", data: finalData }));
+
+      if (DEBUG) {
+        console.log("[ExtraKeys] mobile input fallback:", {
+          source,
+          inputType,
+          composed: e?.composed,
+          data,
+          finalData,
+        });
+      }
+
+      textarea.value = "";
+      lastValue = "";
+      lastCompositionCommitAt = performance.now();
+      lastCompositionCommitData = data;
+    };
+    const handler = (e) => {
+      if (DEBUG) {
+        console.log("[ExtraKeys] mobile input event", {
+          hasTouch: platformDetector.hasTouch,
+          inputType: e?.inputType,
+          isComposing: e?.isComposing,
+          composed: e?.composed,
+          data: e?.data,
+        });
+      }
+      // Use hasTouch - any touch device needs input fallback
+      if (!platformDetector.hasTouch) {
+        lastValue = textarea.value || "";
+        return;
+      }
+      if (!e || e.isComposing) {
+        return;
+      }
+
+      const inputType = e.inputType || "";
+      if (inputType === "insertText") {
+        const recent = performance.now() - lastCompositionCommitAt < 50;
+        const sameData =
+          typeof e.data === "string" && e.data === lastCompositionCommitData;
+        if (recent && sameData) {
+          return;
+        }
+      }
+      if (inputType === "insertText" && inputState) {
+        const recent = performance.now() - (inputState.lastOnDataAt || 0) < 30;
+        const sameData =
+          typeof e.data === "string" && e.data === inputState.lastOnDataValue;
+        if (recent && sameData) {
+          return;
+        }
+      }
+      commitTextareaValue("input", e);
+    };
+
+    const compositionHandler = (type) => (e) => {
+      if (DEBUG) {
+        console.log("[ExtraKeys] composition event", {
+          type,
+          data: e?.data,
+          isComposing: e?.isComposing,
+          inputType: e?.inputType,
+          value: textarea.value,
+        });
+      }
+      if (type === "end") {
+        commitTextareaValue("compositionend", e);
+      }
+    };
+
+    const beforeInputHandler = (e) => {
+      if (DEBUG) {
+        console.log("[ExtraKeys] beforeinput", {
+          inputType: e?.inputType,
+          data: e?.data,
+          isComposing: e?.isComposing,
+          value: textarea.value,
+        });
+      }
+    };
+
+    const compositionStartHandler = compositionHandler("start");
+    const compositionUpdateHandler = compositionHandler("update");
+    const compositionEndHandler = compositionHandler("end");
+
+    textarea.addEventListener("input", handler, true);
+    textarea.addEventListener(
+      "compositionstart",
+      compositionStartHandler,
+      true,
+    );
+    textarea.addEventListener(
+      "compositionupdate",
+      compositionUpdateHandler,
+      true,
+    );
+    textarea.addEventListener("compositionend", compositionEndHandler, true);
+    textarea.addEventListener("beforeinput", beforeInputHandler, true);
+
+    return () => {
+      textarea.removeEventListener("input", handler, true);
+      textarea.removeEventListener(
+        "compositionstart",
+        compositionStartHandler,
+        true,
+      );
+      textarea.removeEventListener(
+        "compositionupdate",
+        compositionUpdateHandler,
+        true,
+      );
+      textarea.removeEventListener(
+        "compositionend",
+        compositionEndHandler,
+        true,
+      );
+      textarea.removeEventListener("beforeinput", beforeInputHandler, true);
+    };
   }
 
   createXtermInstance() {
@@ -3546,25 +3987,28 @@ class TerminalManager {
         },
       );
 
+      const inputState = { lastOnDataAt: 0, lastOnDataValue: "" };
       const onDataDisposable = terminal.onData((data) => {
-        let finalData = data;
-        if (this.extraKeys && data.length === 1) {
-          const mods = this.extraKeys.modifiers;
-          if (mods.ctrl) {
-            const charCode = data.toUpperCase().charCodeAt(0);
-            if (charCode >= 65 && charCode <= 90) {
-              finalData = String.fromCharCode(charCode - 64);
-            }
-            this.extraKeys.resetModifiers();
-          } else if (mods.alt) {
-            finalData = "\x1b" + data;
-            this.extraKeys.resetModifiers();
-          } else if (mods.shift) {
-            finalData = data.toUpperCase();
-            this.extraKeys.resetModifiers();
-          }
-        }
+        // Debug: direct DOM update to see if onData fires at all
+        const dbg = document.getElementById("modifier-debug");
+        if (dbg)
+          dbg.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+        const mods = this.extraKeys?.modifiers;
+        console.log("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
+        inputState.lastOnDataAt = performance.now();
+        inputState.lastOnDataValue = data;
+        const finalData = this.applyExtraKeyModifiers(data, { log: true });
         ws.send(JSON.stringify({ type: "input", data: finalData }));
+      });
+
+      const inputFallbackCleanup = this.attachMobileInputFallback(
+        ws,
+        element,
+        inputState,
+      );
+      console.log("[ExtraKeys] attachMobileInputFallback (create)", {
+        id,
+        attached: !!inputFallbackCleanup,
       });
 
       this.tabIndex++;
@@ -3587,6 +4031,8 @@ class TerminalManager {
         preferredCols: 0,
         onDataDisposable,
         osc7Disposable,
+        inputFallbackCleanup,
+        inputState,
       });
 
       // Register with session registry for reconnection persistence
@@ -3601,6 +4047,9 @@ class TerminalManager {
       }
       this.switchTo(id);
       this.attachResizeObserver(id);
+
+      // Disable mobile keyboard autocorrect etc.
+      setTimeout(() => this.disableMobileKeyboardFeatures(element), 100);
     } catch (err) {
       console.error("Failed to create terminal:", err);
       alert("Failed to create terminal: " + err.message);
@@ -3878,6 +4327,7 @@ class TerminalManager {
     if (!t) return;
 
     t.ws?.close();
+    t.inputFallbackCleanup?.();
     if (t.resizeObserver) t.resizeObserver.disconnect();
     if (t.resizeTimer) clearTimeout(t.resizeTimer);
     if (t.dimensionTimer) clearTimeout(t.dimensionTimer);
