@@ -2723,6 +2723,83 @@ class GitManager {
   toggleBranches() {
     const branchesEl = this.panel.querySelector("#git-branches");
     branchesEl.classList.toggle("hidden");
+    if (!branchesEl.classList.contains("hidden")) {
+      this.loadBranches();
+    }
+  }
+
+  async loadBranches() {
+    try {
+      const cwd = this.state.cwd || this.currentCwd;
+      const res = await fetch(
+        `/api/git/branches?cwd=${encodeURIComponent(cwd)}`,
+      );
+      const data = await res.json();
+
+      if (data.error) {
+        return;
+      }
+
+      this.state.branches.list = data.branches || [];
+      this.state.branches.current = data.current || this.state.branches.current;
+      this.renderBranches();
+    } catch (err) {
+      console.error("Load branches error:", err);
+    }
+  }
+
+  renderBranches() {
+    const container = this.panel.querySelector("#git-branches");
+
+    const html = this.state.branches.list
+      .map((branch) => {
+        const isCurrent = branch === this.state.branches.current;
+        return `
+        <div class="git-branch-item ${isCurrent ? "current" : ""}" data-branch="${this.escapeHtml(branch)}">
+          <span class="git-branch-icon">${isCurrent ? "●" : "○"}</span>
+          <span class="git-branch-name">${this.escapeHtml(branch)}</span>
+        </div>
+      `;
+      })
+      .join("");
+
+    container.innerHTML = html || '<p class="muted">No branches</p>';
+
+    // Add click handlers
+    container
+      .querySelectorAll(".git-branch-item:not(.current)")
+      .forEach((el) => {
+        el.addEventListener("click", () => {
+          this.switchBranch(el.dataset.branch);
+        });
+      });
+  }
+
+  async switchBranch(branch) {
+    if (branch === this.state.branches.current) return;
+
+    try {
+      const cwd = this.state.cwd || this.currentCwd;
+      const res = await fetch("/api/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, branch }),
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        alert(`Checkout failed: ${data.error}`);
+        return;
+      }
+
+      // Refresh everything
+      await this.refresh();
+      this.toggleBranches(); // Hide branch list
+    } catch (err) {
+      console.error("Switch branch error:", err);
+      alert("Failed to switch branch");
+    }
   }
 
   async show(cwd) {
