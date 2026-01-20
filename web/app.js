@@ -2740,24 +2740,76 @@ class GitManager {
   }
 
   async refresh() {
-    if (!this.currentCwd) return;
+    if (!this.state.cwd && !this.currentCwd) return;
+    const cwd = this.state.cwd || this.currentCwd;
+    this.state.loading = true;
 
     try {
-      const res = await fetch(
-        `/api/git/status?cwd=${encodeURIComponent(this.currentCwd)}`,
+      // Fetch status
+      const statusRes = await fetch(
+        `/api/git/status?cwd=${encodeURIComponent(cwd)}`,
       );
-      const data = await res.json();
+      const statusData = await statusRes.json();
 
-      if (data.error) {
+      if (statusData.error) {
         this.panel.querySelector("#git-branch").textContent = "not a repo";
-        this.panel.querySelector("#git-files").textContent = data.error;
+        this.panel.querySelector("#git-files").innerHTML =
+          `<p class="error">${this.escapeHtml(statusData.error)}</p>`;
         return;
       }
 
-      this.panel.querySelector("#git-branch").textContent = data.branch;
-      this.renderStatus(data.files);
+      // Group files by status
+      this.state.files = {
+        staged: [],
+        modified: [],
+        untracked: [],
+        deleted: [],
+      };
+      this.state.branches.current = statusData.branch;
+
+      statusData.files.forEach((f) => {
+        const file = { path: f.path, status: f.status, staged: false };
+
+        // First char = staged status, second = working tree status
+        const staged = f.status[0];
+        const unstaged = f.status[1] || " ";
+
+        if (
+          staged === "A" ||
+          staged === "M" ||
+          staged === "D" ||
+          staged === "R"
+        ) {
+          file.staged = true;
+          this.state.files.staged.push({ ...file, displayStatus: staged });
+        }
+
+        if (unstaged === "M") {
+          this.state.files.modified.push({ ...file, displayStatus: "M" });
+        } else if (unstaged === "D") {
+          this.state.files.deleted.push({ ...file, displayStatus: "D" });
+        } else if (f.status === "??") {
+          this.state.files.untracked.push({ ...file, displayStatus: "?" });
+        }
+      });
+
+      this.panel.querySelector("#git-branch").textContent = statusData.branch;
+      this.renderFiles();
+
+      // Fetch commit history
+      const logRes = await fetch(
+        `/api/git/log?cwd=${encodeURIComponent(cwd)}&limit=30`,
+      );
+      const logData = await logRes.json();
+
+      if (!logData.error) {
+        this.state.commits = logData.commits || [];
+        this.renderHistory();
+      }
     } catch (err) {
-      console.error("Git status error:", err);
+      console.error("Git refresh error:", err);
+    } finally {
+      this.state.loading = false;
     }
   }
 
