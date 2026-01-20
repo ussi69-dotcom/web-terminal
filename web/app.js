@@ -2519,6 +2519,17 @@ class OpenCodeManager {
 class GitManager {
   constructor() {
     this.panel = null;
+    this.state = {
+      cwd: null,
+      files: { staged: [], modified: [], untracked: [], deleted: [] },
+      branches: { current: "", list: [] },
+      commits: [],
+      selectedIndex: 0,
+      activePanel: "files", // 'files' | 'history' | 'branches'
+      diff: null,
+      loading: false,
+    };
+    // Keep currentCwd for backward compatibility with existing methods
     this.currentCwd = null;
     this.init();
   }
@@ -2528,28 +2539,54 @@ class GitManager {
     document
       .querySelector('[data-action="git"]')
       ?.addEventListener("click", () => this.toggle());
+    this.setupKeyboardShortcuts();
   }
 
   createPanel() {
     this.panel = document.createElement("div");
     this.panel.id = "git-panel";
     this.panel.className = "side-panel hidden";
+    // Static HTML template - no user input, safe for innerHTML
     this.panel.innerHTML = `
-      <div class="panel-header">
-        <h3>Git</h3>
-        <span id="git-branch" class="git-branch"></span>
-        <button class="panel-refresh" title="Refresh">↻</button>
-        <button class="panel-close">&times;</button>
+      <div class="git-panel-layout">
+        <div class="git-left-panel">
+          <div class="panel-header">
+            <h3>Git</h3>
+            <span id="git-branch" class="git-branch clickable" title="Click to switch branch"></span>
+            <button class="panel-refresh" title="Refresh (r)">&#x21bb;</button>
+            <button class="panel-close" title="Close (Esc)">&times;</button>
+          </div>
+          <div id="git-files" class="git-files"></div>
+          <div id="git-branches" class="git-branches hidden"></div>
+        </div>
+        <div class="git-right-panel">
+          <div class="git-diff-header">
+            <span id="git-diff-title">Diff</span>
+          </div>
+          <div id="git-diff" class="git-diff"></div>
+          <div class="git-history-header">
+            <span>History</span>
+          </div>
+          <div id="git-history" class="git-history"></div>
+        </div>
       </div>
-      <div id="git-status" class="git-status"></div>
-      <div id="git-diff" class="git-diff"></div>
-      <div class="git-commit">
-        <textarea id="git-message" placeholder="Commit message..."></textarea>
-        <button id="git-commit-btn" class="btn btn-primary">Commit</button>
+      <div class="git-bottom-bar">
+        <div class="git-commit-area">
+          <textarea id="git-message" placeholder="Commit message..." rows="2"></textarea>
+          <button id="git-commit-btn" class="btn btn-primary">Commit</button>
+        </div>
+        <div class="git-shortcuts">
+          <span><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
+          <span><kbd>Space</kbd> stage</span>
+          <span><kbd>Enter</kbd> diff</span>
+          <span><kbd>c</kbd> commit</span>
+          <span><kbd>b</kbd> branches</span>
+        </div>
       </div>
     `;
     document.getElementById("app").appendChild(this.panel);
 
+    // Event listeners
     this.panel
       .querySelector(".panel-close")
       .addEventListener("click", () => this.hide());
@@ -2559,6 +2596,18 @@ class GitManager {
     this.panel
       .querySelector("#git-commit-btn")
       .addEventListener("click", () => this.commit());
+    this.panel
+      .querySelector("#git-branch")
+      .addEventListener("click", () => this.toggleBranches());
+  }
+
+  setupKeyboardShortcuts() {
+    // Will be implemented in Task 3.2
+  }
+
+  toggleBranches() {
+    const branchesEl = this.panel.querySelector("#git-branches");
+    branchesEl.classList.toggle("hidden");
   }
 
   async show(cwd) {
@@ -2586,8 +2635,7 @@ class GitManager {
 
       if (data.error) {
         this.panel.querySelector("#git-branch").textContent = "not a repo";
-        this.panel.querySelector("#git-status").innerHTML =
-          `<p class="error">${data.error}</p>`;
+        this.panel.querySelector("#git-files").textContent = data.error;
         return;
       }
 
@@ -2599,7 +2647,7 @@ class GitManager {
   }
 
   renderStatus(files) {
-    const container = this.panel.querySelector("#git-status");
+    const container = this.panel.querySelector("#git-files");
     if (files.length === 0) {
       container.innerHTML = '<p class="muted">No changes</p>';
       return;
