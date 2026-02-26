@@ -55,6 +55,9 @@ type Terminal = {
   ownerId: string; // User sub from JWT
   ownerEmail: string; // User email for display
   sessionName?: string; // tmux session name (when TMUX_BACKEND=1)
+  scrollback: string[]; // ring buffer of recent terminal output chunks
+  scrollbackBytes: number; // current bytes in ring buffer
+  hadSocketConnection: boolean; // tracks whether a websocket was ever connected
 };
 
 type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
@@ -84,6 +87,14 @@ const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
 
 // tmux backend for session persistence (survives server restart)
 const TMUX_BACKEND = process.env.TMUX_BACKEND === "1";
+const SCROLLBACK_MAX_LINES = parseInt(
+  process.env.SCROLLBACK_MAX_LINES || "2000",
+  10,
+);
+const SCROLLBACK_MAX_BYTES = parseInt(
+  process.env.SCROLLBACK_MAX_BYTES || String(1024 * 1024),
+  10,
+); // 1MB default
 const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || "")
   .split(",")
   .filter(Boolean);
@@ -113,6 +124,7 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
+const utf8Decoder = new TextDecoder();
 
 const openCodeCircuit = {
   failures: 0,
@@ -257,10 +269,12 @@ async function recoverTmuxSessions(): Promise<number> {
         cols,
         rows,
         data(term, data) {
+          const strData =
+            typeof data === "string" ? data : utf8Decoder.decode(data);
+          appendScrollback(id, strData);
+
           const sockets = terminalSockets.get(id);
           if (sockets && sockets.size > 0) {
-            const strData =
-              typeof data === "string" ? data : new TextDecoder().decode(data);
             for (const ws of sockets) {
               try {
                 ws.send(strData);
@@ -313,6 +327,9 @@ async function recoverTmuxSessions(): Promise<number> {
         ownerId,
         ownerEmail: "recovered",
         sessionName,
+        scrollback: [],
+        scrollbackBytes: 0,
+        hadSocketConnection: false,
       });
       terminalSockets.set(id, new Set());
 
@@ -331,6 +348,32 @@ async function recoverTmuxSessions(): Promise<number> {
 // Debug logger
 function debug(...args: unknown[]) {
   if (DEBUG) console.log("[web-terminal]", ...args);
+}
+
+function appendScrollback(terminalId: string, data: string) {
+  if (!data) return;
+  const term = terminals.get(terminalId);
+  if (!term) return;
+
+  const chunks = data.split(/(?<=\n)/g);
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    term.scrollback.push(chunk);
+    term.scrollbackBytes += Buffer.byteLength(chunk);
+  }
+
+  while (
+    term.scrollback.length > SCROLLBACK_MAX_LINES ||
+    term.scrollbackBytes > SCROLLBACK_MAX_BYTES
+  ) {
+    const removed = term.scrollback.shift();
+    if (!removed) break;
+    term.scrollbackBytes -= Buffer.byteLength(removed);
+  }
+}
+
+function getScrollbackSnapshot(term: Terminal): string {
+  return term.scrollback.join("");
 }
 
 function getCurrentUser(c: {
@@ -590,11 +633,13 @@ export function createWebApp() {
       cols,
       rows,
       data(term, data) {
+        const strData =
+          typeof data === "string" ? data : utf8Decoder.decode(data);
+        appendScrollback(id, strData);
+
         // Broadcast terminal output to all connected WebSockets
         const sockets = terminalSockets.get(id);
         if (sockets && sockets.size > 0) {
-          const strData =
-            typeof data === "string" ? data : new TextDecoder().decode(data);
           debug(`PTY ${id} data (${strData.length} bytes)`);
           for (const ws of sockets) {
             try {
@@ -741,6 +786,9 @@ export function createWebApp() {
       ownerId,
       ownerEmail,
       sessionName,
+      scrollback: [],
+      scrollbackBytes: 0,
+      hadSocketConnection: false,
     });
     terminalSockets.set(id, new Set());
 
@@ -1713,101 +1761,85 @@ export async function startWebServer(host: string, port: number) {
 
         sockets.add(ws as unknown as WebSocket);
         const socketsCount = sockets.size;
-
-        // Check if this is a reconnect (terminal created more than 5 seconds ago)
-        const termAge = Date.now() - term.createdAt;
-        const isReconnect = termAge > 5000;
+        const isReconnect = term.hadSocketConnection;
+        term.hadSocketConnection = true;
 
         console.log(
-          `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), ` +
-          `sockets: ${socketsCount}, age: ${Math.round(termAge/1000)}s, isReconnect: ${isReconnect}`,
+          `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), sockets: ${socketsCount}, reconnect: ${isReconnect}`,
         );
 
-        // Send scrollback buffer to reconnecting client (tmux backend only)
-        if (isReconnect && TMUX_BACKEND && term.sessionName) {
-          (async () => {
-            try {
-              // Capture pane content with escape sequences (colors) - last 2000 lines
-              const captureProc = Bun.spawn(
-                [
-                  "tmux",
-                  "capture-pane",
-                  "-ep",
-                  "-S",
-                  "-2000",
-                  "-t",
-                  term.sessionName!,
-                ],
-                { stdout: "pipe", stderr: "pipe" },
+        if (isReconnect) {
+          const replayBufferFallback = () => {
+            const buffered = getScrollbackSnapshot(term);
+            if (buffered && ws.readyState === 1) {
+              ws.send(buffered);
+              debug(
+                `[reconnect] Replayed ${buffered.length} bytes from in-memory scrollback for ${terminalId}`,
               );
-              const output = await new Response(captureProc.stdout).text();
-              await captureProc.exited;
+              return true;
+            }
+            return false;
+          };
 
-              if (output && ws.readyState === 1) {
-                // WebSocket.OPEN = 1
-                // Clear screen first, then write captured content
-                ws.send("\x1b[2J\x1b[H" + output);
+          (async () => {
+            let replayed = false;
+
+            if (TMUX_BACKEND && term.sessionName) {
+              try {
+                const captureProc = Bun.spawn(
+                  [
+                    "tmux",
+                    "capture-pane",
+                    "-ep",
+                    "-S",
+                    "-2000",
+                    "-t",
+                    term.sessionName,
+                  ],
+                  { stdout: "pipe", stderr: "pipe" },
+                );
+                const output = await new Response(captureProc.stdout).text();
+                await captureProc.exited;
+
+                if (output && ws.readyState === 1) {
+                  ws.send("\x1b[2J\x1b[H" + output);
+                  replayed = true;
+                  debug(
+                    `[reconnect] Sent ${output.length} bytes from tmux capture for ${terminalId}`,
+                  );
+                }
+              } catch (err) {
                 debug(
-                  `[reconnect] Sent ${output.length} bytes of scrollback to ${terminalId}`,
+                  `[reconnect] tmux capture failed for ${terminalId}, falling back to in-memory buffer`,
+                  err,
                 );
               }
-            } catch (err) {
-              debug(
-                `[reconnect] Failed to capture scrollback for ${terminalId}:`,
-                err,
-              );
-              // Send a simple connected confirmation even if capture fails
-              if (ws.readyState === 1) {
-                ws.send("\x1b[2J\x1b[H\x1b[32m[Reconnected]\x1b[0m\r\n");
-              }
             }
-          })();
-        } else if (isReconnect && !TMUX_BACKEND) {
-          // Non-tmux backend reconnect: force SIGWINCH to trigger TUI redraw
-          // Use longer delays for Cloudflare tunnel compatibility
-          console.log(`[reconnect] Non-tmux reconnect for ${terminalId}, scheduling SIGWINCH sequence`);
 
-          // Wait for WebSocket to be fully established through tunnel
-          setTimeout(() => {
-            try {
-              const originalCols = term.cols;
-              const originalRows = term.rows;
+            if (!replayed) {
+              replayBufferFallback();
+            }
 
-              // First SIGWINCH: shrink
-              console.log(`[reconnect] SIGWINCH 1/3 shrink for ${terminalId}: ${originalCols}x${originalRows} -> ${originalCols-1}x${originalRows}`);
-              term.terminal.resize(originalCols - 1, originalRows);
-
-              // Second SIGWINCH: restore (after delay for tunnel latency)
+            if (!TMUX_BACKEND) {
+              // Trigger a redraw for TUIs after scrollback replay.
               setTimeout(() => {
                 try {
-                  term.terminal.resize(originalCols, originalRows);
-                  console.log(`[reconnect] SIGWINCH 2/3 restore for ${terminalId}`);
-
-                  // Third: One more resize cycle to ensure TUI gets the signal
+                  const originalCols = term.cols;
+                  const originalRows = term.rows;
+                  term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
                   setTimeout(() => {
                     try {
-                      // Small size change to trigger another redraw
-                      term.terminal.resize(originalCols - 1, originalRows - 1);
-                      setTimeout(() => {
-                        try {
-                          term.terminal.resize(originalCols, originalRows);
-                          console.log(`[reconnect] SIGWINCH 3/3 final for ${terminalId}`);
-                        } catch (e) {
-                          console.error(`[reconnect] Final resize error for ${terminalId}:`, e);
-                        }
-                      }, 300);
-                    } catch (e) {
-                      console.error(`[reconnect] Third resize error for ${terminalId}:`, e);
+                      term.terminal.resize(originalCols, originalRows);
+                    } catch (err) {
+                      debug(`[reconnect] restore resize failed for ${terminalId}`, err);
                     }
-                  }, 500);
-                } catch (e) {
-                  console.error(`[reconnect] Resize restore error for ${terminalId}:`, e);
+                  }, 200);
+                } catch (err) {
+                  debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
                 }
-              }, 400);
-            } catch (e) {
-              console.error(`[reconnect] Resize shrink error for ${terminalId}:`, e);
+              }, 200);
             }
-          }, 1000); // Longer initial delay for Cloudflare tunnel
+          })();
         }
       },
 

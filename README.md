@@ -13,6 +13,7 @@ A web-based terminal emulator with full PTY support, floating/tiling window mana
 - **Tiling Window Manager** - Drag, resize, snap, and tile multiple terminal windows
 - **Multi-Terminal** - Up to 10 concurrent terminal sessions per user
 - **Auto-Reconnect** - WebSocket reconnection with exponential backoff
+- **Reconnect Scrollback Replay** - Previous terminal output is replayed after reconnect
 - **Mobile Support** - Touch-friendly extra keys bar (ESC, TAB, CTRL, ALT, SHIFT, arrows, F1-F12)
 - **File Manager** - Browse, upload, download, and manage files
 - **Server Stats** - Real-time CPU, RAM, and disk usage monitoring
@@ -92,36 +93,22 @@ If `OPENCODE_URL` is not set, clicking the OpenCode button shows setup instructi
 
 ## Configuration
 
-| Variable                     | Default                    | Description                                     |
-| ---------------------------- | -------------------------- | ----------------------------------------------- |
-| `PORT`                       | 4173                       | Server port                                     |
-| `HOST`                       | 0.0.0.0                    | Bind address                                    |
-| `TMUX_BACKEND`               | 0                          | Enable tmux for session persistence (1=enabled) |
-| `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)                |
-| `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)         |
-| `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                          |
-| `TERMINAL_IDLE_TIMEOUT_MS`   | 7200000 (2 hours)          | Auto-close terminals after idle time (ms)       |
-| `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)       |
-| `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                     |
-| `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag           |
-| `TRUSTED_ORIGINS`            | (empty = allow all in dev) | Comma-separated allowed origins for CORS        |
-| `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode backend URL (for health checks)        |
-| `OPENCODE_URL`               | (empty = disabled)         | OpenCode frontend URL (Cloudflare-exposed)      |
-
-### Tmux Backend (Recommended)
-
-Enable `TMUX_BACKEND=1` for:
-
-- **Session persistence** - Terminal history preserved across reconnections
-- **Cross-device continuity** - Switch from mobile to PC without losing context
-- **TUI app support** - Claude Code, htop, vim redraw properly after reconnect
-
-```bash
-# In systemd service or .env
-Environment=TMUX_BACKEND=1
-```
-
-Without tmux backend, terminal content is lost on reconnection (only SIGWINCH-triggered redraws work).
+| Variable                     | Default                    | Description                                |
+| ---------------------------- | -------------------------- | ------------------------------------------ |
+| `PORT`                       | 4173                       | Server port                                |
+| `HOST`                       | 0.0.0.0                    | Bind address                               |
+| `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)           |
+| `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)    |
+| `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                     |
+| `TERMINAL_IDLE_TIMEOUT_MS`   | 7200000 (2 hours)          | Auto-close terminals after idle time (ms)  |
+| `SCROLLBACK_MAX_LINES`       | 2000                       | Max buffered output chunks for reconnect replay |
+| `SCROLLBACK_MAX_BYTES`       | 1048576 (1MB)              | Max buffered output size for reconnect replay |
+| `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)  |
+| `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                |
+| `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag      |
+| `TRUSTED_ORIGINS`            | (empty = allow all in dev) | Comma-separated allowed origins for CORS   |
+| `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode backend URL (for health checks)   |
+| `OPENCODE_URL`               | (empty = disabled)         | OpenCode frontend URL (Cloudflare-exposed) |
 
 ## Keyboard Shortcuts
 
@@ -186,7 +173,9 @@ WS /apps/opencode/ws             # WebSocket proxy for OpenCode
 
 ```bash
 GET /api/git/status?cwd=...      # Git status
-GET /api/git/diff?cwd=...&path=... # Git diff
+GET /api/git/diff?cwd=...&path=... # Working tree diff
+GET /api/git/diff?cwd=...&path=...&staged=1 # Staged diff
+GET /api/git/diff?cwd=...&commit=HEAD~1 # Commit diff
 POST /api/git/stage              # Stage files
 POST /api/git/unstage            # Unstage files
 POST /api/git/commit             # Create commit

@@ -1,11 +1,12 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Terminal Reconnection - Realistic", () => {
   test("should redraw TUI after WebSocket reconnection", async ({ page }) => {
     // Step 1: Navigate and create a terminal
-    await page.goto("http://localhost:4174/");
-    await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-    await page.waitForTimeout(2000);
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
 
     // Step 2: Run a TUI command that will need redraw
     await page.keyboard.type("htop");
@@ -50,7 +51,7 @@ test.describe("Terminal Reconnection - Realistic", () => {
 
     // Step 5: Check if htop is visible (it should have redrawn)
     const terminalContent = await page
-      .locator(".xterm-rows")
+      .locator(".tile.active .xterm-rows")
       .first()
       .textContent();
     console.log(
@@ -85,7 +86,7 @@ test.describe("Terminal Reconnection - Realistic", () => {
     });
 
     const finalContent = await page
-      .locator(".xterm-rows")
+      .locator(".tile.active .xterm-rows")
       .first()
       .textContent();
     expect(finalContent).toContain("test-after-reconnect");

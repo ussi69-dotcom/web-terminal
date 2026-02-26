@@ -1,18 +1,21 @@
-import { test, expect, resetAppState } from "./fixtures";
+import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
 
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Reconnect Scrollback", () => {
   test("terminal output from before reconnect remains visible", async ({ page }) => {
     const marker = `SCROLLBACK_${Date.now()}`;
 
     await resetAppState(page, APP_URL);
-    await page.click("#new-terminal");
-    await page.waitForSelector(".tile.active .xterm-screen", { timeout: 15000 });
-    await page.click(".tile.active .xterm-screen");
+    await waitForTerminal(page);
 
-    await page.keyboard.type(`echo ${marker}`);
-    await page.keyboard.press("Enter");
+    await page.evaluate((text) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      if (!tm || !tm.activeId) return;
+      const t = tm.terminals.get(tm.activeId);
+      t?.ws?.send(JSON.stringify({ type: "input", data: `echo ${text}\r` }));
+    }, marker);
     await page.waitForTimeout(400);
     await expect(page.locator(".tile.active .xterm-rows").first()).toContainText(
       marker,

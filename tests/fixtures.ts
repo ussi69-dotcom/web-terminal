@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+const DEFAULT_APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
+
 /**
  * Helper utilities for DeckTerm E2E tests
  */
@@ -13,7 +15,7 @@ import path from "node:path";
  */
 export async function checkServer(): Promise<boolean> {
   try {
-    const response = await fetch("http://localhost:4174");
+    const response = await fetch(DEFAULT_APP_URL);
     return response.ok;
   } catch {
     return false;
@@ -226,25 +228,9 @@ export async function cleanupTempDir(dir?: string | null) {
 /**
  * Clear persisted UI/session state before each test for deterministic behavior.
  */
-export async function resetAppState(page: Page, url = "http://localhost:4174") {
+export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
   await page.goto(url);
-  await page.evaluate(async () => {
-    try {
-      const res = await fetch("/api/terminals");
-      if (res.ok) {
-        const terminals = await res.json();
-        await Promise.all(
-          terminals.map((t: { id: string }) =>
-            fetch(`/api/terminals/${encodeURIComponent(t.id)}`, {
-              method: "DELETE",
-            }),
-          ),
-        );
-      }
-    } catch {
-      // Best effort cleanup only.
-    }
-
+  await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
   });
