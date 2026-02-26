@@ -2552,12 +2552,16 @@ class GitManager {
     this.panel = null;
     this.state = {
       cwd: null,
-      files: { staged: [], modified: [], untracked: [], deleted: [] },
+      files: { staged: [], changes: [] },
       branches: { current: "", list: [] },
       commits: [],
       selectedIndex: 0,
+      selectedPath: null,
       activePanel: "files", // 'files' | 'history' | 'branches'
       diff: null,
+      diffMode: "working", // 'working' | 'staged' | 'commit'
+      selectedCommit: null,
+      collapsedFolders: new Set(),
       loading: false,
     };
     // Keep currentCwd for backward compatibility with existing methods
@@ -2593,6 +2597,11 @@ class GitManager {
         <div class="git-right-panel">
           <div class="git-diff-header">
             <span id="git-diff-title">Diff</span>
+            <div class="git-diff-modes">
+              <button class="git-diff-mode active" data-mode="working">Working Tree</button>
+              <button class="git-diff-mode" data-mode="staged">Staged</button>
+              <button class="git-diff-mode" data-mode="commit">Commit</button>
+            </div>
           </div>
           <div id="git-diff" class="git-diff"></div>
           <div class="git-history-header">
@@ -2630,6 +2639,9 @@ class GitManager {
     this.panel
       .querySelector("#git-branch")
       .addEventListener("click", () => this.toggleBranches());
+    this.panel.querySelectorAll(".git-diff-mode").forEach((btn) => {
+      btn.addEventListener("click", () => this.setDiffMode(btn.dataset.mode));
+    });
   }
 
   setupKeyboardShortcuts() {
@@ -2700,13 +2712,21 @@ class GitManager {
 
   highlightSelectedFile() {
     const fileElements = this.panel.querySelectorAll(".git-file");
-    fileElements.forEach((el, i) => {
-      el.classList.toggle("selected", i === this.state.selectedIndex);
+    fileElements.forEach((el) => {
+      const elIndex = Number(el.dataset.index || -1);
+      const isSelected =
+        elIndex === this.state.selectedIndex ||
+        el.dataset.path === this.state.selectedPath;
+      el.classList.toggle("selected", isSelected);
     });
 
     // Scroll into view
     const selected = this.panel.querySelector(".git-file.selected");
     if (selected) {
+      this.state.selectedPath = selected.dataset.path || this.state.selectedPath;
+      this.state.selectedIndex = Number(
+        selected.dataset.index || this.state.selectedIndex,
+      );
       selected.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
@@ -2747,6 +2767,26 @@ class GitManager {
     if (activeEl) {
       activeEl.classList.add("panel-active");
     }
+  }
+
+  setDiffMode(mode) {
+    if (!mode) return;
+    this.state.diffMode = mode;
+    this.updateDiffModeUI();
+
+    if (mode !== "commit") {
+      this.state.selectedCommit = null;
+    }
+
+    if (this.state.selectedPath) {
+      this.showDiff(this.state.selectedPath);
+    }
+  }
+
+  updateDiffModeUI() {
+    this.panel.querySelectorAll(".git-diff-mode").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.mode === this.state.diffMode);
+    });
   }
 
   toggleBranches() {
@@ -2866,43 +2906,50 @@ class GitManager {
         return;
       }
 
-      // Group files by status
+      const prevSelectedPath = this.state.selectedPath;
+      const prevDiffMode = this.state.diffMode;
+
       this.state.files = {
         staged: [],
-        modified: [],
-        untracked: [],
-        deleted: [],
+        changes: [],
       };
       this.state.branches.current = statusData.branch;
 
       statusData.files.forEach((f) => {
-        const file = { path: f.path, status: f.status, staged: false };
-
-        // First char = staged status, second = working tree status
-        const staged = f.status[0];
-        const unstaged = f.status[1] || " ";
-
-        if (
-          staged === "A" ||
-          staged === "M" ||
-          staged === "D" ||
-          staged === "R"
-        ) {
-          file.staged = true;
-          this.state.files.staged.push({ ...file, displayStatus: staged });
-        }
-
-        if (unstaged === "M") {
-          this.state.files.modified.push({ ...file, displayStatus: "M" });
-        } else if (unstaged === "D") {
-          this.state.files.deleted.push({ ...file, displayStatus: "D" });
-        } else if (f.status === "??") {
-          this.state.files.untracked.push({ ...file, displayStatus: "?" });
-        }
+        const stagedStatus = f.stagedStatus || "";
+        const unstagedStatus = f.unstagedStatus || "";
+        const isStaged = f.section === "staged" || !!stagedStatus;
+        const sectionKey = isStaged ? "staged" : "changes";
+        const displayStatus =
+          stagedStatus || unstagedStatus || f.status || "?";
+        const file = {
+          path: f.path,
+          oldPath: f.oldPath || null,
+          status: f.status,
+          stagedStatus,
+          unstagedStatus,
+          isRenamed: !!f.isRenamed,
+          section: sectionKey,
+          staged: isStaged,
+          displayStatus,
+        };
+        this.state.files[sectionKey].push(file);
       });
 
       this.panel.querySelector("#git-branch").textContent = statusData.branch;
       this.renderFiles();
+
+      if (prevSelectedPath) {
+        const allFiles = this.getAllFiles();
+        const nextIndex = allFiles.findIndex((f) => f.path === prevSelectedPath);
+        if (nextIndex !== -1) {
+          this.state.selectedIndex = nextIndex;
+          this.state.selectedPath = prevSelectedPath;
+          this.highlightSelectedFile();
+          this.state.diffMode = prevDiffMode;
+          this.updateDiffModeUI();
+        }
+      }
 
       // Fetch commit history
       const logRes = await fetch(
@@ -2969,79 +3016,190 @@ class GitManager {
   }
 
   getAllFiles() {
-    return [
-      ...this.state.files.staged,
-      ...this.state.files.modified,
-      ...this.state.files.deleted,
-      ...this.state.files.untracked,
-    ];
+    return [...this.state.files.staged, ...this.state.files.changes];
   }
 
   renderFiles() {
     const container = this.panel.querySelector("#git-files");
-    const groups = [
-      { key: "staged", label: "Staged", icon: "\u2713", color: "staged" },
-      { key: "modified", label: "Modified", icon: "M", color: "modified" },
-      { key: "deleted", label: "Deleted", icon: "D", color: "deleted" },
-      { key: "untracked", label: "Untracked", icon: "?", color: "untracked" },
+    const sections = [
+      {
+        key: "staged",
+        label: "Staged Changes",
+        icon: "\u2713",
+        files: this.state.files.staged,
+      },
+      {
+        key: "changes",
+        label: "Changes",
+        icon: "\u2022",
+        files: this.state.files.changes,
+      },
     ];
 
     let html = "";
     let globalIndex = 0;
 
-    groups.forEach((group) => {
-      const files = this.state.files[group.key];
-      if (files.length === 0) return;
+    sections.forEach((section) => {
+      const files = section.files;
+      const { html: treeHtml, nextIndex } = this.renderSectionTree(
+        files,
+        section,
+        globalIndex,
+      );
+      globalIndex = nextIndex;
 
       html += `
-        <div class="git-file-group">
+        <div class="git-file-group git-file-group-${section.key}">
           <div class="git-file-group-header">
-            <span class="git-file-group-icon ${group.color}">${group.icon}</span>
-            <span class="git-file-group-label">${group.label}</span>
+            <span class="git-file-group-icon ${section.key}">${section.icon}</span>
+            <span class="git-file-group-label">${section.label}</span>
             <span class="git-file-group-count">(${files.length})</span>
           </div>
           <div class="git-file-group-items">
-      `;
-
-      files.forEach((f) => {
-        const isSelected = globalIndex === this.state.selectedIndex;
-        html += `
-          <div class="git-file ${isSelected ? "selected" : ""}" data-path="${this.escapeHtml(f.path)}" data-index="${globalIndex}">
-            <span class="git-file-status ${group.color}">${f.displayStatus}</span>
-            <span class="git-file-path" title="${this.escapeHtml(f.path)}">${this.escapeHtml(this.truncatePath(f.path))}</span>
-            <div class="git-file-actions">
-              <button class="git-file-diff" title="View diff">diff</button>
-              <button class="git-file-stage" title="${f.staged ? "Unstage" : "Stage"}">${f.staged ? "-" : "+"}</button>
-            </div>
+            ${treeHtml}
           </div>
-        `;
-        globalIndex++;
-      });
-
-      html += "</div></div>";
+        </div>
+      `;
     });
 
-    if (html === "") {
+    if (this.getAllFiles().length === 0) {
       html = '<p class="muted centered">No changes</p>';
     }
 
     container.innerHTML = html;
+
+    if (!this.state.selectedPath) {
+      const firstFile = this.getAllFiles()[0];
+      if (firstFile) {
+        this.state.selectedPath = firstFile.path;
+        this.state.selectedIndex = 0;
+      }
+    }
+    this.highlightSelectedFile();
+
+    container.querySelectorAll(".git-tree-folder").forEach((el) => {
+      el.addEventListener("click", () => {
+        const key = el.dataset.folderKey;
+        if (!key) return;
+        if (this.state.collapsedFolders.has(key)) {
+          this.state.collapsedFolders.delete(key);
+        } else {
+          this.state.collapsedFolders.add(key);
+        }
+        this.renderFiles();
+      });
+    });
 
     // Add event listeners
     container.querySelectorAll(".git-file").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (e.target.classList.contains("git-file-diff")) {
           this.showDiff(el.dataset.path);
-        } else if (e.target.classList.contains("git-file-stage")) {
+          return;
+        }
+
+        if (e.target.classList.contains("git-file-stage")) {
           const files = this.getAllFiles();
           const file = files[parseInt(el.dataset.index)];
           this.toggleStage(el.dataset.path, file?.staged);
-        } else {
-          this.state.selectedIndex = parseInt(el.dataset.index);
-          this.highlightSelectedFile();
+          return;
         }
+
+        this.state.selectedIndex = parseInt(el.dataset.index, 10);
+        this.state.selectedPath = el.dataset.path;
+        this.highlightSelectedFile();
+        this.showDiff(el.dataset.path);
       });
     });
+  }
+
+  renderSectionTree(files, section, startIndex) {
+    if (files.length === 0) {
+      return { html: '<p class="muted centered">No files</p>', nextIndex: startIndex };
+    }
+
+    const root = this.buildFileTree(files);
+    const rendered = this.renderTreeNode(root, section.key, 0, startIndex);
+    return { html: rendered.html, nextIndex: rendered.nextIndex };
+  }
+
+  buildFileTree(files) {
+    const root = { folders: new Map(), files: [] };
+
+    files.forEach((file) => {
+      const parts = file.path.split("/");
+      let node = root;
+      let prefix = "";
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        const folder = parts[i];
+        prefix = prefix ? `${prefix}/${folder}` : folder;
+        if (!node.folders.has(folder)) {
+          node.folders.set(folder, {
+            name: folder,
+            fullPath: prefix,
+            folders: new Map(),
+            files: [],
+          });
+        }
+        node = node.folders.get(folder);
+      }
+
+      node.files.push(file);
+    });
+
+    return root;
+  }
+
+  renderTreeNode(node, sectionKey, depth, startIndex) {
+    let html = "";
+    let index = startIndex;
+
+    const folders = Array.from(node.folders?.values?.() || []).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    folders.forEach((folder) => {
+      const folderKey = `${sectionKey}:${folder.fullPath}`;
+      const collapsed = this.state.collapsedFolders.has(folderKey);
+      html += `
+        <div class="git-tree-folder" data-node-type="folder" data-folder-key="${this.escapeHtml(folderKey)}" style="--tree-depth:${depth}">
+          <span class="git-tree-chevron">${collapsed ? "\u25b8" : "\u25be"}</span>
+          <span class="git-tree-folder-name">${this.escapeHtml(folder.name)}</span>
+        </div>
+      `;
+      if (!collapsed) {
+        const rendered = this.renderTreeNode(folder, sectionKey, depth + 1, index);
+        html += rendered.html;
+        index = rendered.nextIndex;
+      }
+    });
+
+    const files = [...(node.files || [])].sort((a, b) => a.path.localeCompare(b.path));
+    files.forEach((file) => {
+      const isSelected =
+        this.state.selectedPath === file.path || index === this.state.selectedIndex;
+      const fileName = file.path.split("/").pop() || file.path;
+      html += `
+        <div class="git-file ${isSelected ? "selected" : ""}" data-path="${this.escapeHtml(file.path)}" data-index="${index}" style="--tree-depth:${depth}">
+          <span class="git-file-status ${file.section}">${this.escapeHtml(this.getStatusGlyph(file))}</span>
+          <span class="git-file-path" title="${this.escapeHtml(file.path)}">${this.escapeHtml(fileName)}</span>
+          <div class="git-file-actions">
+            <button class="git-file-diff" title="View diff">diff</button>
+            <button class="git-file-stage" title="${file.staged ? "Unstage" : "Stage"}">${file.staged ? "-" : "+"}</button>
+          </div>
+        </div>
+      `;
+      index++;
+    });
+
+    return { html, nextIndex: index };
+  }
+
+  getStatusGlyph(file) {
+    if (file.stagedStatus) return file.stagedStatus;
+    if (file.unstagedStatus) return file.unstagedStatus;
+    if (file.status) return file.status;
+    return "?";
   }
 
   truncatePath(path, maxLen = 30) {
@@ -3052,13 +3210,32 @@ class GitManager {
   async showDiff(path) {
     try {
       const cwd = this.state.cwd || this.currentCwd;
-      this.panel.querySelector("#git-diff-title").textContent = path;
+      const mode = this.state.diffMode || "working";
+      this.state.selectedPath = path || this.state.selectedPath;
+      const titlePath = path || this.state.selectedPath || "Diff";
+      const modeLabel =
+        mode === "staged"
+          ? "Staged"
+          : mode === "commit"
+            ? "Commit"
+            : "Working Tree";
+      this.panel.querySelector("#git-diff-title").textContent =
+        `${titlePath} (${modeLabel})`;
       this.panel.querySelector("#git-diff").innerHTML =
         '<p class="muted">Loading...</p>';
 
-      const res = await fetch(
-        `/api/git/diff?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path)}`,
-      );
+      const params = new URLSearchParams({ cwd });
+      const resolvedPath = path || this.state.selectedPath;
+      if (resolvedPath) {
+        params.set("path", resolvedPath);
+      }
+      if (mode === "staged") {
+        params.set("staged", "1");
+      } else if (mode === "commit" && this.state.selectedCommit) {
+        params.set("commit", this.state.selectedCommit);
+      }
+
+      const res = await fetch(`/api/git/diff?${params.toString()}`);
       const data = await res.json();
 
       if (data.error) {
@@ -3067,7 +3244,7 @@ class GitManager {
         return;
       }
 
-      this.showDiffContent(data.diff, path);
+      this.showDiffContent(data.diff, resolvedPath || "");
     } catch (err) {
       console.error("Diff error:", err);
       this.panel.querySelector("#git-diff").innerHTML =
@@ -3178,19 +3355,10 @@ class GitManager {
   }
 
   async showCommitDiff(hash) {
-    try {
-      const cwd = this.state.cwd || this.currentCwd;
-      const res = await fetch(
-        `/api/git/diff?cwd=${encodeURIComponent(cwd)}&commit=${hash}`,
-      );
-      const data = await res.json();
-
-      this.panel.querySelector("#git-diff-title").textContent =
-        `Commit: ${hash}`;
-      this.showDiffContent(data.diff || "No changes");
-    } catch (err) {
-      console.error("Commit diff error:", err);
-    }
+    this.state.selectedCommit = hash;
+    this.state.diffMode = "commit";
+    this.updateDiffModeUI();
+    await this.showDiff(this.state.selectedPath);
   }
 
   showDiffContent(diffText, filename = "") {

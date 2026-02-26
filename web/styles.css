@@ -2426,13 +2426,44 @@ body.virtual-keyboard-open .extra-keys {
 }
 
 .git-file-group-items {
-  padding-left: 4px;
+  padding-left: 0;
+}
+
+.git-tree-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  padding-left: calc(8px + (var(--tree-depth, 0) * 14px));
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.git-tree-folder:hover {
+  background: var(--bg-hover);
+}
+
+.git-tree-chevron {
+  color: var(--text-muted);
+  width: 12px;
+  text-align: center;
+}
+
+.git-tree-folder-name {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-primary);
 }
 
 /* File items - lazygit style */
 .git-file.selected {
   background: rgba(88, 166, 255, 0.15);
   outline: 1px solid var(--accent-blue);
+}
+
+.git-file {
+  padding-left: calc(8px + (var(--tree-depth, 0) * 14px));
 }
 
 .git-file-status.staged {
@@ -2469,6 +2500,34 @@ body.virtual-keyboard-open .extra-keys {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-primary);
+}
+
+.git-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-diff-modes {
+  display: flex;
+  gap: 6px;
+}
+
+.git-diff-mode {
+  padding: 3px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.git-diff-mode.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(88, 166, 255, 0.12);
 }
 
 /* diff2html overrides for dark theme */

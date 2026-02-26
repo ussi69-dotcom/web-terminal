@@ -7,7 +7,7 @@ import {
   resetAppState,
 } from "./fixtures";
 
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Git Explorer - VS Code style", () => {
   let repoDir: string;
