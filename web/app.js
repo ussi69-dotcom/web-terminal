@@ -7,11 +7,11 @@
 (function () {
   const APP_VERSION = "20260119a";
   const DEBUG_MODE = location.search.includes("debug=1");
+  if (!DEBUG_MODE) return;
+
   const originalLog = console.log;
   console.log = function (...args) {
     originalLog.apply(console, args);
-    // Only show debug panel when ?debug=1 is in URL
-    if (!DEBUG_MODE) return;
     const msg = args
       .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
       .join(" ");
@@ -19,7 +19,7 @@
       const panel = document.getElementById("debug-panel");
       const log = document.getElementById("debug-log");
       if (panel && log) {
-        panel.style.display = "block";
+        panel.classList.add("visible");
         const line = document.createElement("div");
         line.textContent = new Date().toLocaleTimeString() + " " + msg;
         log.appendChild(line);
@@ -1538,7 +1538,7 @@ class ExtraKeysManager {
       "touchstart",
       (e) => {
         const btn = e.target.closest(".ek-btn, .ek-toggle");
-        console.log(
+        dbg(
           "[ExtraKeys] touchstart, btn:",
           btn?.dataset?.key || btn?.id,
         );
@@ -1548,7 +1548,7 @@ class ExtraKeysManager {
           touchedKey =
             btn.dataset.key ||
             (btn.id === "extra-keys-toggle" ? "TOGGLE" : null);
-          console.log("[ExtraKeys] touchedKey set to:", touchedKey);
+          dbg("[ExtraKeys] touchedKey set to:", touchedKey);
         }
       },
       { passive: false, capture: true },
@@ -1557,7 +1557,7 @@ class ExtraKeysManager {
     extraKeys.addEventListener(
       "touchend",
       (e) => {
-        console.log("[ExtraKeys] touchend, touchedKey:", touchedKey);
+        dbg("[ExtraKeys] touchend, touchedKey:", touchedKey);
         e.preventDefault();
         e.stopImmediatePropagation();
         if (touchedKey) {
@@ -1616,20 +1616,20 @@ class ExtraKeysManager {
   }
 
   handleKey(key) {
-    console.log("[ExtraKeys] handleKey called:", key);
+    dbg("[ExtraKeys] handleKey called:", key);
     if (!key) return;
 
     // Handle modifiers FIRST - they don't need an active terminal
     const upperKey = key.toUpperCase();
     if (upperKey === "CTRL" || upperKey === "ALT" || upperKey === "SHIFT") {
-      console.log("[ExtraKeys] Toggling modifier:", upperKey);
+      dbg("[ExtraKeys] Toggling modifier:", upperKey);
       this.toggleModifier(upperKey.toLowerCase());
       return;
     }
 
     // For actual key sequences, we need an active terminal
     const active = this.tm.terminals.get(this.tm.activeId);
-    console.log(
+    dbg(
       "[ExtraKeys] Active terminal:",
       this.tm.activeId,
       "ws:",
@@ -1658,7 +1658,7 @@ class ExtraKeysManager {
 
   toggleModifier(mod) {
     this.modifiers[mod] = !this.modifiers[mod];
-    console.log(
+    dbg(
       "[ExtraKeys] toggleModifier:",
       mod,
       "->",
@@ -1671,7 +1671,7 @@ class ExtraKeysManager {
   }
 
   resetModifiers() {
-    console.log(
+    dbg(
       "[ExtraKeys] resetModifiers called (stack):",
       new Error().stack?.split("\n").slice(1, 4).join(" <- "),
     );
@@ -1682,7 +1682,7 @@ class ExtraKeysManager {
 
   updateModifierUI() {
     const btns = document.querySelectorAll(".ek-btn.ek-modifier");
-    console.log(
+    dbg(
       "[ExtraKeys] updateModifierUI, found buttons:",
       btns.length,
       "modifiers:",
@@ -1696,11 +1696,11 @@ class ExtraKeysManager {
 
   refocusTerminal() {
     const active = this.tm.terminals.get(this.tm.activeId);
-    console.log("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
+    dbg("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
     if (active?.terminal) {
       // MUST use terminal.focus() so xterm.js processes input correctly
       active.terminal.focus();
-      console.log("[ExtraKeys] terminal.focus() called");
+      dbg("[ExtraKeys] terminal.focus() called");
     }
   }
 
@@ -3929,7 +3929,7 @@ class TerminalManager {
       const serverTerminals = await res.json();
 
       if (serverTerminals.length > 0) {
-        console.log(
+        dbg(
           `[DeckTerm] Reconnecting to ${serverTerminals.length} existing terminal(s)...`,
         );
 
@@ -4011,30 +4011,28 @@ class TerminalManager {
     const fitAddon = terminal._fitAddon;
     fitAddon.fit();
 
-    console.log(`[reconnect] Attempting to reconnect terminal ${id}...`);
+    dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
     terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}`;
-    console.log(`[reconnect] WebSocket URL: ${wsUrl}`);
+    dbg(`[reconnect] WebSocket URL: ${wsUrl}`);
 
-    const ws = new ReconnectingWebSocket(
-      wsUrl,
-      id,
-      {
-        onMessage: (data) => {
-          // Log first 100 chars of received data for debugging
-          if (data.length > 0 && data.length < 200) {
-            console.log(`[reconnect] Received data for ${id}: ${data.length} bytes`);
-          }
-          terminal.write(data);
-        },
-        onStatusChange: (status, extra) => {
-          console.log(`[reconnect] Status change for ${id}: ${status}`, extra);
-          this.handleStatusChange(id, status, extra);
-        },
+    const ws = new ReconnectingWebSocket(wsUrl, id, {
+      onMessage: (data) => {
+        // Log first 100 chars of received data for debugging
+        if (data.length > 0 && data.length < 200) {
+          dbg(
+            `[reconnect] Received data for ${id}: ${data.length} bytes`,
+          );
+        }
+        terminal.write(data);
       },
-    );
+      onStatusChange: (status, extra) => {
+        dbg(`[reconnect] Status change for ${id}: ${status}`, extra);
+        this.handleStatusChange(id, status, extra);
+      },
+    });
 
     const inputState = {
       lastOnDataAt: 0,
@@ -4071,7 +4069,7 @@ class TerminalManager {
       element,
       inputState,
     );
-    console.log("[ExtraKeys] attachMobileInputFallback (reconnect)", {
+    dbg("[ExtraKeys] attachMobileInputFallback (reconnect)", {
       id,
       attached: !!inputFallbackCleanup,
     });
@@ -4100,7 +4098,9 @@ class TerminalManager {
       isReconnection: true, // Mark this as a reconnection scenario
     });
 
-    console.log(`[reconnect] Terminal ${id} stored in Map with isReconnection=true`);
+    dbg(
+      `[reconnect] Terminal ${id} stored in Map with isReconnection=true`,
+    );
 
     // Register with session registry for future reconnection
     this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
@@ -4128,7 +4128,7 @@ class TerminalManager {
       textarea.setAttribute("data-gramm_editor", "false");
       // For iOS
       textarea.setAttribute("inputmode", "text");
-      console.log("[ExtraKeys] Mobile keyboard features disabled on textarea");
+      dbg("[ExtraKeys] Mobile keyboard features disabled on textarea");
     }
   }
 
@@ -4137,7 +4137,7 @@ class TerminalManager {
     const mods = this.extraKeys?.modifiers;
 
     // ALWAYS log for debugging mobile issues
-    console.log("[ExtraKeys] applyExtraKeyModifiers called:", {
+    dbg("[ExtraKeys] applyExtraKeyModifiers called:", {
       data: JSON.stringify(data),
       hasExtraKeys: !!this.extraKeys,
       mods: mods ? JSON.stringify(mods) : "null",
@@ -4147,7 +4147,7 @@ class TerminalManager {
     this.extraKeys?.updateDebug(data, null);
 
     if (!this.extraKeys || !mods || !data) {
-      console.log(
+      dbg(
         "[ExtraKeys] applyExtraKeyModifiers: early return - no extraKeys or mods or data",
       );
       this.extraKeys?.updateDebug(data, "[NO MODS]");
@@ -4156,12 +4156,12 @@ class TerminalManager {
 
     const hasModifier = mods.ctrl || mods.alt || mods.shift;
     if (!hasModifier) {
-      console.log("[ExtraKeys] applyExtraKeyModifiers: no modifier active");
+      dbg("[ExtraKeys] applyExtraKeyModifiers: no modifier active");
       this.extraKeys?.updateDebug(data, data + " [no mod]");
       return finalData;
     }
 
-    console.log("[ExtraKeys] applyExtraKeyModifiers: APPLYING modifier!", {
+    dbg("[ExtraKeys] applyExtraKeyModifiers: APPLYING modifier!", {
       mods,
     });
 
@@ -4177,7 +4177,7 @@ class TerminalManager {
         }
       }
       if (options.log) {
-        console.log(
+        dbg(
           "[ExtraKeys] Applied CTRL, finalData:",
           JSON.stringify(finalData),
         );
@@ -4186,13 +4186,13 @@ class TerminalManager {
     } else if (mods.alt) {
       // ALT: prefix entire string with ESC
       finalData = "\x1b" + data;
-      if (options.log) console.log("[ExtraKeys] Applied ALT");
+      if (options.log) dbg("[ExtraKeys] Applied ALT");
       // Don't reset - modifiers stay active until user toggles them off
     } else if (mods.shift) {
       // SHIFT: uppercase entire string
       finalData = data.toUpperCase();
       if (options.log) {
-        console.log(
+        dbg(
           "[ExtraKeys] Applied SHIFT, finalData:",
           JSON.stringify(finalData),
         );
@@ -4208,14 +4208,14 @@ class TerminalManager {
 
   attachMobileInputFallback(ws, element, inputState = null) {
     if (!ws || !element) {
-      console.log("[ExtraKeys] mobile input fallback skipped", {
+      dbg("[ExtraKeys] mobile input fallback skipped", {
         reason: !ws ? "no-ws" : "no-element",
       });
       return null;
     }
     const textarea = element.querySelector(".xterm-helper-textarea");
     if (!textarea) {
-      console.log("[ExtraKeys] mobile input fallback skipped", {
+      dbg("[ExtraKeys] mobile input fallback skipped", {
         reason: "no-textarea",
         childCount: element.childElementCount,
       });
@@ -4223,7 +4223,7 @@ class TerminalManager {
     }
 
     if (DEBUG) {
-      console.log("[ExtraKeys] mobile input fallback attached", {
+      dbg("[ExtraKeys] mobile input fallback attached", {
         isMobile: platformDetector.isMobile,
         hasTouch: platformDetector.hasTouch,
         isCoarsePointer: platformDetector.isCoarsePointer,
@@ -4279,7 +4279,7 @@ class TerminalManager {
       ws.send(JSON.stringify({ type: "input", data: finalData }));
 
       if (DEBUG) {
-        console.log("[ExtraKeys] mobile input fallback:", {
+        dbg("[ExtraKeys] mobile input fallback:", {
           source,
           inputType,
           composed: e?.composed,
@@ -4295,7 +4295,7 @@ class TerminalManager {
     };
     const handler = (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] mobile input event", {
+        dbg("[ExtraKeys] mobile input event", {
           hasTouch: platformDetector.hasTouch,
           inputType: e?.inputType,
           isComposing: e?.isComposing,
@@ -4336,7 +4336,7 @@ class TerminalManager {
 
     const compositionHandler = (type) => (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] composition event", {
+        dbg("[ExtraKeys] composition event", {
           type,
           data: e?.data,
           isComposing: e?.isComposing,
@@ -4351,7 +4351,7 @@ class TerminalManager {
 
     const beforeInputHandler = (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] beforeinput", {
+        dbg("[ExtraKeys] beforeinput", {
           inputType: e?.inputType,
           data: e?.data,
           isComposing: e?.isComposing,
@@ -4517,24 +4517,24 @@ class TerminalManager {
         icon: "❌",
         message: "Connection lost",
         actions: `
-        <button class="btn" onclick="terminalManager.retryConnection('${id}')">Retry</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn" data-overlay-action="retry">Retry</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
       dead: {
         icon: "💀",
         message: "Terminal no longer exists",
         actions: `
-        <button class="btn btn-primary" onclick="terminalManager.closeTerminal('${id}'); terminalManager.createTerminal()">New Terminal</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn btn-primary" data-overlay-action="new-terminal">New Terminal</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
       exited: {
         icon: "⏹️",
         message: `Process exited with code ${extra}`,
         actions: `
-        <button class="btn btn-primary" onclick="terminalManager.closeTerminal('${id}'); terminalManager.createTerminal()">New Terminal</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn btn-primary" data-overlay-action="new-terminal">New Terminal</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
     };
@@ -4547,6 +4547,24 @@ class TerminalManager {
       icon.textContent = config.icon;
       message.textContent = config.message;
       actions.innerHTML = config.actions;
+      actions.onclick = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-overlay-action]");
+        if (!button) return;
+        const action = button.dataset.overlayAction;
+        if (action === "retry") {
+          this.retryConnection(id);
+          return;
+        }
+        if (action === "new-terminal") {
+          this.closeTerminal(id);
+          this.createTerminal();
+          return;
+        }
+        if (action === "close") {
+          this.closeTerminal(id);
+        }
+      };
     }
   }
 
@@ -4560,11 +4578,13 @@ class TerminalManager {
       // Mark terminal as successfully connected
       if (t) {
         t.hasConnected = true;
-        console.log(`[reconnect] Terminal ${id} marked as hasConnected=true`);
+        dbg(`[reconnect] Terminal ${id} marked as hasConnected=true`);
       }
 
       if (t && t.fitAddon && t.terminal && t.ws) {
-        console.log(`[reconnect] WebSocket connected for ${id}, syncing size and forcing refresh...`);
+        dbg(
+          `[reconnect] WebSocket connected for ${id}, syncing size and forcing refresh...`,
+        );
         requestAnimationFrame(() => {
           try {
             t.fitAddon.fit();
@@ -4572,14 +4592,14 @@ class TerminalManager {
             const rows = t.terminal.rows;
             // Send resize to trigger SIGWINCH on server
             t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-            console.log(`[reconnect] Sent resize ${cols}x${rows} for ${id}`);
+            dbg(`[reconnect] Sent resize ${cols}x${rows} for ${id}`);
 
             // Force xterm.js to refresh the viewport after a delay
             // This ensures any data received is properly rendered
             setTimeout(() => {
               try {
                 t.terminal.refresh(0, t.terminal.rows - 1);
-                console.log(`[reconnect] Forced xterm refresh for ${id}`);
+                dbg(`[reconnect] Forced xterm refresh for ${id}`);
               } catch (e) {
                 console.warn(`[reconnect] xterm refresh failed for ${id}:`, e);
               }
@@ -4589,9 +4609,14 @@ class TerminalManager {
             setTimeout(() => {
               try {
                 t.terminal.refresh(0, t.terminal.rows - 1);
-                console.log(`[reconnect] Second xterm refresh for ${id} (post-SIGWINCH)`);
+                dbg(
+                  `[reconnect] Second xterm refresh for ${id} (post-SIGWINCH)`,
+                );
               } catch (e) {
-                console.warn(`[reconnect] Second xterm refresh failed for ${id}:`, e);
+                console.warn(
+                  `[reconnect] Second xterm refresh failed for ${id}:`,
+                  e,
+                );
               }
             }, 3000);
           } catch (e) {
@@ -4604,22 +4629,28 @@ class TerminalManager {
     // Only show "reconnecting" if we haven't successfully connected yet
     // This prevents status flickering from rapid connect/disconnect cycles
     if (status === "reconnecting" && t?.hasConnected) {
-      console.log(`[reconnect] Ignoring reconnecting status for ${id} (already connected once)`);
+      dbg(
+        `[reconnect] Ignoring reconnecting status for ${id} (already connected once)`,
+      );
       return; // Don't update tab to reconnecting if we've already connected
     }
 
     const tab = this.tabs.querySelector(`[data-id="${id}"]`);
-    console.log(`[reconnect] Tab update for ${id}: status=${status}, tab found=${!!tab}, hasConnected=${t?.hasConnected}`);
+    dbg(
+      `[reconnect] Tab update for ${id}: status=${status}, tab found=${!!tab}, hasConnected=${t?.hasConnected}`,
+    );
     if (tab) {
       tab.classList.remove("reconnecting", "disconnected");
       if (status === "reconnecting") {
         tab.classList.add("reconnecting");
-        console.log(`[reconnect] Tab ${id} marked as reconnecting`);
+        dbg(`[reconnect] Tab ${id} marked as reconnecting`);
       } else if (status === "failed" || status === "dead") {
         tab.classList.add("disconnected");
-        console.log(`[reconnect] Tab ${id} marked as disconnected`);
+        dbg(`[reconnect] Tab ${id} marked as disconnected`);
       } else if (status === "connected") {
-        console.log(`[reconnect] Tab ${id} marked as connected (classes cleared)`);
+        dbg(
+          `[reconnect] Tab ${id} marked as connected (classes cleared)`,
+        );
       }
     } else {
       console.warn(`[reconnect] Tab not found for ${id}!`);
@@ -4672,7 +4703,7 @@ class TerminalManager {
         }
       }
     }
-    console.log(
+    dbg(
       `[debug] Terminal debug mode: ${this.debugMode ? "ON" : "OFF"}`,
     );
   }
@@ -4879,7 +4910,7 @@ class TerminalManager {
         }
 
         const mods = this.extraKeys?.modifiers;
-        console.log("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
+        dbg("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
         inputState.lastOnDataAt = performance.now();
         inputState.lastOnDataValue = data;
         const finalData = this.applyExtraKeyModifiers(data, { log: true });
@@ -4891,7 +4922,7 @@ class TerminalManager {
         element,
         inputState,
       );
-      console.log("[ExtraKeys] attachMobileInputFallback (create)", {
+      dbg("[ExtraKeys] attachMobileInputFallback (create)", {
         id,
         attached: !!inputFallbackCleanup,
       });
@@ -5510,6 +5541,12 @@ function initLucideIcons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  document
+    .getElementById("debug-panel-close")
+    ?.addEventListener("click", () => {
+      document.getElementById("debug-panel")?.classList.remove("visible");
+    });
+
   if (!initLucideIcons()) {
     let retries = 0;
     const tryInit = () => {

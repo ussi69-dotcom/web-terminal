@@ -2295,6 +2295,40 @@ body.virtual-keyboard-open .extra-keys {
   color: var(--accent-red);
 }
 
+.debug-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-height: 150px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.9);
+  color: #0f0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 5px;
+  z-index: 9999;
+  display: none;
+}
+
+.debug-panel.visible {
+  display: block;
+}
+
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.debug-panel-close {
+  background: #f85149;
+  color: #fff;
+  border: none;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
 /* =============================================================================
    EXTRA KEYS TOGGLE BUTTON
    ============================================================================= */
