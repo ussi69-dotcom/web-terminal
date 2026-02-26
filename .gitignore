@@ -28,3 +28,9 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+
+# Test artifacts
+test-results/
+playwright-report/
+blob-report/
+tests/test-results/
