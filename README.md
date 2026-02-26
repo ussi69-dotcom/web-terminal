@@ -103,10 +103,11 @@ If `OPENCODE_URL` is not set, clicking the OpenCode button shows setup instructi
 | `TERMINAL_IDLE_TIMEOUT_MS`   | 7200000 (2 hours)          | Auto-close terminals after idle time (ms)  |
 | `SCROLLBACK_MAX_LINES`       | 2000                       | Max buffered output chunks for reconnect replay |
 | `SCROLLBACK_MAX_BYTES`       | 1048576 (1MB)              | Max buffered output size for reconnect replay |
+| `ALLOWED_FILE_ROOTS`         | `$HOME`                    | Comma-separated roots allowed for file and git APIs |
 | `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)  |
 | `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                |
 | `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag      |
-| `TRUSTED_ORIGINS`            | (empty = allow all in dev) | Comma-separated allowed origins for CORS   |
+| `TRUSTED_ORIGINS`            | (empty = `*` without credentials) | Comma-separated allowed origins for credentialed CORS |
 | `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode backend URL (for health checks)   |
 | `OPENCODE_URL`               | (empty = disabled)         | OpenCode frontend URL (Cloudflare-exposed) |
 

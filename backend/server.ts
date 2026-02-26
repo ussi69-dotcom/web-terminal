@@ -7,7 +7,7 @@ import {
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -97,6 +97,14 @@ const SCROLLBACK_MAX_BYTES = parseInt(
 ); // 1MB default
 const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || "")
   .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const DEFAULT_ALLOWED_ROOT = process.env.HOME || "/home/deploy";
+const ALLOWED_FILESYSTEM_ROOTS = (
+  process.env.ALLOWED_FILE_ROOTS || DEFAULT_ALLOWED_ROOT
+)
+  .split(",")
+  .map((root) => root.trim())
   .filter(Boolean);
 
 // OpenCode configuration
@@ -350,6 +358,99 @@ function debug(...args: unknown[]) {
   if (DEBUG) console.log("[web-terminal]", ...args);
 }
 
+let allowedRealRootsCache: string[] | null = null;
+
+async function getAllowedRealRoots(): Promise<string[]> {
+  if (allowedRealRootsCache) return allowedRealRootsCache;
+  const fs = await import("fs/promises");
+  const roots: string[] = [];
+  for (const root of ALLOWED_FILESYSTEM_ROOTS) {
+    try {
+      roots.push(await fs.realpath(root));
+    } catch {
+      debug("Skipping non-existent allowed root:", root);
+    }
+  }
+  if (roots.length === 0) {
+    roots.push(DEFAULT_ALLOWED_ROOT);
+  }
+  allowedRealRootsCache = roots;
+  return roots;
+}
+
+function isWithinAllowedRoots(pathValue: string, roots: string[]): boolean {
+  return roots.some(
+    (root) => pathValue === root || pathValue.startsWith(`${root}/`),
+  );
+}
+
+async function resolveAllowedPath(
+  inputPath: string,
+  opts: { allowMissing?: boolean } = {},
+): Promise<string | null> {
+  if (!inputPath) return null;
+  const fs = await import("fs/promises");
+  const candidatePath = resolve(inputPath);
+  const roots = await getAllowedRealRoots();
+  try {
+    const realPath = await fs.realpath(candidatePath);
+    return isWithinAllowedRoots(realPath, roots) ? realPath : null;
+  } catch (err: unknown) {
+    const error = err as { code?: string };
+    if (!opts.allowMissing || error.code !== "ENOENT") {
+      return null;
+    }
+    try {
+      const realParent = await fs.realpath(dirname(candidatePath));
+      if (!isWithinAllowedRoots(realParent, roots)) {
+        return null;
+      }
+      const rel = relative(realParent, candidatePath);
+      if (!rel || rel.startsWith("..")) {
+        return null;
+      }
+      return candidatePath;
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function authenticateWebSocketRequest(req: Request): Promise<{
+  ok: boolean;
+  status?: number;
+  message?: string;
+  ownerId: string;
+}> {
+  const jwt = req.headers.get("cf-access-jwt-assertion");
+  if (CF_ACCESS_REQUIRED && !jwt) {
+    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
+  }
+  if (!jwt || !CF_ACCESS_TEAM_NAME) {
+    return { ok: true, ownerId: "anonymous" };
+  }
+  try {
+    const { cloudflareAccess: verifyJWT } = await import(
+      "@hono/cloudflare-access"
+    );
+    let ownerId = "anonymous";
+    const mockContext = {
+      req: { header: (name: string) => req.headers.get(name) },
+      set: (key: string, value: CloudflareAccessPayload) => {
+        if (key === "accessPayload") {
+          ownerId = value.sub || "anonymous";
+        }
+      },
+    };
+    const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
+    await middleware(mockContext as never, async () => {});
+    return { ok: true, ownerId };
+  } catch (err) {
+    debug("WebSocket JWT verification failed:", err);
+    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
+  }
+}
+
 function appendScrollback(terminalId: string, data: string) {
   if (!data) return;
   const term = terminals.get(terminalId);
@@ -394,20 +495,23 @@ export function createWebApp() {
 
   app.onError((err, c) => {
     console.error("[Hono] Route error:", err);
-    return c.json(
-      { error: "Internal server error", message: String(err) },
-      500,
-    );
+    const response: { error: string; message?: string } = {
+      error: "Internal server error",
+    };
+    if (DEBUG) {
+      response.message = err instanceof Error ? err.message : String(err);
+    }
+    return c.json(response, 500);
   });
 
+  const hasTrustedOrigins = TRUSTED_ORIGINS.length > 0;
   app.use(
     "/*",
     cors({
-      origin:
-        TRUSTED_ORIGINS.length > 0
-          ? (origin) => (TRUSTED_ORIGINS.includes(origin) ? origin : null)
-          : "*",
-      credentials: true,
+      origin: hasTrustedOrigins
+        ? (origin) => (origin && TRUSTED_ORIGINS.includes(origin) ? origin : null)
+        : "*",
+      credentials: hasTrustedOrigins,
     }),
   );
 
@@ -895,10 +999,14 @@ export function createWebApp() {
 
   // Browse directories (for directory picker)
   app.get("/api/browse", async (c) => {
-    const path = c.req.query("path") || process.env.HOME || "/";
+    const requestedPath = c.req.query("path") || process.env.HOME || "/";
     const includeFiles = c.req.query("files") === "true";
     const fs = await import("fs/promises");
     const pathModule = await import("path");
+    const path = await resolveAllowedPath(requestedPath);
+    if (!path) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
 
     try {
       const entries = await fs.readdir(path, { withFileTypes: true });
@@ -938,13 +1046,16 @@ export function createWebApp() {
 
   // File download
   app.get("/api/files/download", async (c) => {
-    const filePath = c.req.query("path");
-    if (!filePath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const filePath = await resolveAllowedPath(requestedPath);
+    if (!filePath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
-    const pathModule = await import("path");
 
     try {
       const stat = await fs.stat(filePath);
@@ -953,7 +1064,7 @@ export function createWebApp() {
       }
 
       const data = await fs.readFile(filePath);
-      const filename = pathModule.basename(filePath);
+      const filename = basename(filePath);
 
       return new Response(data, {
         headers: {
@@ -969,13 +1080,16 @@ export function createWebApp() {
 
   // File upload
   app.post("/api/files/upload", async (c) => {
-    const targetPath = c.req.query("path");
-    if (!targetPath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const targetPath = await resolveAllowedPath(requestedPath);
+    if (!targetPath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
-    const pathModule = await import("path");
 
     try {
       // Check if target is a directory
@@ -992,7 +1106,13 @@ export function createWebApp() {
         return c.json({ error: "No file provided" }, 400);
       }
 
-      const destPath = pathModule.join(targetPath, file.name);
+      const fileName = basename(file.name);
+      const destPath = await resolveAllowedPath(join(targetPath, fileName), {
+        allowMissing: true,
+      });
+      if (!destPath) {
+        return c.json({ error: "Forbidden path" }, 403);
+      }
       const buffer = await file.arrayBuffer();
       await fs.writeFile(destPath, Buffer.from(buffer));
 
@@ -1007,9 +1127,15 @@ export function createWebApp() {
 
   // Create directory
   app.post("/api/files/mkdir", async (c) => {
-    const dirPath = c.req.query("path");
-    if (!dirPath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const dirPath = await resolveAllowedPath(requestedPath, {
+      allowMissing: true,
+    });
+    if (!dirPath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
@@ -1028,14 +1154,18 @@ export function createWebApp() {
 
   // Delete file or directory
   app.delete("/api/files", async (c) => {
-    const filePath = c.req.query("path");
-    if (!filePath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
     }
+    const filePath = await resolveAllowedPath(requestedPath);
+    if (!filePath) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
 
-    // Security: don't allow deleting root or home directory
-    const home = process.env.HOME || "/home/deploy";
-    if (filePath === "/" || filePath === home) {
+    // Security: don't allow deleting filesystem roots
+    const protectedRoots = await getAllowedRealRoots();
+    if (filePath === "/" || protectedRoots.includes(filePath)) {
       return c.json({ error: "Cannot delete root or home directory" }, 403);
     }
 
@@ -1057,10 +1187,15 @@ export function createWebApp() {
   // Rename file or directory
   app.post("/api/files/rename", async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { from, to } = body;
+    const { from: fromInput, to: toInput } = body;
 
-    if (!from || !to) {
+    if (!fromInput || !toInput) {
       return c.json({ error: "from and to paths required" }, 400);
+    }
+    const from = await resolveAllowedPath(fromInput);
+    const to = await resolveAllowedPath(toInput, { allowMissing: true });
+    if (!from || !to) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
@@ -1077,16 +1212,8 @@ export function createWebApp() {
   // GIT API - Secure git operations with realpath validation
   // =============================================================================
 
-  const ALLOWED_GIT_ROOTS = [process.env.HOME || "/home/deploy"];
-
   async function validateGitCwd(cwd: string): Promise<boolean> {
-    try {
-      const fs = await import("fs/promises");
-      const realCwd = await fs.realpath(cwd);
-      return ALLOWED_GIT_ROOTS.some((root) => realCwd.startsWith(root));
-    } catch {
-      return false;
-    }
+    return (await resolveAllowedPath(cwd)) !== null;
   }
 
   // GET /api/git/status?cwd=/path/to/repo
@@ -1647,6 +1774,13 @@ export async function startWebServer(host: string, port: number) {
 
       // OpenCode WebSocket proxy
       if (url.pathname.startsWith("/apps/opencode/ws")) {
+        const auth = await authenticateWebSocketRequest(req);
+        if (!auth.ok) {
+          return new Response(auth.message || "Unauthorized", {
+            status: auth.status || 401,
+          });
+        }
+
         const wsUrl =
           OPENCODE_UPSTREAM.replace("http", "ws") +
           url.pathname.replace("/apps/opencode", "") +
@@ -1680,31 +1814,13 @@ export async function startWebServer(host: string, port: number) {
           return new Response("Terminal not found", { status: 404 });
         }
 
-        const jwt = req.headers.get("cf-access-jwt-assertion");
-        if (CF_ACCESS_REQUIRED && !jwt) {
-          return new Response("Unauthorized", { status: 401 });
+        const auth = await authenticateWebSocketRequest(req);
+        if (!auth.ok) {
+          return new Response(auth.message || "Unauthorized", {
+            status: auth.status || 401,
+          });
         }
-
-        let ownerId = "anonymous";
-        if (jwt && CF_ACCESS_TEAM_NAME) {
-          try {
-            const { cloudflareAccess: verifyJWT } =
-              await import("@hono/cloudflare-access");
-            const mockContext = {
-              req: { header: (name: string) => req.headers.get(name) },
-              set: (key: string, value: CloudflareAccessPayload) => {
-                if (key === "accessPayload") {
-                  ownerId = value.sub;
-                }
-              },
-            };
-            const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
-            await middleware(mockContext as never, async () => {});
-          } catch (err) {
-            debug("WebSocket JWT verification failed:", err);
-            return new Response("Unauthorized", { status: 401 });
-          }
-        }
+        const ownerId = auth.ownerId;
 
         if (term.ownerId !== ownerId) {
           return new Response("Forbidden", { status: 403 });
