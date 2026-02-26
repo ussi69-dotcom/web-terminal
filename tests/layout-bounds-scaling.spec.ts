@@ -1,6 +1,6 @@
 import { test, expect, waitForTerminal, resetAppState } from "./fixtures";
 
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Layout Bounds + Scaling", () => {
   test("active workspace tiles stay fully reachable after split + resize", async ({

@@ -557,8 +557,8 @@ class Tile {
 
     if (isMobile) {
       const containerRect = this.container.getBoundingClientRect();
-      const minWidth = 360;
-      const minHeight = 400;
+      const minWidth = Math.min(TILE_CONFIG.MIN_WIDTH, containerRect.width);
+      const minHeight = Math.min(TILE_CONFIG.MIN_HEIGHT, containerRect.height);
 
       const width = Math.max(
         minWidth,
@@ -751,6 +751,50 @@ class TileManager {
     this.setupTouchGestures();
   }
 
+  getBoundsConstraints() {
+    const rect = this.container.getBoundingClientRect();
+    const safeWidth = Math.max(rect.width, 1);
+    const safeHeight = Math.max(rect.height, 1);
+    const minWidthPct = Math.min(
+      100,
+      (TILE_CONFIG.MIN_WIDTH / safeWidth) * 100,
+    );
+    const minHeightPct = Math.min(
+      100,
+      (TILE_CONFIG.MIN_HEIGHT / safeHeight) * 100,
+    );
+    return { minWidthPct, minHeightPct };
+  }
+
+  normalizeBounds(bounds) {
+    const width = Math.max(1, Math.min(100, bounds.width));
+    const height = Math.max(1, Math.min(100, bounds.height));
+    const x = Math.max(0, Math.min(100 - width, bounds.x));
+    const y = Math.max(0, Math.min(100 - height, bounds.y));
+    return { x, y, width, height };
+  }
+
+  normalizeWorkspaceTiles(workspaceId = null) {
+    const targetWorkspaceId = workspaceId || this.activeWorkspaceId;
+    const tiles = targetWorkspaceId
+      ? this.getWorkspaceTiles(targetWorkspaceId)
+      : Array.from(this.tiles.values());
+    tiles.forEach((tile) => {
+      tile.bounds = this.normalizeBounds(tile.bounds);
+      tile.updatePosition();
+    });
+  }
+
+  ensureTileVisible(terminalId) {
+    const tile = this.tiles.get(terminalId);
+    if (!tile || tile.element.style.display === "none") return;
+    tile.element.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+  }
+
   setupTouchGestures() {
     if (!this.isMobile) return;
 
@@ -814,7 +858,9 @@ class TileManager {
       tile.bounds = { x: 0, y: 0, width: 100, height: 100 };
     }
 
+    tile.bounds = this.normalizeBounds(tile.bounds);
     tile.updatePosition();
+    this.normalizeWorkspaceTiles(workspaceId);
     this.showWorkspace(workspaceId);
 
     if (DEBUG) {
@@ -841,6 +887,7 @@ class TileManager {
         tile.element.style.display = "none";
       }
     });
+    this.normalizeWorkspaceTiles(workspaceId);
     if (DEBUG) {
       dbg("showWorkspace", {
         workspaceId,
@@ -878,7 +925,12 @@ class TileManager {
 
     const count = tiles.length;
     if (count === 1) {
-      tiles[0].bounds = { x: 0, y: 0, width: 100, height: 100 };
+      tiles[0].bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       tiles[0].updatePosition();
       return;
     }
@@ -898,6 +950,7 @@ class TileManager {
         width: cellWidth,
         height: cellHeight,
       };
+      tile.bounds = this.normalizeBounds(tile.bounds);
       tile.updatePosition();
     });
     if (DEBUG) {
@@ -909,14 +962,24 @@ class TileManager {
   positionNewTile(newTile) {
     if (this.tiles.size === 1) {
       // First tile takes full space
-      newTile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+      newTile.bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       return;
     }
 
     const activeTile = this.tiles.get(this.activeTileId);
     if (!activeTile) {
       // No active tile, fill remaining space
-      newTile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+      newTile.bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       this.relayout(newTile.workspaceId);
       return;
     }
@@ -952,14 +1015,20 @@ class TileManager {
       };
     }
 
+    activeTile.bounds = this.normalizeBounds(activeTile.bounds);
+    newTile.bounds = this.normalizeBounds(newTile.bounds);
     activeTile.updatePosition();
+    newTile.updatePosition();
   }
 
   // Handle tile resize with push neighbors
   handleTileResize(tile, newBounds, edge) {
     const containerRect = this.container.getBoundingClientRect();
-    const minW = (TILE_CONFIG.MIN_WIDTH / containerRect.width) * 100;
-    const minH = (TILE_CONFIG.MIN_HEIGHT / containerRect.height) * 100;
+    const safeWidth = Math.max(containerRect.width, 1);
+    const safeHeight = Math.max(containerRect.height, 1);
+    const minW = (TILE_CONFIG.MIN_WIDTH / safeWidth) * 100;
+    const minH = (TILE_CONFIG.MIN_HEIGHT / safeHeight) * 100;
+    const normalizedNewBounds = this.normalizeBounds(newBounds);
 
     // Find neighbors that would be affected
     const neighbors = this.findNeighbors(tile, edge);
@@ -971,7 +1040,7 @@ class TileManager {
       const pushAmount = this.calculatePushAmount(
         tile,
         neighbor,
-        newBounds,
+        normalizedNewBounds,
         edge,
       );
 
@@ -998,14 +1067,14 @@ class TileManager {
 
     if (canResize) {
       // Apply the resize
-      tile.bounds = { ...newBounds };
+      tile.bounds = { ...normalizedNewBounds };
 
       // Push all affected neighbors
       for (const neighbor of neighbors) {
         const pushAmount = this.calculatePushAmount(
           tile,
           neighbor,
-          newBounds,
+          normalizedNewBounds,
           edge,
         );
         if (pushAmount !== 0) {
@@ -1014,7 +1083,7 @@ class TileManager {
       }
 
       // Update all tile positions
-      this.tiles.forEach((t) => t.updatePosition());
+      this.normalizeWorkspaceTiles(tile.workspaceId);
     }
   }
 
@@ -1024,6 +1093,7 @@ class TileManager {
 
     this.tiles.forEach((other) => {
       if (other === tile) return;
+      if (other.workspaceId !== tile.workspaceId) return;
 
       // Check adjacency based on edge being resized
       if (
@@ -1109,7 +1179,7 @@ class TileManager {
 
   pushTile(tile, amount, edge) {
     const newBounds = this.applyPush(tile, amount, edge);
-    tile.bounds = newBounds;
+    tile.bounds = this.normalizeBounds(newBounds);
   }
 
   tryPushChain(tile, amount, edge, minW, minH) {
@@ -1149,7 +1219,12 @@ class TileManager {
     if (this.isMobile) {
       // Mobile: stack mode - one tile takes full space
       tileArray.forEach((tile, i) => {
-        tile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+        tile.bounds = this.normalizeBounds({
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        });
         tile.element.style.display =
           tile.terminalId === this.activeTileId ? "block" : "none";
         tile.updatePosition();
@@ -1161,7 +1236,12 @@ class TileManager {
     const count = tileArray.length;
 
     if (count === 1) {
-      tileArray[0].bounds = { x: 0, y: 0, width: 100, height: 100 };
+      tileArray[0].bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       tileArray[0].element.style.display = "block";
       tileArray[0].updatePosition();
       return;
@@ -1183,6 +1263,7 @@ class TileManager {
         width: cellWidth,
         height: cellHeight,
       };
+      tile.bounds = this.normalizeBounds(tile.bounds);
       tile.element.style.display = "block";
       tile.updatePosition();
     });
@@ -1205,6 +1286,8 @@ class TileManager {
         tile.element.style.display = id === terminalId ? "block" : "none";
       }
     });
+
+    this.ensureTileVisible(terminalId);
   }
 
   // Create a group from tiles
@@ -4636,22 +4719,9 @@ class TerminalManager {
     if (!t?.terminal) return;
     const fitCols = t.terminal.cols;
     const fitRows = t.terminal.rows;
-    if (this.wrapLines) {
-      t.preferredCols = fitCols;
-    } else if (!t.preferredCols || t.preferredCols < fitCols) {
-      t.preferredCols = fitCols;
-    }
-    const targetCols = this.wrapLines
-      ? fitCols
-      : Math.max(fitCols, t.preferredCols);
-    if (targetCols !== fitCols) {
-      try {
-        t.terminal.resize(targetCols, fitRows);
-      } catch (err) {
-        if (DEBUG) dbg("terminal.resize error", { id, err });
-      }
-    }
-    this.sendResize(id, targetCols, fitRows);
+    // Keep sizing anchored to the current container size to avoid stale oversizing.
+    t.preferredCols = fitCols;
+    this.sendResize(id, fitCols, fitRows);
   }
 
   attachResizeObserver(id) {

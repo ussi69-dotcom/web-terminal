@@ -349,14 +349,14 @@ body {
   transition:
     box-shadow 0.2s,
     border-color 0.2s;
-  min-width: 360px;
-  min-height: 400px;
+  min-width: min(250px, 100%);
+  min-height: min(180px, 100%);
 }
 
 @media (max-width: 767px) {
   .tile {
-    min-width: 320px;
-    min-height: 400px;
+    min-width: min(180px, 100%);
+    min-height: min(140px, 100%);
   }
 }
 
