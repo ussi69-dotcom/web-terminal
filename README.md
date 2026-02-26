@@ -204,11 +204,14 @@ deckterm/
 ## Testing
 
 ```bash
-# Run all tests
-bun test
+# Unit tests
+bun run test:unit
 
-# Run specific test file
-bun test ./web/terminal-colors.test.js
+# E2E tests (always against dev on 4174 unless PW_BASE_URL is set)
+bun run test:e2e
+
+# Full test pass
+bun run test:all
 ```
 
 ### Test Coverage

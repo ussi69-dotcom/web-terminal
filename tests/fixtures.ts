@@ -225,10 +225,31 @@ export async function cleanupTempDir(dir?: string | null) {
   await rm(dir, { recursive: true, force: true });
 }
 
+async function clearServerTerminals(page: Page, url: string) {
+  try {
+    const listRes = await page.request.get(`${url}/api/terminals`);
+    if (!listRes.ok()) return;
+    const terminals = (await listRes.json().catch(() => [])) as Array<{
+      id?: string;
+    }>;
+    await Promise.all(
+      terminals
+        .map((term) => term?.id)
+        .filter((id): id is string => Boolean(id))
+        .map((id) =>
+          page.request.delete(`${url}/api/terminals/${encodeURIComponent(id)}`),
+        ),
+    );
+  } catch {
+    // Keep tests running even if cleanup endpoint is unavailable.
+  }
+}
+
 /**
  * Clear persisted UI/session state before each test for deterministic behavior.
  */
 export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
+  await clearServerTerminals(page, url);
   await page.goto(url);
   await page.evaluate(() => {
     localStorage.clear();

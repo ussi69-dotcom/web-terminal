@@ -76,9 +76,21 @@ test.describe("Terminal Reconnection - Realistic", () => {
     });
 
     // Verify we can type
-    await page.keyboard.type("echo test-after-reconnect");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(
+        JSON.stringify({ type: "input", data: "echo test-after-reconnect\r" }),
+      );
+    });
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector(".tile.active .xterm-rows")
+          ?.textContent?.includes("test-after-reconnect"),
+      { timeout: 5000 },
+    );
 
     await page.screenshot({
       path: "test-results/r05-final.png",

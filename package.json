@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "bun run backend/index.ts",
-    "start": "bun run backend/index.ts"
+    "start": "bun run backend/index.ts",
+    "test:unit": "bun test ./web/terminal-colors.test.js",
+    "test:e2e": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test",
+    "test:all": "bun run test:unit && bun run test:e2e"
   },
   "dependencies": {
     "@hono/cloudflare-access": "^0.3.1",
