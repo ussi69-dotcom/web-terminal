@@ -4905,7 +4905,9 @@ class TerminalManager {
           performance.now() - inputState.lastFallbackAt < 50
         ) {
           if (data === inputState.lastFallbackData) {
-            if (dbg) dbg.textContent = `onData: SKIP (fallback handled)`;
+            if (debugEl) {
+              debugEl.textContent = "onData: SKIP (fallback handled)";
+            }
             return;
           }
         }
