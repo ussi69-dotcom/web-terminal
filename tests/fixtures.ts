@@ -1,4 +1,8 @@
 import { test as base, expect, Page } from "@playwright/test";
+import { execSync } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 /**
  * Helper utilities for DeckTerm E2E tests
@@ -169,6 +173,84 @@ export async function pressDocumentShortcut(
     },
     { key, ctrl: options.ctrl, alt: options.alt, shift: options.shift },
   );
+}
+
+/**
+ * Create a deterministic temporary git repository fixture.
+ * Repository includes one staged and one unstaged change in nested folders.
+ */
+export async function createGitFixtureRepo(): Promise<string> {
+  const homeRoot = process.env.HOME || os.tmpdir();
+  const fixtureRoot = path.join(homeRoot, ".deckterm-test-fixtures");
+  await mkdir(fixtureRoot, { recursive: true });
+  const repoDir = await mkdtemp(path.join(fixtureRoot, "deckterm-git-fixture-"));
+  await mkdir(path.join(repoDir, "src", "staged"), { recursive: true });
+  await mkdir(path.join(repoDir, "src", "changes"), { recursive: true });
+
+  await writeFile(path.join(repoDir, "src", "staged", "staged.txt"), "base\n");
+  await writeFile(path.join(repoDir, "src", "changes", "changed.txt"), "base\n");
+
+  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+  execSync('git config user.email "deckterm-tests@example.com"', {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execSync('git config user.name "DeckTerm Tests"', {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execSync("git add .", { cwd: repoDir, stdio: "pipe" });
+  execSync('git commit -m "init fixture"', { cwd: repoDir, stdio: "pipe" });
+
+  // Unstaged change
+  await writeFile(
+    path.join(repoDir, "src", "changes", "changed.txt"),
+    "base\nunstaged line\n",
+  );
+
+  // Staged change
+  await writeFile(
+    path.join(repoDir, "src", "staged", "staged.txt"),
+    "base\nstaged line\n",
+  );
+  execSync("git add src/staged/staged.txt", { cwd: repoDir, stdio: "pipe" });
+
+  return repoDir;
+}
+
+export async function cleanupTempDir(dir?: string | null) {
+  if (!dir) return;
+  await rm(dir, { recursive: true, force: true });
+}
+
+/**
+ * Clear persisted UI/session state before each test for deterministic behavior.
+ */
+export async function resetAppState(page: Page, url = "http://localhost:4174") {
+  await page.goto(url);
+  await page.evaluate(async () => {
+    try {
+      const res = await fetch("/api/terminals");
+      if (res.ok) {
+        const terminals = await res.json();
+        await Promise.all(
+          terminals.map((t: { id: string }) =>
+            fetch(`/api/terminals/${encodeURIComponent(t.id)}`, {
+              method: "DELETE",
+            }),
+          ),
+        );
+      }
+    } catch {
+      // Best effort cleanup only.
+    }
+
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.context().clearCookies();
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
 }
 
 /**
