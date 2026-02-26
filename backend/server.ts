@@ -1056,15 +1056,59 @@ export function createWebApp() {
       });
 
       const timeoutId = setTimeout(() => proc.kill(), 10000);
-      const output = await new Response(proc.stdout).text();
+      const [output, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
       clearTimeout(timeoutId);
+
+      if (exitCode !== 0) {
+        return c.json(
+          {
+            error: "Not a git repository",
+            message: stderr.trim() || "git status failed",
+          },
+          400,
+        );
+      }
 
       const lines = output.trim().split("\n");
       const branch = lines[0]?.replace("## ", "").split("...")[0] || "unknown";
-      const files = lines.slice(1).map((line) => ({
-        status: line.substring(0, 2).trim(),
-        path: line.substring(3),
-      }));
+      const files = lines
+        .slice(1)
+        .filter((line) => line.length >= 3)
+        .map((line) => {
+          const rawStatus = line.substring(0, 2);
+          const stagedStatus = rawStatus[0] === " " ? "" : rawStatus[0];
+          const unstagedStatus = rawStatus[1] === " " ? "" : rawStatus[1];
+          const rawPath = line.substring(3).trim();
+          const renameSep = " -> ";
+          const renameIdx = rawPath.indexOf(renameSep);
+          const isRenamed =
+            stagedStatus === "R" ||
+            unstagedStatus === "R" ||
+            renameIdx !== -1;
+
+          let path = rawPath;
+          let oldPath: string | undefined;
+          if (renameIdx !== -1) {
+            oldPath = rawPath.substring(0, renameIdx).trim();
+            path = rawPath.substring(renameIdx + renameSep.length).trim();
+          }
+
+          return {
+            // Backward-compat field
+            status: rawStatus.trim(),
+            path,
+            stagedStatus,
+            unstagedStatus,
+            isRenamed,
+            ...(oldPath ? { oldPath } : {}),
+            section:
+              stagedStatus && stagedStatus !== "?" ? "staged" : "changes",
+          };
+        });
 
       return c.json({ branch, files, cwd });
     } catch (err) {
@@ -1079,12 +1123,41 @@ export function createWebApp() {
   app.get("/api/git/diff", async (c) => {
     const cwd = c.req.query("cwd") || process.env.HOME;
     const path = c.req.query("path");
+    const staged = c.req.query("staged");
+    const commit = c.req.query("commit");
     if (!cwd || !(await validateGitCwd(cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
+    if (
+      typeof staged === "string" &&
+      !["1", "0", "true", "false"].includes(staged.toLowerCase())
+    ) {
+      return c.json(
+        { error: "Invalid query: staged must be one of 1,0,true,false" },
+        400,
+      );
+    }
+
+    const stagedEnabled =
+      staged === "1" || staged?.toLowerCase?.() === "true";
+    if (stagedEnabled && commit) {
+      return c.json(
+        { error: "Invalid query: staged and commit cannot be combined" },
+        400,
+      );
+    }
+
     try {
-      const args = ["git", "diff", "--color=never"];
+      let args: string[];
+      if (commit) {
+        args = ["git", "show", "--format=", "--color=never", commit];
+      } else if (stagedEnabled) {
+        args = ["git", "diff", "--staged", "--color=never"];
+      } else {
+        args = ["git", "diff", "--color=never"];
+      }
+
       if (path) {
         args.push("--", path);
       }
@@ -1096,10 +1169,27 @@ export function createWebApp() {
       });
 
       const timeoutId = setTimeout(() => proc.kill(), 10000);
-      const output = await new Response(proc.stdout).text();
+      const [output, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
       clearTimeout(timeoutId);
 
-      return c.json({ diff: output, cwd, path });
+      if (exitCode !== 0) {
+        return c.json(
+          { error: "Git diff failed", message: stderr.trim() || "git failed" },
+          400,
+        );
+      }
+
+      return c.json({
+        diff: output,
+        cwd,
+        path,
+        staged: stagedEnabled ? 1 : 0,
+        commit: commit || null,
+      });
     } catch (err) {
       return c.json({ error: "Git diff failed", message: String(err) }, 400);
     }
