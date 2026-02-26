@@ -3594,6 +3594,8 @@ class TerminalManager {
     this.wrapLines = storedWrap ? storedWrap === "1" : false;
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
+    this.workspaceLastActive = new Map(); // workspaceId -> terminalId
+    this.tabDragThresholdPx = 6;
     this.resizeDebounceMs = 80;
     this.debugMode = false;
 
@@ -4956,26 +4958,40 @@ class TerminalManager {
     `;
     if (cwd) tab.title = cwd;
 
-    tab
-      .querySelector(".tab-label")
-      .addEventListener("click", () => this.switchTo(id));
-    tab
-      .querySelector(".tab-index")
-      .addEventListener("click", () => this.switchTo(id));
     tab.querySelector(".tab-close").addEventListener("click", (e) => {
       e.stopPropagation();
       this.closeWorkspace(workspaceId);
     });
 
+    tab.addEventListener("click", (e) => {
+      if (e.target.closest(".tab-close")) return;
+      const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
+      if (targetId) this.switchTo(targetId);
+    });
+
+    let pointerStart = null;
+    tab.addEventListener("pointerdown", (e) => {
+      pointerStart = { x: e.clientX, y: e.clientY };
+    });
+
     // Drag and drop for merging workspaces
     tab.draggable = true;
     tab.addEventListener("dragstart", (e) => {
+      if (pointerStart) {
+        const dx = e.clientX - pointerStart.x;
+        const dy = e.clientY - pointerStart.y;
+        if (Math.hypot(dx, dy) < this.tabDragThresholdPx) {
+          e.preventDefault();
+          return;
+        }
+      }
       e.dataTransfer.setData("text/plain", workspaceId);
       tab.classList.add("dragging");
       this.draggingTabId = id;
       this.draggingWorkspaceId = workspaceId;
     });
     tab.addEventListener("dragend", () => {
+      pointerStart = null;
       tab.classList.remove("dragging");
       this.draggingTabId = null;
       this.draggingWorkspaceId = null;
@@ -5124,6 +5140,7 @@ class TerminalManager {
 
     // Remove the tab
     this.tabs.querySelector(`[data-workspace-id="${workspaceId}"]`)?.remove();
+    this.workspaceLastActive.delete(workspaceId);
     this.updateTabGroups();
   }
 
@@ -5135,6 +5152,11 @@ class TerminalManager {
         t.workspaceId = toWorkspaceId;
       }
     });
+    const rememberedFrom = this.workspaceLastActive.get(fromWorkspaceId);
+    if (rememberedFrom) {
+      this.workspaceLastActive.set(toWorkspaceId, rememberedFrom);
+      this.workspaceLastActive.delete(fromWorkspaceId);
+    }
 
     // Merge tiles in tile manager
     this.tileManager.mergeWorkspaces(fromWorkspaceId, toWorkspaceId);
@@ -5149,6 +5171,28 @@ class TerminalManager {
 
     // Show the merged workspace
     this.tileManager.showWorkspace(toWorkspaceId);
+    const targetId = this.resolveWorkspaceTerminalId(toWorkspaceId, this.activeId);
+    if (targetId) this.switchTo(targetId);
+  }
+
+  resolveWorkspaceTerminalId(workspaceId, fallbackId = null) {
+    if (!workspaceId) return fallbackId;
+    const remembered = this.workspaceLastActive.get(workspaceId);
+    if (
+      remembered &&
+      this.terminals.has(remembered) &&
+      this.terminals.get(remembered)?.workspaceId === workspaceId
+    ) {
+      return remembered;
+    }
+
+    for (const [id, terminal] of this.terminals) {
+      if (terminal.workspaceId === workspaceId) {
+        return id;
+      }
+    }
+
+    return fallbackId;
   }
 
   switchTo(id) {
@@ -5156,6 +5200,9 @@ class TerminalManager {
 
     this.activeId = id;
     const t = this.terminals.get(id);
+    if (t?.workspaceId) {
+      this.workspaceLastActive.set(t.workspaceId, id);
+    }
     if (t?.workspaceId) {
       this.tileManager.showWorkspace(t.workspaceId);
     }
@@ -5194,7 +5241,10 @@ class TerminalManager {
 
   switchToIndex(index) {
     const tab = this.tabs.querySelector(`[data-index="${index}"]`);
-    if (tab) this.switchTo(tab.dataset.id);
+    if (!tab) return;
+    const workspaceId = tab.dataset.workspaceId;
+    const targetId = this.resolveWorkspaceTerminalId(workspaceId, tab.dataset.id);
+    if (targetId) this.switchTo(targetId);
   }
 
   switchToNext(direction) {
@@ -5208,6 +5258,7 @@ class TerminalManager {
   async closeTerminal(id) {
     const t = this.terminals.get(id);
     if (!t) return;
+    const closingWorkspaceId = t.workspaceId;
 
     t.ws?.close();
     t.inputFallbackCleanup?.();
@@ -5231,13 +5282,23 @@ class TerminalManager {
     } catch {}
 
     this.terminals.delete(id);
+    if (
+      closingWorkspaceId &&
+      this.workspaceLastActive.get(closingWorkspaceId) === id
+    ) {
+      this.workspaceLastActive.delete(closingWorkspaceId);
+    }
 
     // Remove from session registry (terminal is explicitly closed)
     this.sessionRegistry.remove(id);
 
     if (this.activeId === id) {
       const remaining = Array.from(this.terminals.keys());
-      if (remaining.length > 0) this.switchTo(remaining[0]);
+      const workspaceFallback = this.resolveWorkspaceTerminalId(
+        closingWorkspaceId,
+      );
+      const nextId = workspaceFallback || remaining[0];
+      if (nextId) this.switchTo(nextId);
       else {
         this.activeId = null;
         this.updateConnectionStatus("disconnected");
