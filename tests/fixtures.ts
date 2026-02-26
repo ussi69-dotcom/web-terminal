@@ -32,10 +32,26 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     timeout: 5000,
   });
 
-  // Always create a new terminal to ensure overlays exist
-  // Click the New button to create a fresh terminal
-  await page.click("#new-terminal, button:has-text('New')");
-  await page.waitForTimeout(1000);
+  let hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
+
+  if (!hasTerminal) {
+    const newButton = page.locator("#new-terminal, button:has-text('New')");
+    if ((await newButton.count()) > 0) {
+      await newButton.first().click();
+      await page.waitForTimeout(1000);
+      hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
+    }
+  }
+
+  if (!hasTerminal) {
+    await page.evaluate(async () => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      if (tm?.createTerminal) {
+        await tm.createTerminal();
+      }
+    });
+  }
 
   // Wait for an active tile with xterm
   await page.waitForSelector(".tile.active .xterm, .tile .xterm", {

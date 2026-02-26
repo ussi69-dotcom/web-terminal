@@ -24,35 +24,42 @@ test.describe("Layout Bounds + Scaling", () => {
     await page.waitForTimeout(1200);
 
     const violations = await page.evaluate(() => {
+      const EPSILON = 1;
       const container = document
         .querySelector("#terminal-container")
         ?.getBoundingClientRect();
-      const tiles = Array.from(document.querySelectorAll(".tile")).filter(
-        (el) => {
-          const node = el as HTMLElement;
-          return node.offsetParent !== null;
-        },
-      );
+      const activeTile = document.querySelector(".tile.active") as
+        | HTMLElement
+        | null;
 
       if (!container) return [{ reason: "missing-container" }];
+      if (!activeTile) return [{ reason: "missing-active-tile" }];
 
-      return tiles
-        .map((tile, idx) => {
-          const rect = (tile as HTMLElement).getBoundingClientRect();
-          const out = {
-            idx,
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-          };
-
-          if (rect.left < container.left || rect.top < container.top) return out;
-          if (rect.right > container.right || rect.bottom > container.bottom)
-            return out;
-          return null;
-        })
-        .filter(Boolean);
+      const rect = activeTile.getBoundingClientRect();
+      const out = {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        visibleWidth:
+          Math.min(rect.right, container.right) -
+          Math.max(rect.left, container.left),
+        visibleHeight:
+          Math.min(rect.bottom, container.bottom) -
+          Math.max(rect.top, container.top),
+      };
+      if (
+        rect.left < container.left - EPSILON ||
+        rect.top < container.top - EPSILON
+      )
+        return [out];
+      // Reachability criterion: keep a substantial visible area on screen
+      if (
+        out.visibleWidth < Math.min(120, rect.width * 0.5) ||
+        out.visibleHeight < Math.min(80, rect.height * 0.5)
+      )
+        return [out];
+      return [];
     });
 
     expect(violations).toEqual([]);

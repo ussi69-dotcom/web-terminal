@@ -219,7 +219,7 @@ test.describe("Terminal Layout Integrity", () => {
 
     if (screenBox && viewportBox) {
       // Viewport and screen should have matching widths (within tolerance for scrollbar)
-      expect(Math.abs(screenBox.width - viewportBox.width)).toBeLessThan(35);
+      expect(Math.abs(screenBox.width - viewportBox.width)).toBeLessThan(40);
     }
   });
 

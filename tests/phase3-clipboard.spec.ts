@@ -1,22 +1,24 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
 
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Phase 3: Clipboard Overhaul", () => {
-  test.beforeEach(async ({ page, context }) => {
+  test.beforeEach(async ({ page, context }, testInfo) => {
+    if (testInfo.title.includes("image upload endpoint accepts images")) {
+      return;
+    }
     // Grant clipboard permissions
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
   });
 
   test("Ctrl+V pastes small text directly", async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForSelector(".terminal");
-
     // Set clipboard content
     await page.evaluate(() => navigator.clipboard.writeText("hello world"));
 
     // Focus terminal and paste
-    await page.locator(".terminal").first().click();
+    await page.locator(".tile.active .xterm:visible").first().click();
     await page.keyboard.press("Control+v");
 
     // Verify no modal appears for small content
@@ -25,9 +27,6 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
   });
 
   test("Ctrl+V shows warning for large content (>5KB)", async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForSelector(".terminal");
-
     // Create large content (6KB)
     const largeText = "x".repeat(6 * 1024);
     await page.evaluate(
@@ -36,7 +35,7 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
     );
 
     // Focus terminal and paste
-    await page.locator(".terminal").first().click();
+    await page.locator(".tile.active .xterm:visible").first().click();
     await page.keyboard.press("Control+v");
 
     // Modal should appear
@@ -53,9 +52,6 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
   });
 
   test("auto-copy setting persists", async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForSelector(".terminal");
-
     // Open clipboard panel
     await page.locator("#clipboard-btn").click();
 
@@ -66,16 +62,13 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
 
     // Reload and verify
     await page.reload();
-    await page.waitForSelector(".terminal");
+    await waitForTerminal(page);
     await page.locator("#clipboard-btn").click();
 
     await expect(page.locator("#auto-copy-toggle")).toBeChecked();
   });
 
   test("toast debouncing prevents spam", async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForSelector(".terminal");
-
     // Trigger multiple toasts rapidly
     await page.evaluate(() => {
       const cm = (window as any).terminalManager.clipboardManager;
