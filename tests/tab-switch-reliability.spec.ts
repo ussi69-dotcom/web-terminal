@@ -14,6 +14,13 @@ test.describe("Tab Switching Reliability", () => {
     const tabCount = await tabs.count();
     expect(tabCount).toBeGreaterThanOrEqual(2);
 
+    const newTabMarker = `NEW_TAB_${Date.now()}`;
+    await page.keyboard.type(`echo ${newTabMarker}`);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".tile.active .xterm-rows").first()).toContainText(
+      newTabMarker,
+    );
+
     const activeTab = page.locator("#terminals-tabs .tab.active").first();
     const targetTab = page.locator("#terminals-tabs .tab:not(.active)").first();
 

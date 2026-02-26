@@ -4893,9 +4893,10 @@ class TerminalManager {
       };
       const onDataDisposable = terminal.onData((data) => {
         // Debug: direct DOM update to see if onData fires at all
-        const dbg = document.getElementById("modifier-debug");
-        if (dbg)
-          dbg.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+        const debugEl = document.getElementById("modifier-debug");
+        if (debugEl) {
+          debugEl.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+        }
 
         // Skip if fallback already processed this input (within 50ms, same data)
         // This prevents double-sending when both handlers fire
