@@ -31,7 +31,18 @@ deckterm/
 bun install            # Install dependencies
 bun run dev            # Start dev server (default: http://localhost:4174)
 bun run start          # Production
+./test-git-api.sh      # Basic API smoke test
+systemctl --user status deckterm-dev.service
+systemctl --user restart deckterm-dev.service
+journalctl --user -u deckterm-dev.service -f
 ```
+
+## Verification Gate
+
+Before claiming completion:
+- Run `bun run dev` and confirm server starts without runtime errors.
+- Run `./test-git-api.sh` when API/backend paths changed.
+- For UI changes, verify terminal create/connect/resize/close flow in browser on port 4174.
 
 ## Environments
 
