@@ -20,7 +20,7 @@
   --toolbar-height: 48px;
   --extra-keys-height: 52px;
   --tile-gap: 4px;
-  --resize-handle: 8px;
+  --resize-handle: 12px;
 }
 
 * {
@@ -487,7 +487,7 @@ body {
   top: 0;
   left: var(--resize-handle);
   right: var(--resize-handle);
-  height: var(--resize-handle);
+  height: calc(var(--resize-handle) + 6px);
   cursor: ns-resize;
 }
 
@@ -518,16 +518,16 @@ body {
 .tile-resize-top-left {
   top: 0;
   left: 0;
-  width: var(--resize-handle);
-  height: var(--resize-handle);
+  width: calc(var(--resize-handle) + 4px);
+  height: calc(var(--resize-handle) + 6px);
   cursor: nwse-resize;
 }
 
 .tile-resize-top-right {
   top: 0;
   right: 0;
-  width: var(--resize-handle);
-  height: var(--resize-handle);
+  width: calc(var(--resize-handle) + 4px);
+  height: calc(var(--resize-handle) + 6px);
   cursor: nesw-resize;
 }
 
