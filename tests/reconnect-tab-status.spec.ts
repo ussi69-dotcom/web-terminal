@@ -1,4 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 test.describe("Terminal Tab Status on Reconnection", () => {
   test("should update tab class from reconnecting to connected", async ({
@@ -13,9 +15,8 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     });
 
     // Step 1: Navigate and create a terminal
-    await page.goto("http://localhost:4174/");
-    await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-    await page.waitForTimeout(2000);
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
 
     // Step 2: Type something to verify terminal is working
     await page.keyboard.type("echo initial");
@@ -31,10 +32,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     const terminalId = await page.evaluate(() => {
       // @ts-ignore
       const tm = window.terminalManager;
-      if (tm && tm.terminals.size > 0) {
-        return Array.from(tm.terminals.keys())[0];
-      }
-      return null;
+      return tm?.activeId || null;
     });
     console.log(`Terminal ID: ${terminalId}`);
 
@@ -108,9 +106,21 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     console.log("===========================================\n");
 
     // Step 4: Type something to verify terminal is working
-    await page.keyboard.type("echo after-reconnect");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(
+        JSON.stringify({ type: "input", data: "echo after-reconnect\r" }),
+      );
+    });
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector(".tile.active .xterm-rows")
+          ?.textContent?.includes("after-reconnect"),
+      { timeout: 5000 },
+    );
 
     await page.screenshot({
       path: "test-results/tab-04-final.png",
@@ -119,7 +129,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
 
     // Verify final state
     const finalContent = await page
-      .locator(".xterm-rows")
+      .locator(".tile.active .xterm-rows")
       .first()
       .textContent();
     expect(finalContent).toContain("after-reconnect");

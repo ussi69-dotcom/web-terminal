@@ -7,11 +7,11 @@
 (function () {
   const APP_VERSION = "20260119a";
   const DEBUG_MODE = location.search.includes("debug=1");
+  if (!DEBUG_MODE) return;
+
   const originalLog = console.log;
   console.log = function (...args) {
     originalLog.apply(console, args);
-    // Only show debug panel when ?debug=1 is in URL
-    if (!DEBUG_MODE) return;
     const msg = args
       .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
       .join(" ");
@@ -19,7 +19,7 @@
       const panel = document.getElementById("debug-panel");
       const log = document.getElementById("debug-log");
       if (panel && log) {
-        panel.style.display = "block";
+        panel.classList.add("visible");
         const line = document.createElement("div");
         line.textContent = new Date().toLocaleTimeString() + " " + msg;
         log.appendChild(line);
@@ -557,8 +557,8 @@ class Tile {
 
     if (isMobile) {
       const containerRect = this.container.getBoundingClientRect();
-      const minWidth = 360;
-      const minHeight = 400;
+      const minWidth = Math.min(TILE_CONFIG.MIN_WIDTH, containerRect.width);
+      const minHeight = Math.min(TILE_CONFIG.MIN_HEIGHT, containerRect.height);
 
       const width = Math.max(
         minWidth,
@@ -751,6 +751,50 @@ class TileManager {
     this.setupTouchGestures();
   }
 
+  getBoundsConstraints() {
+    const rect = this.container.getBoundingClientRect();
+    const safeWidth = Math.max(rect.width, 1);
+    const safeHeight = Math.max(rect.height, 1);
+    const minWidthPct = Math.min(
+      100,
+      (TILE_CONFIG.MIN_WIDTH / safeWidth) * 100,
+    );
+    const minHeightPct = Math.min(
+      100,
+      (TILE_CONFIG.MIN_HEIGHT / safeHeight) * 100,
+    );
+    return { minWidthPct, minHeightPct };
+  }
+
+  normalizeBounds(bounds) {
+    const width = Math.max(1, Math.min(100, bounds.width));
+    const height = Math.max(1, Math.min(100, bounds.height));
+    const x = Math.max(0, Math.min(100 - width, bounds.x));
+    const y = Math.max(0, Math.min(100 - height, bounds.y));
+    return { x, y, width, height };
+  }
+
+  normalizeWorkspaceTiles(workspaceId = null) {
+    const targetWorkspaceId = workspaceId || this.activeWorkspaceId;
+    const tiles = targetWorkspaceId
+      ? this.getWorkspaceTiles(targetWorkspaceId)
+      : Array.from(this.tiles.values());
+    tiles.forEach((tile) => {
+      tile.bounds = this.normalizeBounds(tile.bounds);
+      tile.updatePosition();
+    });
+  }
+
+  ensureTileVisible(terminalId) {
+    const tile = this.tiles.get(terminalId);
+    if (!tile || tile.element.style.display === "none") return;
+    tile.element.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+  }
+
   setupTouchGestures() {
     if (!this.isMobile) return;
 
@@ -814,7 +858,9 @@ class TileManager {
       tile.bounds = { x: 0, y: 0, width: 100, height: 100 };
     }
 
+    tile.bounds = this.normalizeBounds(tile.bounds);
     tile.updatePosition();
+    this.normalizeWorkspaceTiles(workspaceId);
     this.showWorkspace(workspaceId);
 
     if (DEBUG) {
@@ -841,6 +887,7 @@ class TileManager {
         tile.element.style.display = "none";
       }
     });
+    this.normalizeWorkspaceTiles(workspaceId);
     if (DEBUG) {
       dbg("showWorkspace", {
         workspaceId,
@@ -878,7 +925,12 @@ class TileManager {
 
     const count = tiles.length;
     if (count === 1) {
-      tiles[0].bounds = { x: 0, y: 0, width: 100, height: 100 };
+      tiles[0].bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       tiles[0].updatePosition();
       return;
     }
@@ -898,6 +950,7 @@ class TileManager {
         width: cellWidth,
         height: cellHeight,
       };
+      tile.bounds = this.normalizeBounds(tile.bounds);
       tile.updatePosition();
     });
     if (DEBUG) {
@@ -909,14 +962,24 @@ class TileManager {
   positionNewTile(newTile) {
     if (this.tiles.size === 1) {
       // First tile takes full space
-      newTile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+      newTile.bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       return;
     }
 
     const activeTile = this.tiles.get(this.activeTileId);
     if (!activeTile) {
       // No active tile, fill remaining space
-      newTile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+      newTile.bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       this.relayout(newTile.workspaceId);
       return;
     }
@@ -952,14 +1015,20 @@ class TileManager {
       };
     }
 
+    activeTile.bounds = this.normalizeBounds(activeTile.bounds);
+    newTile.bounds = this.normalizeBounds(newTile.bounds);
     activeTile.updatePosition();
+    newTile.updatePosition();
   }
 
   // Handle tile resize with push neighbors
   handleTileResize(tile, newBounds, edge) {
     const containerRect = this.container.getBoundingClientRect();
-    const minW = (TILE_CONFIG.MIN_WIDTH / containerRect.width) * 100;
-    const minH = (TILE_CONFIG.MIN_HEIGHT / containerRect.height) * 100;
+    const safeWidth = Math.max(containerRect.width, 1);
+    const safeHeight = Math.max(containerRect.height, 1);
+    const minW = (TILE_CONFIG.MIN_WIDTH / safeWidth) * 100;
+    const minH = (TILE_CONFIG.MIN_HEIGHT / safeHeight) * 100;
+    const normalizedNewBounds = this.normalizeBounds(newBounds);
 
     // Find neighbors that would be affected
     const neighbors = this.findNeighbors(tile, edge);
@@ -971,7 +1040,7 @@ class TileManager {
       const pushAmount = this.calculatePushAmount(
         tile,
         neighbor,
-        newBounds,
+        normalizedNewBounds,
         edge,
       );
 
@@ -998,14 +1067,14 @@ class TileManager {
 
     if (canResize) {
       // Apply the resize
-      tile.bounds = { ...newBounds };
+      tile.bounds = { ...normalizedNewBounds };
 
       // Push all affected neighbors
       for (const neighbor of neighbors) {
         const pushAmount = this.calculatePushAmount(
           tile,
           neighbor,
-          newBounds,
+          normalizedNewBounds,
           edge,
         );
         if (pushAmount !== 0) {
@@ -1014,7 +1083,7 @@ class TileManager {
       }
 
       // Update all tile positions
-      this.tiles.forEach((t) => t.updatePosition());
+      this.normalizeWorkspaceTiles(tile.workspaceId);
     }
   }
 
@@ -1024,6 +1093,7 @@ class TileManager {
 
     this.tiles.forEach((other) => {
       if (other === tile) return;
+      if (other.workspaceId !== tile.workspaceId) return;
 
       // Check adjacency based on edge being resized
       if (
@@ -1109,7 +1179,7 @@ class TileManager {
 
   pushTile(tile, amount, edge) {
     const newBounds = this.applyPush(tile, amount, edge);
-    tile.bounds = newBounds;
+    tile.bounds = this.normalizeBounds(newBounds);
   }
 
   tryPushChain(tile, amount, edge, minW, minH) {
@@ -1149,7 +1219,12 @@ class TileManager {
     if (this.isMobile) {
       // Mobile: stack mode - one tile takes full space
       tileArray.forEach((tile, i) => {
-        tile.bounds = { x: 0, y: 0, width: 100, height: 100 };
+        tile.bounds = this.normalizeBounds({
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        });
         tile.element.style.display =
           tile.terminalId === this.activeTileId ? "block" : "none";
         tile.updatePosition();
@@ -1161,7 +1236,12 @@ class TileManager {
     const count = tileArray.length;
 
     if (count === 1) {
-      tileArray[0].bounds = { x: 0, y: 0, width: 100, height: 100 };
+      tileArray[0].bounds = this.normalizeBounds({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      });
       tileArray[0].element.style.display = "block";
       tileArray[0].updatePosition();
       return;
@@ -1183,6 +1263,7 @@ class TileManager {
         width: cellWidth,
         height: cellHeight,
       };
+      tile.bounds = this.normalizeBounds(tile.bounds);
       tile.element.style.display = "block";
       tile.updatePosition();
     });
@@ -1205,6 +1286,8 @@ class TileManager {
         tile.element.style.display = id === terminalId ? "block" : "none";
       }
     });
+
+    this.ensureTileVisible(terminalId);
   }
 
   // Create a group from tiles
@@ -1455,7 +1538,7 @@ class ExtraKeysManager {
       "touchstart",
       (e) => {
         const btn = e.target.closest(".ek-btn, .ek-toggle");
-        console.log(
+        dbg(
           "[ExtraKeys] touchstart, btn:",
           btn?.dataset?.key || btn?.id,
         );
@@ -1465,7 +1548,7 @@ class ExtraKeysManager {
           touchedKey =
             btn.dataset.key ||
             (btn.id === "extra-keys-toggle" ? "TOGGLE" : null);
-          console.log("[ExtraKeys] touchedKey set to:", touchedKey);
+          dbg("[ExtraKeys] touchedKey set to:", touchedKey);
         }
       },
       { passive: false, capture: true },
@@ -1474,7 +1557,7 @@ class ExtraKeysManager {
     extraKeys.addEventListener(
       "touchend",
       (e) => {
-        console.log("[ExtraKeys] touchend, touchedKey:", touchedKey);
+        dbg("[ExtraKeys] touchend, touchedKey:", touchedKey);
         e.preventDefault();
         e.stopImmediatePropagation();
         if (touchedKey) {
@@ -1533,20 +1616,20 @@ class ExtraKeysManager {
   }
 
   handleKey(key) {
-    console.log("[ExtraKeys] handleKey called:", key);
+    dbg("[ExtraKeys] handleKey called:", key);
     if (!key) return;
 
     // Handle modifiers FIRST - they don't need an active terminal
     const upperKey = key.toUpperCase();
     if (upperKey === "CTRL" || upperKey === "ALT" || upperKey === "SHIFT") {
-      console.log("[ExtraKeys] Toggling modifier:", upperKey);
+      dbg("[ExtraKeys] Toggling modifier:", upperKey);
       this.toggleModifier(upperKey.toLowerCase());
       return;
     }
 
     // For actual key sequences, we need an active terminal
     const active = this.tm.terminals.get(this.tm.activeId);
-    console.log(
+    dbg(
       "[ExtraKeys] Active terminal:",
       this.tm.activeId,
       "ws:",
@@ -1575,7 +1658,7 @@ class ExtraKeysManager {
 
   toggleModifier(mod) {
     this.modifiers[mod] = !this.modifiers[mod];
-    console.log(
+    dbg(
       "[ExtraKeys] toggleModifier:",
       mod,
       "->",
@@ -1588,7 +1671,7 @@ class ExtraKeysManager {
   }
 
   resetModifiers() {
-    console.log(
+    dbg(
       "[ExtraKeys] resetModifiers called (stack):",
       new Error().stack?.split("\n").slice(1, 4).join(" <- "),
     );
@@ -1599,7 +1682,7 @@ class ExtraKeysManager {
 
   updateModifierUI() {
     const btns = document.querySelectorAll(".ek-btn.ek-modifier");
-    console.log(
+    dbg(
       "[ExtraKeys] updateModifierUI, found buttons:",
       btns.length,
       "modifiers:",
@@ -1613,11 +1696,11 @@ class ExtraKeysManager {
 
   refocusTerminal() {
     const active = this.tm.terminals.get(this.tm.activeId);
-    console.log("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
+    dbg("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
     if (active?.terminal) {
       // MUST use terminal.focus() so xterm.js processes input correctly
       active.terminal.focus();
-      console.log("[ExtraKeys] terminal.focus() called");
+      dbg("[ExtraKeys] terminal.focus() called");
     }
   }
 
@@ -2552,12 +2635,16 @@ class GitManager {
     this.panel = null;
     this.state = {
       cwd: null,
-      files: { staged: [], modified: [], untracked: [], deleted: [] },
+      files: { staged: [], changes: [] },
       branches: { current: "", list: [] },
       commits: [],
       selectedIndex: 0,
+      selectedPath: null,
       activePanel: "files", // 'files' | 'history' | 'branches'
       diff: null,
+      diffMode: "working", // 'working' | 'staged' | 'commit'
+      selectedCommit: null,
+      collapsedFolders: new Set(),
       loading: false,
     };
     // Keep currentCwd for backward compatibility with existing methods
@@ -2593,6 +2680,11 @@ class GitManager {
         <div class="git-right-panel">
           <div class="git-diff-header">
             <span id="git-diff-title">Diff</span>
+            <div class="git-diff-modes">
+              <button class="git-diff-mode active" data-mode="working">Working Tree</button>
+              <button class="git-diff-mode" data-mode="staged">Staged</button>
+              <button class="git-diff-mode" data-mode="commit">Commit</button>
+            </div>
           </div>
           <div id="git-diff" class="git-diff"></div>
           <div class="git-history-header">
@@ -2630,6 +2722,9 @@ class GitManager {
     this.panel
       .querySelector("#git-branch")
       .addEventListener("click", () => this.toggleBranches());
+    this.panel.querySelectorAll(".git-diff-mode").forEach((btn) => {
+      btn.addEventListener("click", () => this.setDiffMode(btn.dataset.mode));
+    });
   }
 
   setupKeyboardShortcuts() {
@@ -2700,13 +2795,21 @@ class GitManager {
 
   highlightSelectedFile() {
     const fileElements = this.panel.querySelectorAll(".git-file");
-    fileElements.forEach((el, i) => {
-      el.classList.toggle("selected", i === this.state.selectedIndex);
+    fileElements.forEach((el) => {
+      const elIndex = Number(el.dataset.index || -1);
+      const isSelected =
+        elIndex === this.state.selectedIndex ||
+        el.dataset.path === this.state.selectedPath;
+      el.classList.toggle("selected", isSelected);
     });
 
     // Scroll into view
     const selected = this.panel.querySelector(".git-file.selected");
     if (selected) {
+      this.state.selectedPath = selected.dataset.path || this.state.selectedPath;
+      this.state.selectedIndex = Number(
+        selected.dataset.index || this.state.selectedIndex,
+      );
       selected.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
@@ -2747,6 +2850,26 @@ class GitManager {
     if (activeEl) {
       activeEl.classList.add("panel-active");
     }
+  }
+
+  setDiffMode(mode) {
+    if (!mode) return;
+    this.state.diffMode = mode;
+    this.updateDiffModeUI();
+
+    if (mode !== "commit") {
+      this.state.selectedCommit = null;
+    }
+
+    if (this.state.selectedPath) {
+      this.showDiff(this.state.selectedPath);
+    }
+  }
+
+  updateDiffModeUI() {
+    this.panel.querySelectorAll(".git-diff-mode").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.mode === this.state.diffMode);
+    });
   }
 
   toggleBranches() {
@@ -2866,43 +2989,50 @@ class GitManager {
         return;
       }
 
-      // Group files by status
+      const prevSelectedPath = this.state.selectedPath;
+      const prevDiffMode = this.state.diffMode;
+
       this.state.files = {
         staged: [],
-        modified: [],
-        untracked: [],
-        deleted: [],
+        changes: [],
       };
       this.state.branches.current = statusData.branch;
 
       statusData.files.forEach((f) => {
-        const file = { path: f.path, status: f.status, staged: false };
-
-        // First char = staged status, second = working tree status
-        const staged = f.status[0];
-        const unstaged = f.status[1] || " ";
-
-        if (
-          staged === "A" ||
-          staged === "M" ||
-          staged === "D" ||
-          staged === "R"
-        ) {
-          file.staged = true;
-          this.state.files.staged.push({ ...file, displayStatus: staged });
-        }
-
-        if (unstaged === "M") {
-          this.state.files.modified.push({ ...file, displayStatus: "M" });
-        } else if (unstaged === "D") {
-          this.state.files.deleted.push({ ...file, displayStatus: "D" });
-        } else if (f.status === "??") {
-          this.state.files.untracked.push({ ...file, displayStatus: "?" });
-        }
+        const stagedStatus = f.stagedStatus || "";
+        const unstagedStatus = f.unstagedStatus || "";
+        const isStaged = f.section === "staged" || !!stagedStatus;
+        const sectionKey = isStaged ? "staged" : "changes";
+        const displayStatus =
+          stagedStatus || unstagedStatus || f.status || "?";
+        const file = {
+          path: f.path,
+          oldPath: f.oldPath || null,
+          status: f.status,
+          stagedStatus,
+          unstagedStatus,
+          isRenamed: !!f.isRenamed,
+          section: sectionKey,
+          staged: isStaged,
+          displayStatus,
+        };
+        this.state.files[sectionKey].push(file);
       });
 
       this.panel.querySelector("#git-branch").textContent = statusData.branch;
       this.renderFiles();
+
+      if (prevSelectedPath) {
+        const allFiles = this.getAllFiles();
+        const nextIndex = allFiles.findIndex((f) => f.path === prevSelectedPath);
+        if (nextIndex !== -1) {
+          this.state.selectedIndex = nextIndex;
+          this.state.selectedPath = prevSelectedPath;
+          this.highlightSelectedFile();
+          this.state.diffMode = prevDiffMode;
+          this.updateDiffModeUI();
+        }
+      }
 
       // Fetch commit history
       const logRes = await fetch(
@@ -2969,79 +3099,190 @@ class GitManager {
   }
 
   getAllFiles() {
-    return [
-      ...this.state.files.staged,
-      ...this.state.files.modified,
-      ...this.state.files.deleted,
-      ...this.state.files.untracked,
-    ];
+    return [...this.state.files.staged, ...this.state.files.changes];
   }
 
   renderFiles() {
     const container = this.panel.querySelector("#git-files");
-    const groups = [
-      { key: "staged", label: "Staged", icon: "\u2713", color: "staged" },
-      { key: "modified", label: "Modified", icon: "M", color: "modified" },
-      { key: "deleted", label: "Deleted", icon: "D", color: "deleted" },
-      { key: "untracked", label: "Untracked", icon: "?", color: "untracked" },
+    const sections = [
+      {
+        key: "staged",
+        label: "Staged Changes",
+        icon: "\u2713",
+        files: this.state.files.staged,
+      },
+      {
+        key: "changes",
+        label: "Changes",
+        icon: "\u2022",
+        files: this.state.files.changes,
+      },
     ];
 
     let html = "";
     let globalIndex = 0;
 
-    groups.forEach((group) => {
-      const files = this.state.files[group.key];
-      if (files.length === 0) return;
+    sections.forEach((section) => {
+      const files = section.files;
+      const { html: treeHtml, nextIndex } = this.renderSectionTree(
+        files,
+        section,
+        globalIndex,
+      );
+      globalIndex = nextIndex;
 
       html += `
-        <div class="git-file-group">
+        <div class="git-file-group git-file-group-${section.key}">
           <div class="git-file-group-header">
-            <span class="git-file-group-icon ${group.color}">${group.icon}</span>
-            <span class="git-file-group-label">${group.label}</span>
+            <span class="git-file-group-icon ${section.key}">${section.icon}</span>
+            <span class="git-file-group-label">${section.label}</span>
             <span class="git-file-group-count">(${files.length})</span>
           </div>
           <div class="git-file-group-items">
-      `;
-
-      files.forEach((f) => {
-        const isSelected = globalIndex === this.state.selectedIndex;
-        html += `
-          <div class="git-file ${isSelected ? "selected" : ""}" data-path="${this.escapeHtml(f.path)}" data-index="${globalIndex}">
-            <span class="git-file-status ${group.color}">${f.displayStatus}</span>
-            <span class="git-file-path" title="${this.escapeHtml(f.path)}">${this.escapeHtml(this.truncatePath(f.path))}</span>
-            <div class="git-file-actions">
-              <button class="git-file-diff" title="View diff">diff</button>
-              <button class="git-file-stage" title="${f.staged ? "Unstage" : "Stage"}">${f.staged ? "-" : "+"}</button>
-            </div>
+            ${treeHtml}
           </div>
-        `;
-        globalIndex++;
-      });
-
-      html += "</div></div>";
+        </div>
+      `;
     });
 
-    if (html === "") {
+    if (this.getAllFiles().length === 0) {
       html = '<p class="muted centered">No changes</p>';
     }
 
     container.innerHTML = html;
+
+    if (!this.state.selectedPath) {
+      const firstFile = this.getAllFiles()[0];
+      if (firstFile) {
+        this.state.selectedPath = firstFile.path;
+        this.state.selectedIndex = 0;
+      }
+    }
+    this.highlightSelectedFile();
+
+    container.querySelectorAll(".git-tree-folder").forEach((el) => {
+      el.addEventListener("click", () => {
+        const key = el.dataset.folderKey;
+        if (!key) return;
+        if (this.state.collapsedFolders.has(key)) {
+          this.state.collapsedFolders.delete(key);
+        } else {
+          this.state.collapsedFolders.add(key);
+        }
+        this.renderFiles();
+      });
+    });
 
     // Add event listeners
     container.querySelectorAll(".git-file").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (e.target.classList.contains("git-file-diff")) {
           this.showDiff(el.dataset.path);
-        } else if (e.target.classList.contains("git-file-stage")) {
+          return;
+        }
+
+        if (e.target.classList.contains("git-file-stage")) {
           const files = this.getAllFiles();
           const file = files[parseInt(el.dataset.index)];
           this.toggleStage(el.dataset.path, file?.staged);
-        } else {
-          this.state.selectedIndex = parseInt(el.dataset.index);
-          this.highlightSelectedFile();
+          return;
         }
+
+        this.state.selectedIndex = parseInt(el.dataset.index, 10);
+        this.state.selectedPath = el.dataset.path;
+        this.highlightSelectedFile();
+        this.showDiff(el.dataset.path);
       });
     });
+  }
+
+  renderSectionTree(files, section, startIndex) {
+    if (files.length === 0) {
+      return { html: '<p class="muted centered">No files</p>', nextIndex: startIndex };
+    }
+
+    const root = this.buildFileTree(files);
+    const rendered = this.renderTreeNode(root, section.key, 0, startIndex);
+    return { html: rendered.html, nextIndex: rendered.nextIndex };
+  }
+
+  buildFileTree(files) {
+    const root = { folders: new Map(), files: [] };
+
+    files.forEach((file) => {
+      const parts = file.path.split("/");
+      let node = root;
+      let prefix = "";
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        const folder = parts[i];
+        prefix = prefix ? `${prefix}/${folder}` : folder;
+        if (!node.folders.has(folder)) {
+          node.folders.set(folder, {
+            name: folder,
+            fullPath: prefix,
+            folders: new Map(),
+            files: [],
+          });
+        }
+        node = node.folders.get(folder);
+      }
+
+      node.files.push(file);
+    });
+
+    return root;
+  }
+
+  renderTreeNode(node, sectionKey, depth, startIndex) {
+    let html = "";
+    let index = startIndex;
+
+    const folders = Array.from(node.folders?.values?.() || []).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    folders.forEach((folder) => {
+      const folderKey = `${sectionKey}:${folder.fullPath}`;
+      const collapsed = this.state.collapsedFolders.has(folderKey);
+      html += `
+        <div class="git-tree-folder" data-node-type="folder" data-folder-key="${this.escapeHtml(folderKey)}" style="--tree-depth:${depth}">
+          <span class="git-tree-chevron">${collapsed ? "\u25b8" : "\u25be"}</span>
+          <span class="git-tree-folder-name">${this.escapeHtml(folder.name)}</span>
+        </div>
+      `;
+      if (!collapsed) {
+        const rendered = this.renderTreeNode(folder, sectionKey, depth + 1, index);
+        html += rendered.html;
+        index = rendered.nextIndex;
+      }
+    });
+
+    const files = [...(node.files || [])].sort((a, b) => a.path.localeCompare(b.path));
+    files.forEach((file) => {
+      const isSelected =
+        this.state.selectedPath === file.path || index === this.state.selectedIndex;
+      const fileName = file.path.split("/").pop() || file.path;
+      html += `
+        <div class="git-file ${isSelected ? "selected" : ""}" data-path="${this.escapeHtml(file.path)}" data-index="${index}" style="--tree-depth:${depth}">
+          <span class="git-file-status ${file.section}">${this.escapeHtml(this.getStatusGlyph(file))}</span>
+          <span class="git-file-path" title="${this.escapeHtml(file.path)}">${this.escapeHtml(fileName)}</span>
+          <div class="git-file-actions">
+            <button class="git-file-diff" title="View diff">diff</button>
+            <button class="git-file-stage" title="${file.staged ? "Unstage" : "Stage"}">${file.staged ? "-" : "+"}</button>
+          </div>
+        </div>
+      `;
+      index++;
+    });
+
+    return { html, nextIndex: index };
+  }
+
+  getStatusGlyph(file) {
+    if (file.stagedStatus) return file.stagedStatus;
+    if (file.unstagedStatus) return file.unstagedStatus;
+    if (file.status) return file.status;
+    return "?";
   }
 
   truncatePath(path, maxLen = 30) {
@@ -3052,13 +3293,32 @@ class GitManager {
   async showDiff(path) {
     try {
       const cwd = this.state.cwd || this.currentCwd;
-      this.panel.querySelector("#git-diff-title").textContent = path;
+      const mode = this.state.diffMode || "working";
+      this.state.selectedPath = path || this.state.selectedPath;
+      const titlePath = path || this.state.selectedPath || "Diff";
+      const modeLabel =
+        mode === "staged"
+          ? "Staged"
+          : mode === "commit"
+            ? "Commit"
+            : "Working Tree";
+      this.panel.querySelector("#git-diff-title").textContent =
+        `${titlePath} (${modeLabel})`;
       this.panel.querySelector("#git-diff").innerHTML =
         '<p class="muted">Loading...</p>';
 
-      const res = await fetch(
-        `/api/git/diff?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path)}`,
-      );
+      const params = new URLSearchParams({ cwd });
+      const resolvedPath = path || this.state.selectedPath;
+      if (resolvedPath) {
+        params.set("path", resolvedPath);
+      }
+      if (mode === "staged") {
+        params.set("staged", "1");
+      } else if (mode === "commit" && this.state.selectedCommit) {
+        params.set("commit", this.state.selectedCommit);
+      }
+
+      const res = await fetch(`/api/git/diff?${params.toString()}`);
       const data = await res.json();
 
       if (data.error) {
@@ -3067,7 +3327,7 @@ class GitManager {
         return;
       }
 
-      this.showDiffContent(data.diff, path);
+      this.showDiffContent(data.diff, resolvedPath || "");
     } catch (err) {
       console.error("Diff error:", err);
       this.panel.querySelector("#git-diff").innerHTML =
@@ -3178,19 +3438,10 @@ class GitManager {
   }
 
   async showCommitDiff(hash) {
-    try {
-      const cwd = this.state.cwd || this.currentCwd;
-      const res = await fetch(
-        `/api/git/diff?cwd=${encodeURIComponent(cwd)}&commit=${hash}`,
-      );
-      const data = await res.json();
-
-      this.panel.querySelector("#git-diff-title").textContent =
-        `Commit: ${hash}`;
-      this.showDiffContent(data.diff || "No changes");
-    } catch (err) {
-      console.error("Commit diff error:", err);
-    }
+    this.state.selectedCommit = hash;
+    this.state.diffMode = "commit";
+    this.updateDiffModeUI();
+    await this.showDiff(this.state.selectedPath);
   }
 
   showDiffContent(diffText, filename = "") {
@@ -3343,6 +3594,8 @@ class TerminalManager {
     this.wrapLines = storedWrap ? storedWrap === "1" : false;
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
+    this.workspaceLastActive = new Map(); // workspaceId -> terminalId
+    this.tabDragThresholdPx = 6;
     this.resizeDebounceMs = 80;
     this.debugMode = false;
 
@@ -3676,7 +3929,7 @@ class TerminalManager {
       const serverTerminals = await res.json();
 
       if (serverTerminals.length > 0) {
-        console.log(
+        dbg(
           `[DeckTerm] Reconnecting to ${serverTerminals.length} existing terminal(s)...`,
         );
 
@@ -3758,25 +4011,25 @@ class TerminalManager {
     const fitAddon = terminal._fitAddon;
     fitAddon.fit();
 
-    console.log(`[reconnect] Attempting to reconnect terminal ${id}...`);
+    dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
     terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}`;
-    console.log(`[reconnect] WebSocket URL: ${wsUrl}`);
+    dbg(`[reconnect] WebSocket URL: ${wsUrl}`);
 
     const ws = new ReconnectingWebSocket(wsUrl, id, {
       onMessage: (data) => {
         // Log first 100 chars of received data for debugging
         if (data.length > 0 && data.length < 200) {
-          console.log(
+          dbg(
             `[reconnect] Received data for ${id}: ${data.length} bytes`,
           );
         }
         terminal.write(data);
       },
       onStatusChange: (status, extra) => {
-        console.log(`[reconnect] Status change for ${id}: ${status}`, extra);
+        dbg(`[reconnect] Status change for ${id}: ${status}`, extra);
         this.handleStatusChange(id, status, extra);
       },
     });
@@ -3816,7 +4069,7 @@ class TerminalManager {
       element,
       inputState,
     );
-    console.log("[ExtraKeys] attachMobileInputFallback (reconnect)", {
+    dbg("[ExtraKeys] attachMobileInputFallback (reconnect)", {
       id,
       attached: !!inputFallbackCleanup,
     });
@@ -3845,7 +4098,7 @@ class TerminalManager {
       isReconnection: true, // Mark this as a reconnection scenario
     });
 
-    console.log(
+    dbg(
       `[reconnect] Terminal ${id} stored in Map with isReconnection=true`,
     );
 
@@ -3875,7 +4128,7 @@ class TerminalManager {
       textarea.setAttribute("data-gramm_editor", "false");
       // For iOS
       textarea.setAttribute("inputmode", "text");
-      console.log("[ExtraKeys] Mobile keyboard features disabled on textarea");
+      dbg("[ExtraKeys] Mobile keyboard features disabled on textarea");
     }
   }
 
@@ -3884,7 +4137,7 @@ class TerminalManager {
     const mods = this.extraKeys?.modifiers;
 
     // ALWAYS log for debugging mobile issues
-    console.log("[ExtraKeys] applyExtraKeyModifiers called:", {
+    dbg("[ExtraKeys] applyExtraKeyModifiers called:", {
       data: JSON.stringify(data),
       hasExtraKeys: !!this.extraKeys,
       mods: mods ? JSON.stringify(mods) : "null",
@@ -3894,7 +4147,7 @@ class TerminalManager {
     this.extraKeys?.updateDebug(data, null);
 
     if (!this.extraKeys || !mods || !data) {
-      console.log(
+      dbg(
         "[ExtraKeys] applyExtraKeyModifiers: early return - no extraKeys or mods or data",
       );
       this.extraKeys?.updateDebug(data, "[NO MODS]");
@@ -3903,12 +4156,12 @@ class TerminalManager {
 
     const hasModifier = mods.ctrl || mods.alt || mods.shift;
     if (!hasModifier) {
-      console.log("[ExtraKeys] applyExtraKeyModifiers: no modifier active");
+      dbg("[ExtraKeys] applyExtraKeyModifiers: no modifier active");
       this.extraKeys?.updateDebug(data, data + " [no mod]");
       return finalData;
     }
 
-    console.log("[ExtraKeys] applyExtraKeyModifiers: APPLYING modifier!", {
+    dbg("[ExtraKeys] applyExtraKeyModifiers: APPLYING modifier!", {
       mods,
     });
 
@@ -3924,7 +4177,7 @@ class TerminalManager {
         }
       }
       if (options.log) {
-        console.log(
+        dbg(
           "[ExtraKeys] Applied CTRL, finalData:",
           JSON.stringify(finalData),
         );
@@ -3933,13 +4186,13 @@ class TerminalManager {
     } else if (mods.alt) {
       // ALT: prefix entire string with ESC
       finalData = "\x1b" + data;
-      if (options.log) console.log("[ExtraKeys] Applied ALT");
+      if (options.log) dbg("[ExtraKeys] Applied ALT");
       // Don't reset - modifiers stay active until user toggles them off
     } else if (mods.shift) {
       // SHIFT: uppercase entire string
       finalData = data.toUpperCase();
       if (options.log) {
-        console.log(
+        dbg(
           "[ExtraKeys] Applied SHIFT, finalData:",
           JSON.stringify(finalData),
         );
@@ -3955,14 +4208,14 @@ class TerminalManager {
 
   attachMobileInputFallback(ws, element, inputState = null) {
     if (!ws || !element) {
-      console.log("[ExtraKeys] mobile input fallback skipped", {
+      dbg("[ExtraKeys] mobile input fallback skipped", {
         reason: !ws ? "no-ws" : "no-element",
       });
       return null;
     }
     const textarea = element.querySelector(".xterm-helper-textarea");
     if (!textarea) {
-      console.log("[ExtraKeys] mobile input fallback skipped", {
+      dbg("[ExtraKeys] mobile input fallback skipped", {
         reason: "no-textarea",
         childCount: element.childElementCount,
       });
@@ -3970,7 +4223,7 @@ class TerminalManager {
     }
 
     if (DEBUG) {
-      console.log("[ExtraKeys] mobile input fallback attached", {
+      dbg("[ExtraKeys] mobile input fallback attached", {
         isMobile: platformDetector.isMobile,
         hasTouch: platformDetector.hasTouch,
         isCoarsePointer: platformDetector.isCoarsePointer,
@@ -4026,7 +4279,7 @@ class TerminalManager {
       ws.send(JSON.stringify({ type: "input", data: finalData }));
 
       if (DEBUG) {
-        console.log("[ExtraKeys] mobile input fallback:", {
+        dbg("[ExtraKeys] mobile input fallback:", {
           source,
           inputType,
           composed: e?.composed,
@@ -4042,7 +4295,7 @@ class TerminalManager {
     };
     const handler = (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] mobile input event", {
+        dbg("[ExtraKeys] mobile input event", {
           hasTouch: platformDetector.hasTouch,
           inputType: e?.inputType,
           isComposing: e?.isComposing,
@@ -4083,7 +4336,7 @@ class TerminalManager {
 
     const compositionHandler = (type) => (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] composition event", {
+        dbg("[ExtraKeys] composition event", {
           type,
           data: e?.data,
           isComposing: e?.isComposing,
@@ -4098,7 +4351,7 @@ class TerminalManager {
 
     const beforeInputHandler = (e) => {
       if (DEBUG) {
-        console.log("[ExtraKeys] beforeinput", {
+        dbg("[ExtraKeys] beforeinput", {
           inputType: e?.inputType,
           data: e?.data,
           isComposing: e?.isComposing,
@@ -4264,24 +4517,24 @@ class TerminalManager {
         icon: "❌",
         message: "Connection lost",
         actions: `
-        <button class="btn" onclick="terminalManager.retryConnection('${id}')">Retry</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn" data-overlay-action="retry">Retry</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
       dead: {
         icon: "💀",
         message: "Terminal no longer exists",
         actions: `
-        <button class="btn btn-primary" onclick="terminalManager.closeTerminal('${id}'); terminalManager.createTerminal()">New Terminal</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn btn-primary" data-overlay-action="new-terminal">New Terminal</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
       exited: {
         icon: "⏹️",
         message: `Process exited with code ${extra}`,
         actions: `
-        <button class="btn btn-primary" onclick="terminalManager.closeTerminal('${id}'); terminalManager.createTerminal()">New Terminal</button>
-        <button class="btn" onclick="terminalManager.closeTerminal('${id}')">Close</button>
+        <button class="btn btn-primary" data-overlay-action="new-terminal">New Terminal</button>
+        <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
     };
@@ -4294,6 +4547,24 @@ class TerminalManager {
       icon.textContent = config.icon;
       message.textContent = config.message;
       actions.innerHTML = config.actions;
+      actions.onclick = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-overlay-action]");
+        if (!button) return;
+        const action = button.dataset.overlayAction;
+        if (action === "retry") {
+          this.retryConnection(id);
+          return;
+        }
+        if (action === "new-terminal") {
+          this.closeTerminal(id);
+          this.createTerminal();
+          return;
+        }
+        if (action === "close") {
+          this.closeTerminal(id);
+        }
+      };
     }
   }
 
@@ -4307,11 +4578,11 @@ class TerminalManager {
       // Mark terminal as successfully connected
       if (t) {
         t.hasConnected = true;
-        console.log(`[reconnect] Terminal ${id} marked as hasConnected=true`);
+        dbg(`[reconnect] Terminal ${id} marked as hasConnected=true`);
       }
 
       if (t && t.fitAddon && t.terminal && t.ws) {
-        console.log(
+        dbg(
           `[reconnect] WebSocket connected for ${id}, syncing size and forcing refresh...`,
         );
         requestAnimationFrame(() => {
@@ -4321,14 +4592,14 @@ class TerminalManager {
             const rows = t.terminal.rows;
             // Send resize to trigger SIGWINCH on server
             t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-            console.log(`[reconnect] Sent resize ${cols}x${rows} for ${id}`);
+            dbg(`[reconnect] Sent resize ${cols}x${rows} for ${id}`);
 
             // Force xterm.js to refresh the viewport after a delay
             // This ensures any data received is properly rendered
             setTimeout(() => {
               try {
                 t.terminal.refresh(0, t.terminal.rows - 1);
-                console.log(`[reconnect] Forced xterm refresh for ${id}`);
+                dbg(`[reconnect] Forced xterm refresh for ${id}`);
               } catch (e) {
                 console.warn(`[reconnect] xterm refresh failed for ${id}:`, e);
               }
@@ -4338,7 +4609,7 @@ class TerminalManager {
             setTimeout(() => {
               try {
                 t.terminal.refresh(0, t.terminal.rows - 1);
-                console.log(
+                dbg(
                   `[reconnect] Second xterm refresh for ${id} (post-SIGWINCH)`,
                 );
               } catch (e) {
@@ -4358,26 +4629,26 @@ class TerminalManager {
     // Only show "reconnecting" if we haven't successfully connected yet
     // This prevents status flickering from rapid connect/disconnect cycles
     if (status === "reconnecting" && t?.hasConnected) {
-      console.log(
+      dbg(
         `[reconnect] Ignoring reconnecting status for ${id} (already connected once)`,
       );
       return; // Don't update tab to reconnecting if we've already connected
     }
 
     const tab = this.tabs.querySelector(`[data-id="${id}"]`);
-    console.log(
+    dbg(
       `[reconnect] Tab update for ${id}: status=${status}, tab found=${!!tab}, hasConnected=${t?.hasConnected}`,
     );
     if (tab) {
       tab.classList.remove("reconnecting", "disconnected");
       if (status === "reconnecting") {
         tab.classList.add("reconnecting");
-        console.log(`[reconnect] Tab ${id} marked as reconnecting`);
+        dbg(`[reconnect] Tab ${id} marked as reconnecting`);
       } else if (status === "failed" || status === "dead") {
         tab.classList.add("disconnected");
-        console.log(`[reconnect] Tab ${id} marked as disconnected`);
+        dbg(`[reconnect] Tab ${id} marked as disconnected`);
       } else if (status === "connected") {
-        console.log(
+        dbg(
           `[reconnect] Tab ${id} marked as connected (classes cleared)`,
         );
       }
@@ -4432,7 +4703,7 @@ class TerminalManager {
         }
       }
     }
-    console.log(
+    dbg(
       `[debug] Terminal debug mode: ${this.debugMode ? "ON" : "OFF"}`,
     );
   }
@@ -4481,22 +4752,9 @@ class TerminalManager {
     if (!t?.terminal) return;
     const fitCols = t.terminal.cols;
     const fitRows = t.terminal.rows;
-    if (this.wrapLines) {
-      t.preferredCols = fitCols;
-    } else if (!t.preferredCols || t.preferredCols < fitCols) {
-      t.preferredCols = fitCols;
-    }
-    const targetCols = this.wrapLines
-      ? fitCols
-      : Math.max(fitCols, t.preferredCols);
-    if (targetCols !== fitCols) {
-      try {
-        t.terminal.resize(targetCols, fitRows);
-      } catch (err) {
-        if (DEBUG) dbg("terminal.resize error", { id, err });
-      }
-    }
-    this.sendResize(id, targetCols, fitRows);
+    // Keep sizing anchored to the current container size to avoid stale oversizing.
+    t.preferredCols = fitCols;
+    this.sendResize(id, fitCols, fitRows);
   }
 
   attachResizeObserver(id) {
@@ -4635,9 +4893,10 @@ class TerminalManager {
       };
       const onDataDisposable = terminal.onData((data) => {
         // Debug: direct DOM update to see if onData fires at all
-        const dbg = document.getElementById("modifier-debug");
-        if (dbg)
-          dbg.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+        const debugEl = document.getElementById("modifier-debug");
+        if (debugEl) {
+          debugEl.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
+        }
 
         // Skip if fallback already processed this input (within 50ms, same data)
         // This prevents double-sending when both handlers fire
@@ -4646,13 +4905,15 @@ class TerminalManager {
           performance.now() - inputState.lastFallbackAt < 50
         ) {
           if (data === inputState.lastFallbackData) {
-            if (dbg) dbg.textContent = `onData: SKIP (fallback handled)`;
+            if (debugEl) {
+              debugEl.textContent = "onData: SKIP (fallback handled)";
+            }
             return;
           }
         }
 
         const mods = this.extraKeys?.modifiers;
-        console.log("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
+        dbg("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
         inputState.lastOnDataAt = performance.now();
         inputState.lastOnDataValue = data;
         const finalData = this.applyExtraKeyModifiers(data, { log: true });
@@ -4664,7 +4925,7 @@ class TerminalManager {
         element,
         inputState,
       );
-      console.log("[ExtraKeys] attachMobileInputFallback (create)", {
+      dbg("[ExtraKeys] attachMobileInputFallback (create)", {
         id,
         attached: !!inputFallbackCleanup,
       });
@@ -4731,26 +4992,40 @@ class TerminalManager {
     `;
     if (cwd) tab.title = cwd;
 
-    tab
-      .querySelector(".tab-label")
-      .addEventListener("click", () => this.switchTo(id));
-    tab
-      .querySelector(".tab-index")
-      .addEventListener("click", () => this.switchTo(id));
     tab.querySelector(".tab-close").addEventListener("click", (e) => {
       e.stopPropagation();
       this.closeWorkspace(workspaceId);
     });
 
+    tab.addEventListener("click", (e) => {
+      if (e.target.closest(".tab-close")) return;
+      const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
+      if (targetId) this.switchTo(targetId);
+    });
+
+    let pointerStart = null;
+    tab.addEventListener("pointerdown", (e) => {
+      pointerStart = { x: e.clientX, y: e.clientY };
+    });
+
     // Drag and drop for merging workspaces
     tab.draggable = true;
     tab.addEventListener("dragstart", (e) => {
+      if (pointerStart) {
+        const dx = e.clientX - pointerStart.x;
+        const dy = e.clientY - pointerStart.y;
+        if (Math.hypot(dx, dy) < this.tabDragThresholdPx) {
+          e.preventDefault();
+          return;
+        }
+      }
       e.dataTransfer.setData("text/plain", workspaceId);
       tab.classList.add("dragging");
       this.draggingTabId = id;
       this.draggingWorkspaceId = workspaceId;
     });
     tab.addEventListener("dragend", () => {
+      pointerStart = null;
       tab.classList.remove("dragging");
       this.draggingTabId = null;
       this.draggingWorkspaceId = null;
@@ -4899,6 +5174,7 @@ class TerminalManager {
 
     // Remove the tab
     this.tabs.querySelector(`[data-workspace-id="${workspaceId}"]`)?.remove();
+    this.workspaceLastActive.delete(workspaceId);
     this.updateTabGroups();
   }
 
@@ -4910,6 +5186,11 @@ class TerminalManager {
         t.workspaceId = toWorkspaceId;
       }
     });
+    const rememberedFrom = this.workspaceLastActive.get(fromWorkspaceId);
+    if (rememberedFrom) {
+      this.workspaceLastActive.set(toWorkspaceId, rememberedFrom);
+      this.workspaceLastActive.delete(fromWorkspaceId);
+    }
 
     // Merge tiles in tile manager
     this.tileManager.mergeWorkspaces(fromWorkspaceId, toWorkspaceId);
@@ -4924,6 +5205,28 @@ class TerminalManager {
 
     // Show the merged workspace
     this.tileManager.showWorkspace(toWorkspaceId);
+    const targetId = this.resolveWorkspaceTerminalId(toWorkspaceId, this.activeId);
+    if (targetId) this.switchTo(targetId);
+  }
+
+  resolveWorkspaceTerminalId(workspaceId, fallbackId = null) {
+    if (!workspaceId) return fallbackId;
+    const remembered = this.workspaceLastActive.get(workspaceId);
+    if (
+      remembered &&
+      this.terminals.has(remembered) &&
+      this.terminals.get(remembered)?.workspaceId === workspaceId
+    ) {
+      return remembered;
+    }
+
+    for (const [id, terminal] of this.terminals) {
+      if (terminal.workspaceId === workspaceId) {
+        return id;
+      }
+    }
+
+    return fallbackId;
   }
 
   switchTo(id) {
@@ -4931,6 +5234,9 @@ class TerminalManager {
 
     this.activeId = id;
     const t = this.terminals.get(id);
+    if (t?.workspaceId) {
+      this.workspaceLastActive.set(t.workspaceId, id);
+    }
     if (t?.workspaceId) {
       this.tileManager.showWorkspace(t.workspaceId);
     }
@@ -4969,7 +5275,10 @@ class TerminalManager {
 
   switchToIndex(index) {
     const tab = this.tabs.querySelector(`[data-index="${index}"]`);
-    if (tab) this.switchTo(tab.dataset.id);
+    if (!tab) return;
+    const workspaceId = tab.dataset.workspaceId;
+    const targetId = this.resolveWorkspaceTerminalId(workspaceId, tab.dataset.id);
+    if (targetId) this.switchTo(targetId);
   }
 
   switchToNext(direction) {
@@ -4983,6 +5292,7 @@ class TerminalManager {
   async closeTerminal(id) {
     const t = this.terminals.get(id);
     if (!t) return;
+    const closingWorkspaceId = t.workspaceId;
 
     t.ws?.close();
     t.inputFallbackCleanup?.();
@@ -5006,13 +5316,23 @@ class TerminalManager {
     } catch {}
 
     this.terminals.delete(id);
+    if (
+      closingWorkspaceId &&
+      this.workspaceLastActive.get(closingWorkspaceId) === id
+    ) {
+      this.workspaceLastActive.delete(closingWorkspaceId);
+    }
 
     // Remove from session registry (terminal is explicitly closed)
     this.sessionRegistry.remove(id);
 
     if (this.activeId === id) {
       const remaining = Array.from(this.terminals.keys());
-      if (remaining.length > 0) this.switchTo(remaining[0]);
+      const workspaceFallback = this.resolveWorkspaceTerminalId(
+        closingWorkspaceId,
+      );
+      const nextId = workspaceFallback || remaining[0];
+      if (nextId) this.switchTo(nextId);
       else {
         this.activeId = null;
         this.updateConnectionStatus("disconnected");
@@ -5224,6 +5544,12 @@ function initLucideIcons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  document
+    .getElementById("debug-panel-close")
+    ?.addEventListener("click", () => {
+      document.getElementById("debug-panel")?.classList.remove("visible");
+    });
+
   if (!initLucideIcons()) {
     let retries = 0;
     const tryInit = () => {

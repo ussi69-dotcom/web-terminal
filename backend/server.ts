@@ -7,7 +7,7 @@ import {
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -55,6 +55,9 @@ type Terminal = {
   ownerId: string; // User sub from JWT
   ownerEmail: string; // User email for display
   sessionName?: string; // tmux session name (when TMUX_BACKEND=1)
+  scrollback: string[]; // ring buffer of recent terminal output chunks
+  scrollbackBytes: number; // current bytes in ring buffer
+  hadSocketConnection: boolean; // tracks whether a websocket was ever connected
 };
 
 type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
@@ -84,8 +87,24 @@ const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
 
 // tmux backend for session persistence (survives server restart)
 const TMUX_BACKEND = process.env.TMUX_BACKEND === "1";
+const SCROLLBACK_MAX_LINES = parseInt(
+  process.env.SCROLLBACK_MAX_LINES || "2000",
+  10,
+);
+const SCROLLBACK_MAX_BYTES = parseInt(
+  process.env.SCROLLBACK_MAX_BYTES || String(1024 * 1024),
+  10,
+); // 1MB default
 const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || "")
   .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const DEFAULT_ALLOWED_ROOT = process.env.HOME || "/home/deploy";
+const ALLOWED_FILESYSTEM_ROOTS = (
+  process.env.ALLOWED_FILE_ROOTS || DEFAULT_ALLOWED_ROOT
+)
+  .split(",")
+  .map((root) => root.trim())
   .filter(Boolean);
 
 // OpenCode configuration
@@ -113,6 +132,7 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
+const utf8Decoder = new TextDecoder();
 
 const openCodeCircuit = {
   failures: 0,
@@ -257,10 +277,12 @@ async function recoverTmuxSessions(): Promise<number> {
         cols,
         rows,
         data(term, data) {
+          const strData =
+            typeof data === "string" ? data : utf8Decoder.decode(data);
+          appendScrollback(id, strData);
+
           const sockets = terminalSockets.get(id);
           if (sockets && sockets.size > 0) {
-            const strData =
-              typeof data === "string" ? data : new TextDecoder().decode(data);
             for (const ws of sockets) {
               try {
                 ws.send(strData);
@@ -313,6 +335,9 @@ async function recoverTmuxSessions(): Promise<number> {
         ownerId,
         ownerEmail: "recovered",
         sessionName,
+        scrollback: [],
+        scrollbackBytes: 0,
+        hadSocketConnection: false,
       });
       terminalSockets.set(id, new Set());
 
@@ -333,6 +358,125 @@ function debug(...args: unknown[]) {
   if (DEBUG) console.log("[web-terminal]", ...args);
 }
 
+let allowedRealRootsCache: string[] | null = null;
+
+async function getAllowedRealRoots(): Promise<string[]> {
+  if (allowedRealRootsCache) return allowedRealRootsCache;
+  const fs = await import("fs/promises");
+  const roots: string[] = [];
+  for (const root of ALLOWED_FILESYSTEM_ROOTS) {
+    try {
+      roots.push(await fs.realpath(root));
+    } catch {
+      debug("Skipping non-existent allowed root:", root);
+    }
+  }
+  if (roots.length === 0) {
+    roots.push(DEFAULT_ALLOWED_ROOT);
+  }
+  allowedRealRootsCache = roots;
+  return roots;
+}
+
+function isWithinAllowedRoots(pathValue: string, roots: string[]): boolean {
+  return roots.some(
+    (root) => pathValue === root || pathValue.startsWith(`${root}/`),
+  );
+}
+
+async function resolveAllowedPath(
+  inputPath: string,
+  opts: { allowMissing?: boolean } = {},
+): Promise<string | null> {
+  if (!inputPath) return null;
+  const fs = await import("fs/promises");
+  const candidatePath = resolve(inputPath);
+  const roots = await getAllowedRealRoots();
+  try {
+    const realPath = await fs.realpath(candidatePath);
+    return isWithinAllowedRoots(realPath, roots) ? realPath : null;
+  } catch (err: unknown) {
+    const error = err as { code?: string };
+    if (!opts.allowMissing || error.code !== "ENOENT") {
+      return null;
+    }
+    try {
+      const realParent = await fs.realpath(dirname(candidatePath));
+      if (!isWithinAllowedRoots(realParent, roots)) {
+        return null;
+      }
+      const rel = relative(realParent, candidatePath);
+      if (!rel || rel.startsWith("..")) {
+        return null;
+      }
+      return candidatePath;
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function authenticateWebSocketRequest(req: Request): Promise<{
+  ok: boolean;
+  status?: number;
+  message?: string;
+  ownerId: string;
+}> {
+  const jwt = req.headers.get("cf-access-jwt-assertion");
+  if (CF_ACCESS_REQUIRED && !jwt) {
+    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
+  }
+  if (!jwt || !CF_ACCESS_TEAM_NAME) {
+    return { ok: true, ownerId: "anonymous" };
+  }
+  try {
+    const { cloudflareAccess: verifyJWT } = await import(
+      "@hono/cloudflare-access"
+    );
+    let ownerId = "anonymous";
+    const mockContext = {
+      req: { header: (name: string) => req.headers.get(name) },
+      set: (key: string, value: CloudflareAccessPayload) => {
+        if (key === "accessPayload") {
+          ownerId = value.sub || "anonymous";
+        }
+      },
+    };
+    const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
+    await middleware(mockContext as never, async () => {});
+    return { ok: true, ownerId };
+  } catch (err) {
+    debug("WebSocket JWT verification failed:", err);
+    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
+  }
+}
+
+function appendScrollback(terminalId: string, data: string) {
+  if (!data) return;
+  const term = terminals.get(terminalId);
+  if (!term) return;
+
+  const chunks = data.split(/(?<=\n)/g);
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    term.scrollback.push(chunk);
+    term.scrollbackBytes += Buffer.byteLength(chunk);
+  }
+
+  while (
+    term.scrollback.length > SCROLLBACK_MAX_LINES ||
+    term.scrollbackBytes > SCROLLBACK_MAX_BYTES
+  ) {
+    const removed = term.scrollback.shift();
+    if (!removed) break;
+    term.scrollbackBytes -= Buffer.byteLength(removed);
+  }
+}
+
+function getScrollbackSnapshot(term: Terminal): string {
+  return term.scrollback.join("");
+}
+
 function getCurrentUser(c: {
   get: (key: string) => CloudflareAccessPayload | undefined;
 }): { ownerId: string; ownerEmail: string } {
@@ -351,20 +495,23 @@ export function createWebApp() {
 
   app.onError((err, c) => {
     console.error("[Hono] Route error:", err);
-    return c.json(
-      { error: "Internal server error", message: String(err) },
-      500,
-    );
+    const response: { error: string; message?: string } = {
+      error: "Internal server error",
+    };
+    if (DEBUG) {
+      response.message = err instanceof Error ? err.message : String(err);
+    }
+    return c.json(response, 500);
   });
 
+  const hasTrustedOrigins = TRUSTED_ORIGINS.length > 0;
   app.use(
     "/*",
     cors({
-      origin:
-        TRUSTED_ORIGINS.length > 0
-          ? (origin) => (TRUSTED_ORIGINS.includes(origin) ? origin : null)
-          : "*",
-      credentials: true,
+      origin: hasTrustedOrigins
+        ? (origin) => (origin && TRUSTED_ORIGINS.includes(origin) ? origin : null)
+        : "*",
+      credentials: hasTrustedOrigins,
     }),
   );
 
@@ -590,11 +737,13 @@ export function createWebApp() {
       cols,
       rows,
       data(term, data) {
+        const strData =
+          typeof data === "string" ? data : utf8Decoder.decode(data);
+        appendScrollback(id, strData);
+
         // Broadcast terminal output to all connected WebSockets
         const sockets = terminalSockets.get(id);
         if (sockets && sockets.size > 0) {
-          const strData =
-            typeof data === "string" ? data : new TextDecoder().decode(data);
           debug(`PTY ${id} data (${strData.length} bytes)`);
           for (const ws of sockets) {
             try {
@@ -741,6 +890,9 @@ export function createWebApp() {
       ownerId,
       ownerEmail,
       sessionName,
+      scrollback: [],
+      scrollbackBytes: 0,
+      hadSocketConnection: false,
     });
     terminalSockets.set(id, new Set());
 
@@ -847,10 +999,14 @@ export function createWebApp() {
 
   // Browse directories (for directory picker)
   app.get("/api/browse", async (c) => {
-    const path = c.req.query("path") || process.env.HOME || "/";
+    const requestedPath = c.req.query("path") || process.env.HOME || "/";
     const includeFiles = c.req.query("files") === "true";
     const fs = await import("fs/promises");
     const pathModule = await import("path");
+    const path = await resolveAllowedPath(requestedPath);
+    if (!path) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
 
     try {
       const entries = await fs.readdir(path, { withFileTypes: true });
@@ -890,13 +1046,16 @@ export function createWebApp() {
 
   // File download
   app.get("/api/files/download", async (c) => {
-    const filePath = c.req.query("path");
-    if (!filePath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const filePath = await resolveAllowedPath(requestedPath);
+    if (!filePath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
-    const pathModule = await import("path");
 
     try {
       const stat = await fs.stat(filePath);
@@ -905,7 +1064,7 @@ export function createWebApp() {
       }
 
       const data = await fs.readFile(filePath);
-      const filename = pathModule.basename(filePath);
+      const filename = basename(filePath);
 
       return new Response(data, {
         headers: {
@@ -921,13 +1080,16 @@ export function createWebApp() {
 
   // File upload
   app.post("/api/files/upload", async (c) => {
-    const targetPath = c.req.query("path");
-    if (!targetPath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const targetPath = await resolveAllowedPath(requestedPath);
+    if (!targetPath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
-    const pathModule = await import("path");
 
     try {
       // Check if target is a directory
@@ -944,7 +1106,13 @@ export function createWebApp() {
         return c.json({ error: "No file provided" }, 400);
       }
 
-      const destPath = pathModule.join(targetPath, file.name);
+      const fileName = basename(file.name);
+      const destPath = await resolveAllowedPath(join(targetPath, fileName), {
+        allowMissing: true,
+      });
+      if (!destPath) {
+        return c.json({ error: "Forbidden path" }, 403);
+      }
       const buffer = await file.arrayBuffer();
       await fs.writeFile(destPath, Buffer.from(buffer));
 
@@ -959,9 +1127,15 @@ export function createWebApp() {
 
   // Create directory
   app.post("/api/files/mkdir", async (c) => {
-    const dirPath = c.req.query("path");
-    if (!dirPath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
+    }
+    const dirPath = await resolveAllowedPath(requestedPath, {
+      allowMissing: true,
+    });
+    if (!dirPath) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
@@ -980,14 +1154,18 @@ export function createWebApp() {
 
   // Delete file or directory
   app.delete("/api/files", async (c) => {
-    const filePath = c.req.query("path");
-    if (!filePath) {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) {
       return c.json({ error: "Path required" }, 400);
     }
+    const filePath = await resolveAllowedPath(requestedPath);
+    if (!filePath) {
+      return c.json({ error: "Forbidden path" }, 403);
+    }
 
-    // Security: don't allow deleting root or home directory
-    const home = process.env.HOME || "/home/deploy";
-    if (filePath === "/" || filePath === home) {
+    // Security: don't allow deleting filesystem roots
+    const protectedRoots = await getAllowedRealRoots();
+    if (filePath === "/" || protectedRoots.includes(filePath)) {
       return c.json({ error: "Cannot delete root or home directory" }, 403);
     }
 
@@ -1009,10 +1187,15 @@ export function createWebApp() {
   // Rename file or directory
   app.post("/api/files/rename", async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { from, to } = body;
+    const { from: fromInput, to: toInput } = body;
 
-    if (!from || !to) {
+    if (!fromInput || !toInput) {
       return c.json({ error: "from and to paths required" }, 400);
+    }
+    const from = await resolveAllowedPath(fromInput);
+    const to = await resolveAllowedPath(toInput, { allowMissing: true });
+    if (!from || !to) {
+      return c.json({ error: "Forbidden path" }, 403);
     }
 
     const fs = await import("fs/promises");
@@ -1029,16 +1212,8 @@ export function createWebApp() {
   // GIT API - Secure git operations with realpath validation
   // =============================================================================
 
-  const ALLOWED_GIT_ROOTS = [process.env.HOME || "/home/deploy"];
-
   async function validateGitCwd(cwd: string): Promise<boolean> {
-    try {
-      const fs = await import("fs/promises");
-      const realCwd = await fs.realpath(cwd);
-      return ALLOWED_GIT_ROOTS.some((root) => realCwd.startsWith(root));
-    } catch {
-      return false;
-    }
+    return (await resolveAllowedPath(cwd)) !== null;
   }
 
   // GET /api/git/status?cwd=/path/to/repo
@@ -1056,15 +1231,59 @@ export function createWebApp() {
       });
 
       const timeoutId = setTimeout(() => proc.kill(), 10000);
-      const output = await new Response(proc.stdout).text();
+      const [output, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
       clearTimeout(timeoutId);
+
+      if (exitCode !== 0) {
+        return c.json(
+          {
+            error: "Not a git repository",
+            message: stderr.trim() || "git status failed",
+          },
+          400,
+        );
+      }
 
       const lines = output.trim().split("\n");
       const branch = lines[0]?.replace("## ", "").split("...")[0] || "unknown";
-      const files = lines.slice(1).map((line) => ({
-        status: line.substring(0, 2).trim(),
-        path: line.substring(3),
-      }));
+      const files = lines
+        .slice(1)
+        .filter((line) => line.length >= 3)
+        .map((line) => {
+          const rawStatus = line.substring(0, 2);
+          const stagedStatus = rawStatus[0] === " " ? "" : rawStatus[0];
+          const unstagedStatus = rawStatus[1] === " " ? "" : rawStatus[1];
+          const rawPath = line.substring(3).trim();
+          const renameSep = " -> ";
+          const renameIdx = rawPath.indexOf(renameSep);
+          const isRenamed =
+            stagedStatus === "R" ||
+            unstagedStatus === "R" ||
+            renameIdx !== -1;
+
+          let path = rawPath;
+          let oldPath: string | undefined;
+          if (renameIdx !== -1) {
+            oldPath = rawPath.substring(0, renameIdx).trim();
+            path = rawPath.substring(renameIdx + renameSep.length).trim();
+          }
+
+          return {
+            // Backward-compat field
+            status: rawStatus.trim(),
+            path,
+            stagedStatus,
+            unstagedStatus,
+            isRenamed,
+            ...(oldPath ? { oldPath } : {}),
+            section:
+              stagedStatus && stagedStatus !== "?" ? "staged" : "changes",
+          };
+        });
 
       return c.json({ branch, files, cwd });
     } catch (err) {
@@ -1079,12 +1298,41 @@ export function createWebApp() {
   app.get("/api/git/diff", async (c) => {
     const cwd = c.req.query("cwd") || process.env.HOME;
     const path = c.req.query("path");
+    const staged = c.req.query("staged");
+    const commit = c.req.query("commit");
     if (!cwd || !(await validateGitCwd(cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
+    if (
+      typeof staged === "string" &&
+      !["1", "0", "true", "false"].includes(staged.toLowerCase())
+    ) {
+      return c.json(
+        { error: "Invalid query: staged must be one of 1,0,true,false" },
+        400,
+      );
+    }
+
+    const stagedEnabled =
+      staged === "1" || staged?.toLowerCase?.() === "true";
+    if (stagedEnabled && commit) {
+      return c.json(
+        { error: "Invalid query: staged and commit cannot be combined" },
+        400,
+      );
+    }
+
     try {
-      const args = ["git", "diff", "--color=never"];
+      let args: string[];
+      if (commit) {
+        args = ["git", "show", "--format=", "--color=never", commit];
+      } else if (stagedEnabled) {
+        args = ["git", "diff", "--staged", "--color=never"];
+      } else {
+        args = ["git", "diff", "--color=never"];
+      }
+
       if (path) {
         args.push("--", path);
       }
@@ -1096,10 +1344,27 @@ export function createWebApp() {
       });
 
       const timeoutId = setTimeout(() => proc.kill(), 10000);
-      const output = await new Response(proc.stdout).text();
+      const [output, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
       clearTimeout(timeoutId);
 
-      return c.json({ diff: output, cwd, path });
+      if (exitCode !== 0) {
+        return c.json(
+          { error: "Git diff failed", message: stderr.trim() || "git failed" },
+          400,
+        );
+      }
+
+      return c.json({
+        diff: output,
+        cwd,
+        path,
+        staged: stagedEnabled ? 1 : 0,
+        commit: commit || null,
+      });
     } catch (err) {
       return c.json({ error: "Git diff failed", message: String(err) }, 400);
     }
@@ -1509,6 +1774,13 @@ export async function startWebServer(host: string, port: number) {
 
       // OpenCode WebSocket proxy
       if (url.pathname.startsWith("/apps/opencode/ws")) {
+        const auth = await authenticateWebSocketRequest(req);
+        if (!auth.ok) {
+          return new Response(auth.message || "Unauthorized", {
+            status: auth.status || 401,
+          });
+        }
+
         const wsUrl =
           OPENCODE_UPSTREAM.replace("http", "ws") +
           url.pathname.replace("/apps/opencode", "") +
@@ -1542,31 +1814,13 @@ export async function startWebServer(host: string, port: number) {
           return new Response("Terminal not found", { status: 404 });
         }
 
-        const jwt = req.headers.get("cf-access-jwt-assertion");
-        if (CF_ACCESS_REQUIRED && !jwt) {
-          return new Response("Unauthorized", { status: 401 });
+        const auth = await authenticateWebSocketRequest(req);
+        if (!auth.ok) {
+          return new Response(auth.message || "Unauthorized", {
+            status: auth.status || 401,
+          });
         }
-
-        let ownerId = "anonymous";
-        if (jwt && CF_ACCESS_TEAM_NAME) {
-          try {
-            const { cloudflareAccess: verifyJWT } =
-              await import("@hono/cloudflare-access");
-            const mockContext = {
-              req: { header: (name: string) => req.headers.get(name) },
-              set: (key: string, value: CloudflareAccessPayload) => {
-                if (key === "accessPayload") {
-                  ownerId = value.sub;
-                }
-              },
-            };
-            const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
-            await middleware(mockContext as never, async () => {});
-          } catch (err) {
-            debug("WebSocket JWT verification failed:", err);
-            return new Response("Unauthorized", { status: 401 });
-          }
-        }
+        const ownerId = auth.ownerId;
 
         if (term.ownerId !== ownerId) {
           return new Response("Forbidden", { status: 403 });
@@ -1623,121 +1877,85 @@ export async function startWebServer(host: string, port: number) {
 
         sockets.add(ws as unknown as WebSocket);
         const socketsCount = sockets.size;
-
-        // Check if this is a reconnect (terminal created more than 5 seconds ago)
-        const termAge = Date.now() - term.createdAt;
-        const isReconnect = termAge > 5000;
+        const isReconnect = term.hadSocketConnection;
+        term.hadSocketConnection = true;
 
         console.log(
-          `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), ` +
-            `sockets: ${socketsCount}, age: ${Math.round(termAge / 1000)}s, isReconnect: ${isReconnect}`,
+          `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), sockets: ${socketsCount}, reconnect: ${isReconnect}`,
         );
 
-        // Send scrollback buffer to reconnecting client (tmux backend only)
-        if (isReconnect && TMUX_BACKEND && term.sessionName) {
-          (async () => {
-            try {
-              // Capture pane content with escape sequences (colors) - last 2000 lines
-              const captureProc = Bun.spawn(
-                [
-                  "tmux",
-                  "capture-pane",
-                  "-ep",
-                  "-S",
-                  "-2000",
-                  "-t",
-                  term.sessionName!,
-                ],
-                { stdout: "pipe", stderr: "pipe" },
-              );
-              const output = await new Response(captureProc.stdout).text();
-              await captureProc.exited;
-
-              if (output && ws.readyState === 1) {
-                // WebSocket.OPEN = 1
-                // Clear screen first, then write captured content
-                ws.send("\x1b[2J\x1b[H" + output);
-                debug(
-                  `[reconnect] Sent ${output.length} bytes of scrollback to ${terminalId}`,
-                );
-              }
-            } catch (err) {
+        if (isReconnect) {
+          const replayBufferFallback = () => {
+            const buffered = getScrollbackSnapshot(term);
+            if (buffered && ws.readyState === 1) {
+              ws.send(buffered);
               debug(
-                `[reconnect] Failed to capture scrollback for ${terminalId}:`,
-                err,
+                `[reconnect] Replayed ${buffered.length} bytes from in-memory scrollback for ${terminalId}`,
               );
-              // Send a simple connected confirmation even if capture fails
-              if (ws.readyState === 1) {
-                ws.send("\x1b[2J\x1b[H\x1b[32m[Reconnected]\x1b[0m\r\n");
-              }
+              return true;
             }
-          })();
-        } else if (isReconnect && !TMUX_BACKEND) {
-          // Non-tmux backend reconnect: force SIGWINCH to trigger TUI redraw
-          // Use longer delays for Cloudflare tunnel compatibility
-          console.log(
-            `[reconnect] Non-tmux reconnect for ${terminalId}, scheduling SIGWINCH sequence`,
-          );
+            return false;
+          };
 
-          // Wait for WebSocket to be fully established through tunnel
-          setTimeout(() => {
-            try {
-              const originalCols = term.cols;
-              const originalRows = term.rows;
+          (async () => {
+            let replayed = false;
 
-              // First SIGWINCH: shrink
-              console.log(
-                `[reconnect] SIGWINCH 1/3 shrink for ${terminalId}: ${originalCols}x${originalRows} -> ${originalCols - 1}x${originalRows}`,
-              );
-              term.terminal.resize(originalCols - 1, originalRows);
+            if (TMUX_BACKEND && term.sessionName) {
+              try {
+                const captureProc = Bun.spawn(
+                  [
+                    "tmux",
+                    "capture-pane",
+                    "-ep",
+                    "-S",
+                    "-2000",
+                    "-t",
+                    term.sessionName,
+                  ],
+                  { stdout: "pipe", stderr: "pipe" },
+                );
+                const output = await new Response(captureProc.stdout).text();
+                await captureProc.exited;
 
-              // Second SIGWINCH: restore (after delay for tunnel latency)
-              setTimeout(() => {
-                try {
-                  term.terminal.resize(originalCols, originalRows);
-                  console.log(
-                    `[reconnect] SIGWINCH 2/3 restore for ${terminalId}`,
-                  );
-
-                  // Third: One more resize cycle to ensure TUI gets the signal
-                  setTimeout(() => {
-                    try {
-                      // Small size change to trigger another redraw
-                      term.terminal.resize(originalCols - 1, originalRows - 1);
-                      setTimeout(() => {
-                        try {
-                          term.terminal.resize(originalCols, originalRows);
-                          console.log(
-                            `[reconnect] SIGWINCH 3/3 final for ${terminalId}`,
-                          );
-                        } catch (e) {
-                          console.error(
-                            `[reconnect] Final resize error for ${terminalId}:`,
-                            e,
-                          );
-                        }
-                      }, 300);
-                    } catch (e) {
-                      console.error(
-                        `[reconnect] Third resize error for ${terminalId}:`,
-                        e,
-                      );
-                    }
-                  }, 500);
-                } catch (e) {
-                  console.error(
-                    `[reconnect] Resize restore error for ${terminalId}:`,
-                    e,
+                if (output && ws.readyState === 1) {
+                  ws.send("\x1b[2J\x1b[H" + output);
+                  replayed = true;
+                  debug(
+                    `[reconnect] Sent ${output.length} bytes from tmux capture for ${terminalId}`,
                   );
                 }
-              }, 400);
-            } catch (e) {
-              console.error(
-                `[reconnect] Resize shrink error for ${terminalId}:`,
-                e,
-              );
+              } catch (err) {
+                debug(
+                  `[reconnect] tmux capture failed for ${terminalId}, falling back to in-memory buffer`,
+                  err,
+                );
+              }
             }
-          }, 1000); // Longer initial delay for Cloudflare tunnel
+
+            if (!replayed) {
+              replayBufferFallback();
+            }
+
+            if (!TMUX_BACKEND) {
+              // Trigger a redraw for TUIs after scrollback replay.
+              setTimeout(() => {
+                try {
+                  const originalCols = term.cols;
+                  const originalRows = term.rows;
+                  term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
+                  setTimeout(() => {
+                    try {
+                      term.terminal.resize(originalCols, originalRows);
+                    } catch (err) {
+                      debug(`[reconnect] restore resize failed for ${terminalId}`, err);
+                    }
+                  }, 200);
+                } catch (err) {
+                  debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
+                }
+              }, 200);
+            }
+          })();
         }
       },
 

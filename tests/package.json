@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} playwright test",
+    "test:e2e": "PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} playwright test"
   },
   "keywords": [],
   "author": "",

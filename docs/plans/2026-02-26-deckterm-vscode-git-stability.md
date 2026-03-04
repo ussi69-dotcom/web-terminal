@@ -390,3 +390,39 @@ git commit -m "docs(plan): finalize implementation and verification report"
 - If regressions appear, revert the specific task commit only.
 - Preserve failing test as reproduction artifact before rollback.
 
+---
+
+## Completion Checklist (2026-02-26)
+
+- [x] Task 1 baseline failing tests added
+- [x] Task 2 git API status/diff semantics updated
+- [x] Task 3 VSCode-like git explorer UI delivered
+- [x] Task 4 layout/scaling bounds fixes delivered
+- [x] Task 5 one-click tab switching reliability delivered
+- [x] Task 6 reconnect scrollback replay delivered
+- [x] Task 7 security hardening delivered (file sandbox + CORS + WS guard)
+- [x] Task 8 debug/log noise + inline handler cleanup delivered
+- [x] Task 9 root/test script normalization delivered
+- [x] Task 10 final verification and handoff completed
+
+### Verification Evidence
+
+- Runtime health (dev): `curl -s http://localhost:4174/api/health` returned `{"status":"ok",...}`.
+- API security checks: `./test-git-api.sh` passed expected forbidden-path checks.
+- Full E2E gate: `cd tests && npx playwright test --workers=1` => `58 passed`.
+- Unit gate: `bun run test:unit` => `2 pass`.
+- Focused E2E gate: `bun run test:e2e -- --grep "tab|reconnect|git" --workers=1` => `20 passed`.
+
+### Manual UX Review
+
+- Git explorer workflow, tab switching, reconnect behavior, and scaling reachability were validated through dedicated Playwright scenarios.
+- No separate ad-hoc manual browser walkthrough was performed outside scripted checks.
+
+### Residual Risks / Notes
+
+- E2E stability is strongest with serialized execution (`--workers=1`) because tests share live terminal backend state.
+- Reconnect scenarios depend on host runtime characteristics (shell startup timing, TUI availability such as `htop`).
+
+### Rollback Notes
+
+- Changes remain split into isolated commits; revert can be performed per task commit if needed.

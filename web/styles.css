@@ -20,7 +20,7 @@
   --toolbar-height: 48px;
   --extra-keys-height: 52px;
   --tile-gap: 4px;
-  --resize-handle: 8px;
+  --resize-handle: 12px;
 }
 
 * {
@@ -349,14 +349,14 @@ body {
   transition:
     box-shadow 0.2s,
     border-color 0.2s;
-  min-width: 360px;
-  min-height: 400px;
+  min-width: min(250px, 100%);
+  min-height: min(180px, 100%);
 }
 
 @media (max-width: 767px) {
   .tile {
-    min-width: 320px;
-    min-height: 400px;
+    min-width: min(180px, 100%);
+    min-height: min(140px, 100%);
   }
 }
 
@@ -487,7 +487,7 @@ body {
   top: 0;
   left: var(--resize-handle);
   right: var(--resize-handle);
-  height: var(--resize-handle);
+  height: calc(var(--resize-handle) + 6px);
   cursor: ns-resize;
 }
 
@@ -518,16 +518,16 @@ body {
 .tile-resize-top-left {
   top: 0;
   left: 0;
-  width: var(--resize-handle);
-  height: var(--resize-handle);
+  width: calc(var(--resize-handle) + 4px);
+  height: calc(var(--resize-handle) + 6px);
   cursor: nwse-resize;
 }
 
 .tile-resize-top-right {
   top: 0;
   right: 0;
-  width: var(--resize-handle);
-  height: var(--resize-handle);
+  width: calc(var(--resize-handle) + 4px);
+  height: calc(var(--resize-handle) + 6px);
   cursor: nesw-resize;
 }
 
@@ -2295,6 +2295,40 @@ body.virtual-keyboard-open .extra-keys {
   color: var(--accent-red);
 }
 
+.debug-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-height: 150px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.9);
+  color: #0f0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 5px;
+  z-index: 9999;
+  display: none;
+}
+
+.debug-panel.visible {
+  display: block;
+}
+
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.debug-panel-close {
+  background: #f85149;
+  color: #fff;
+  border: none;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
 /* =============================================================================
    EXTRA KEYS TOGGLE BUTTON
    ============================================================================= */
@@ -2426,13 +2460,44 @@ body.virtual-keyboard-open .extra-keys {
 }
 
 .git-file-group-items {
-  padding-left: 4px;
+  padding-left: 0;
+}
+
+.git-tree-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  padding-left: calc(8px + (var(--tree-depth, 0) * 14px));
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.git-tree-folder:hover {
+  background: var(--bg-hover);
+}
+
+.git-tree-chevron {
+  color: var(--text-muted);
+  width: 12px;
+  text-align: center;
+}
+
+.git-tree-folder-name {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-primary);
 }
 
 /* File items - lazygit style */
 .git-file.selected {
   background: rgba(88, 166, 255, 0.15);
   outline: 1px solid var(--accent-blue);
+}
+
+.git-file {
+  padding-left: calc(8px + (var(--tree-depth, 0) * 14px));
 }
 
 .git-file-status.staged {
@@ -2469,6 +2534,34 @@ body.virtual-keyboard-open .extra-keys {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-primary);
+}
+
+.git-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-diff-modes {
+  display: flex;
+  gap: 6px;
+}
+
+.git-diff-mode {
+  padding: 3px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.git-diff-mode.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(88, 166, 255, 0.12);
 }
 
 /* diff2html overrides for dark theme */

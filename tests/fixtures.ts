@@ -1,4 +1,10 @@
 import { test as base, expect, Page } from "@playwright/test";
+import { execSync } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const DEFAULT_APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 /**
  * Helper utilities for DeckTerm E2E tests
@@ -9,7 +15,7 @@ import { test as base, expect, Page } from "@playwright/test";
  */
 export async function checkServer(): Promise<boolean> {
   try {
-    const response = await fetch("http://localhost:4174");
+    const response = await fetch(DEFAULT_APP_URL);
     return response.ok;
   } catch {
     return false;
@@ -26,10 +32,26 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     timeout: 5000,
   });
 
-  // Always create a new terminal to ensure overlays exist
-  // Click the New button to create a fresh terminal
-  await page.click("#new-terminal, button:has-text('New')");
-  await page.waitForTimeout(1000);
+  let hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
+
+  if (!hasTerminal) {
+    const newButton = page.locator("#new-terminal, button:has-text('New')");
+    if ((await newButton.count()) > 0) {
+      await newButton.first().click();
+      await page.waitForTimeout(1000);
+      hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
+    }
+  }
+
+  if (!hasTerminal) {
+    await page.evaluate(async () => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      if (tm?.createTerminal) {
+        await tm.createTerminal();
+      }
+    });
+  }
 
   // Wait for an active tile with xterm
   await page.waitForSelector(".tile.active .xterm, .tile .xterm", {
@@ -169,6 +191,89 @@ export async function pressDocumentShortcut(
     },
     { key, ctrl: options.ctrl, alt: options.alt, shift: options.shift },
   );
+}
+
+/**
+ * Create a deterministic temporary git repository fixture.
+ * Repository includes one staged and one unstaged change in nested folders.
+ */
+export async function createGitFixtureRepo(): Promise<string> {
+  const homeRoot = process.env.HOME || os.tmpdir();
+  const fixtureRoot = path.join(homeRoot, ".deckterm-test-fixtures");
+  await mkdir(fixtureRoot, { recursive: true });
+  const repoDir = await mkdtemp(path.join(fixtureRoot, "deckterm-git-fixture-"));
+  await mkdir(path.join(repoDir, "src", "staged"), { recursive: true });
+  await mkdir(path.join(repoDir, "src", "changes"), { recursive: true });
+
+  await writeFile(path.join(repoDir, "src", "staged", "staged.txt"), "base\n");
+  await writeFile(path.join(repoDir, "src", "changes", "changed.txt"), "base\n");
+
+  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+  execSync('git config user.email "deckterm-tests@example.com"', {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execSync('git config user.name "DeckTerm Tests"', {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execSync("git add .", { cwd: repoDir, stdio: "pipe" });
+  execSync('git commit -m "init fixture"', { cwd: repoDir, stdio: "pipe" });
+
+  // Unstaged change
+  await writeFile(
+    path.join(repoDir, "src", "changes", "changed.txt"),
+    "base\nunstaged line\n",
+  );
+
+  // Staged change
+  await writeFile(
+    path.join(repoDir, "src", "staged", "staged.txt"),
+    "base\nstaged line\n",
+  );
+  execSync("git add src/staged/staged.txt", { cwd: repoDir, stdio: "pipe" });
+
+  return repoDir;
+}
+
+export async function cleanupTempDir(dir?: string | null) {
+  if (!dir) return;
+  await rm(dir, { recursive: true, force: true });
+}
+
+async function clearServerTerminals(page: Page, url: string) {
+  try {
+    const listRes = await page.request.get(`${url}/api/terminals`);
+    if (!listRes.ok()) return;
+    const terminals = (await listRes.json().catch(() => [])) as Array<{
+      id?: string;
+    }>;
+    await Promise.all(
+      terminals
+        .map((term) => term?.id)
+        .filter((id): id is string => Boolean(id))
+        .map((id) =>
+          page.request.delete(`${url}/api/terminals/${encodeURIComponent(id)}`),
+        ),
+    );
+  } catch {
+    // Keep tests running even if cleanup endpoint is unavailable.
+  }
+}
+
+/**
+ * Clear persisted UI/session state before each test for deterministic behavior.
+ */
+export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
+  await clearServerTerminals(page, url);
+  await page.goto(url);
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.context().clearCookies();
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
 }
 
 /**

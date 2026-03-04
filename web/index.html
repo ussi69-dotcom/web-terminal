@@ -148,11 +148,11 @@
         <span id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</span>
       </div>
 
-      <!-- Debug Panel (temporary) -->
-      <div id="debug-panel" style="position:fixed;top:0;left:0;right:0;max-height:150px;overflow-y:auto;background:rgba(0,0,0,0.9);color:#0f0;font-family:monospace;font-size:11px;padding:5px;z-index:9999;display:none;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+      <!-- Debug Panel (debug=1 only) -->
+      <div id="debug-panel" class="debug-panel">
+        <div class="debug-panel-header">
           <span>DEBUG LOG</span>
-          <button onclick="document.getElementById('debug-panel').style.display='none'" style="background:#f00;color:#fff;border:none;padding:2px 8px;">X</button>
+          <button id="debug-panel-close" type="button" class="debug-panel-close">X</button>
         </div>
         <div id="debug-log"></div>
       </div>
