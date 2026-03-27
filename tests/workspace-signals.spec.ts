@@ -5,17 +5,37 @@ import {
   waitForTerminal,
   cleanupTempDir,
 } from "./fixtures";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const TEMP_ROOT = path.join(os.tmpdir(), "deckterm-workspace-signals");
+const SERVER_LOCK_DIR = path.join(os.tmpdir(), "deckterm-e2e-server.lock");
+
+async function acquireServerLock(timeoutMs = 30000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await mkdir(SERVER_LOCK_DIR);
+      return;
+    } catch (error: any) {
+      if (error?.code !== "EEXIST") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  throw new Error(`Timed out acquiring server lock: ${SERVER_LOCK_DIR}`);
+}
+
+async function releaseServerLock() {
+  await rm(SERVER_LOCK_DIR, { recursive: true, force: true });
+}
 
 test.describe("Workspace telemetry contract", () => {
   let tempDirs: string[] = [];
 
   test.beforeEach(async ({ page }) => {
+    await acquireServerLock();
     await resetAppState(page, BASE_URL);
     await page.setViewportSize({ width: 1200, height: 800 });
   });
@@ -23,6 +43,7 @@ test.describe("Workspace telemetry contract", () => {
   test.afterEach(async () => {
     await Promise.all(tempDirs.map((dir) => cleanupTempDir(dir)));
     tempDirs = [];
+    await releaseServerLock();
   });
 
   test("terminal listing exposes workspace telemetry fields", async ({
