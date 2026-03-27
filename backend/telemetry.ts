@@ -1,6 +1,10 @@
+import { dirname } from "node:path";
+
 const BUSY_ACTIVITY_WINDOW_MS = 30_000;
 const BUSY_BOOTSTRAP_WINDOW_MS = 10_000;
 const MAX_SCROLLBACK_CHUNKS = 200;
+const GIT_COMMAND_TIMEOUT_MS = 3_000;
+const WORKTREE_CACHE_TTL_MS = 5_000;
 
 const PORT_PATTERNS = [
   /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/gi,
@@ -23,11 +27,32 @@ type TelemetryTerminal = {
   scrollback: string[];
 };
 
-export function getTerminalTelemetry(
+type WorktreeDetector = (cwd: string) => Promise<boolean>;
+
+type GetTerminalTelemetryOptions = {
+  now?: number;
+  detectWorktree?: WorktreeDetector;
+};
+
+type GitCommandResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
+type WorktreeCacheEntry = {
+  expiresAt: number;
+  linkedRoots: string[];
+};
+
+const worktreeCache = new Map<string, WorktreeCacheEntry>();
+
+export async function getTerminalTelemetry(
   terminal: TelemetryTerminal,
   backendMode: BackendMode,
-  now = Date.now(),
-): TerminalTelemetry {
+  options: GetTerminalTelemetryOptions = {},
+): Promise<TerminalTelemetry> {
+  const now = options.now ?? Date.now();
   const ageMs = Math.max(0, now - terminal.createdAt);
   const activityAgeMs = Math.max(0, now - terminal.lastActivityAt);
   const hasDistinctActivity = terminal.lastActivityAt > terminal.createdAt;
@@ -41,8 +66,52 @@ export function getTerminalTelemetry(
   return {
     busy: hasRecentActivity || hasRecentBootstrapOutput,
     ports: extractPortsFromScrollback(terminal.scrollback),
-    isWorktree: isWorktreePath(terminal.cwd),
+    isWorktree: options.detectWorktree
+      ? await options.detectWorktree(terminal.cwd)
+      : false,
     backendMode,
+  };
+}
+
+export function createGitWorktreeDetector(options: {
+  resolveAllowedPath: (inputPath: string) => Promise<string | null>;
+  now?: () => number;
+  cacheTtlMs?: number;
+  runGit?: (cwd: string, args: string[]) => Promise<GitCommandResult>;
+}): WorktreeDetector {
+  const now = options.now ?? Date.now;
+  const cacheTtlMs = options.cacheTtlMs ?? WORKTREE_CACHE_TTL_MS;
+  const runGit = options.runGit ?? runGitCommand;
+
+  return async (cwd: string) => {
+    const resolvedCwd = await options.resolveAllowedPath(cwd);
+    if (!resolvedCwd) return false;
+
+    const commonDirResult = await runGit(resolvedCwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    if (commonDirResult.exitCode !== 0) {
+      return false;
+    }
+
+    const commonDir = commonDirResult.stdout.trim();
+    if (!commonDir) {
+      return false;
+    }
+
+    const linkedRoots = await getLinkedWorktreeRoots(
+      resolvedCwd,
+      commonDir,
+      now(),
+      cacheTtlMs,
+      runGit,
+    );
+
+    return linkedRoots.some(
+      (root) => resolvedCwd === root || resolvedCwd.startsWith(`${root}/`),
+    );
   };
 }
 
@@ -65,6 +134,60 @@ function extractPortsFromScrollback(scrollback: string[]): number[] {
   return Array.from(ports).sort((a, b) => a - b);
 }
 
-function isWorktreePath(cwd: string): boolean {
-  return /(?:^|\/)(?:\.worktrees|worktrees)(?:\/|$)/.test(cwd);
+async function getLinkedWorktreeRoots(
+  cwd: string,
+  commonDir: string,
+  now: number,
+  cacheTtlMs: number,
+  runGit: (cwd: string, args: string[]) => Promise<GitCommandResult>,
+): Promise<string[]> {
+  const cached = worktreeCache.get(commonDir);
+  if (cached && cached.expiresAt > now) {
+    return cached.linkedRoots;
+  }
+
+  const worktreeListResult = await runGit(cwd, ["worktree", "list", "--porcelain"]);
+  if (worktreeListResult.exitCode !== 0) {
+    worktreeCache.delete(commonDir);
+    return [];
+  }
+
+  const mainRoot = dirname(commonDir);
+  const linkedRoots = worktreeListResult.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim())
+    .filter((root) => root && root !== mainRoot);
+
+  worktreeCache.set(commonDir, {
+    expiresAt: now + cacheTtlMs,
+    linkedRoots,
+  });
+
+  return linkedRoots;
+}
+
+async function runGitCommand(
+  cwd: string,
+  args: string[],
+): Promise<GitCommandResult> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const timeoutId = setTimeout(() => proc.kill(), GIT_COMMAND_TIMEOUT_MS);
+
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    return { exitCode, stdout, stderr };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }

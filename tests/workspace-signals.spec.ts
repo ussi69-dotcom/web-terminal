@@ -4,13 +4,14 @@ import {
   resetAppState,
   waitForTerminal,
   cleanupTempDir,
+  createGitFixtureRepo,
 } from "./fixtures";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
-const TEMP_ROOT = path.join(os.tmpdir(), "deckterm-workspace-signals");
 const SERVER_LOCK_DIR = path.join(os.tmpdir(), "deckterm-e2e-server.lock");
 
 async function acquireServerLock(timeoutMs = 30000) {
@@ -86,16 +87,76 @@ test.describe("Workspace telemetry contract", () => {
     );
   });
 
+  test("terminal listing distinguishes a linked git worktree from its main repo", async ({
+    page,
+  }) => {
+    const repoDir = await createGitFixtureRepo();
+    tempDirs.push(repoDir);
+
+    const linkedDir = path.join(
+      path.dirname(repoDir),
+      `deckterm-linked-${Date.now()}`,
+    );
+    const branchName = `deckterm-linked-${Date.now()}`;
+
+    execFileSync("git", ["worktree", "add", "-b", branchName, linkedDir], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    tempDirs.push(linkedDir);
+
+    const createMain = await page.request.post(`${BASE_URL}/api/terminals`, {
+      data: { cwd: repoDir, cols: 80, rows: 24 },
+    });
+    expect(createMain.ok()).toBeTruthy();
+
+    const createLinked = await page.request.post(`${BASE_URL}/api/terminals`, {
+      data: { cwd: linkedDir, cols: 80, rows: 24 },
+    });
+    expect(createLinked.ok()).toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(`${BASE_URL}/api/terminals`);
+        expect(response.ok()).toBeTruthy();
+
+        const terminals = (await response.json()) as Array<{
+          cwd?: string;
+          isWorktree?: boolean;
+        }>;
+
+        return {
+          repo: terminals.find((terminal) => terminal.cwd === repoDir)
+            ?.isWorktree,
+          linked: terminals.find((terminal) => terminal.cwd === linkedDir)
+            ?.isWorktree,
+        };
+      })
+      .toEqual({
+        repo: false,
+        linked: true,
+      });
+  });
+
   test("active workspace tab renders busy, port, and worktree signals", async ({
     page,
   }) => {
     await page.goto(BASE_URL);
     await waitForTerminal(page);
 
-    await mkdir(path.join(TEMP_ROOT, ".worktrees"), { recursive: true });
-    const worktreeCwd = await mkdtemp(
-      path.join(TEMP_ROOT, ".worktrees", "deckterm-workspace-"),
+    const repoDir = await createGitFixtureRepo();
+    tempDirs.push(repoDir);
+
+    const worktreeCwd = path.join(
+      path.dirname(repoDir),
+      `deckterm-ui-linked-${Date.now()}`,
     );
+    const branchName = `deckterm-ui-linked-${Date.now()}`;
+
+    execFileSync("git", ["worktree", "add", "-b", branchName, worktreeCwd], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     tempDirs.push(worktreeCwd);
 
     await page.locator("#directory").fill(worktreeCwd);

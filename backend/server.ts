@@ -8,7 +8,7 @@ import {
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { getTerminalTelemetry } from "./telemetry";
+import { createGitWorktreeDetector, getTerminalTelemetry } from "./telemetry";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -416,6 +416,10 @@ async function resolveAllowedPath(
     }
   }
 }
+
+const detectGitWorktree = createGitWorktreeDetector({
+  resolveAllowedPath,
+});
 
 async function authenticateWebSocketRequest(req: Request): Promise<{
   ok: boolean;
@@ -903,17 +907,21 @@ export function createWebApp() {
   });
 
   // List terminals
-  app.get("/api/terminals", (c) => {
+  app.get("/api/terminals", async (c) => {
     const { ownerId } = getCurrentUser(c);
     const backendMode = TMUX_BACKEND ? "tmux" : "raw";
-    const list = Array.from(terminals.values())
-      .filter((t) => t.ownerId === ownerId)
-      .map((t) => ({
-        id: t.id,
-        cwd: t.cwd,
-        createdAt: t.createdAt,
-        ...getTerminalTelemetry(t, backendMode),
-      }));
+    const list = await Promise.all(
+      Array.from(terminals.values())
+        .filter((t) => t.ownerId === ownerId)
+        .map(async (t) => ({
+          id: t.id,
+          cwd: t.cwd,
+          createdAt: t.createdAt,
+          ...(await getTerminalTelemetry(t, backendMode, {
+            detectWorktree: detectGitWorktree,
+          })),
+        })),
+    );
     return c.json(list);
   });
 
