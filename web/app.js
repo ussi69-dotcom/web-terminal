@@ -121,6 +121,11 @@ const dbg = (...args) => {
 const TerminalColors =
   window.TerminalColors ||
   (() => {
+    const SIGNAL_PRIORITIES = {
+      busy: 1,
+      ports: 2,
+      worktree: 3,
+    };
     const palette = [
       "#58a6ff",
       "#3fb950",
@@ -166,12 +171,89 @@ const TerminalColors =
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     };
 
-    return { hashCwdToColor, blendWorkspaceColors, hexToRgba };
+    const normalizePorts = (ports) => {
+      if (!Array.isArray(ports)) return [];
+      return [
+        ...new Set(
+          ports
+            .map((port) => Number(port))
+            .filter((port) => Number.isInteger(port) && port > 0),
+        ),
+      ].sort((left, right) => left - right);
+    };
+
+    const getWorkspaceSignalDescriptors = ({
+      busy = false,
+      ports = [],
+      isWorktree = false,
+    } = {}) => {
+      const descriptors = [];
+      if (busy) {
+        descriptors.push({
+          key: "busy",
+          label: "Busy",
+          priority: SIGNAL_PRIORITIES.busy,
+        });
+      }
+
+      const normalizedPorts = normalizePorts(ports);
+      if (normalizedPorts.length > 0) {
+        descriptors.push({
+          key: `ports:${normalizedPorts.join(",")}`,
+          label: `Ports ${normalizedPorts.join(", ")}`,
+          priority: SIGNAL_PRIORITIES.ports,
+        });
+      }
+
+      if (isWorktree) {
+        descriptors.push({
+          key: "worktree",
+          label: "Worktree",
+          priority: SIGNAL_PRIORITIES.worktree,
+        });
+      }
+
+      return descriptors;
+    };
+
+    const getPrimaryWorkspaceSignal = ({
+      busy = false,
+      ports = [],
+      isWorktree = false,
+      cwd,
+    } = {}) => ({
+      color: hashCwdToColor(cwd),
+      primarySignal:
+        getWorkspaceSignalDescriptors({ busy, ports, isWorktree })[0] || null,
+    });
+
+    return {
+      hashCwdToColor,
+      blendWorkspaceColors,
+      hexToRgba,
+      normalizePorts,
+      getWorkspaceSignalDescriptors,
+      getPrimaryWorkspaceSignal,
+    };
   })();
 
 if (!window.TerminalColors) {
   window.TerminalColors = TerminalColors;
 }
+
+const normalizeWorkspacePorts = (ports) => {
+  if (typeof TerminalColors.normalizePorts === "function") {
+    return TerminalColors.normalizePorts(ports);
+  }
+  if (!Array.isArray(ports)) return [];
+  return [
+    ...new Set(
+      ports
+        .map((port) => Number(port))
+        .filter((port) => Number.isInteger(port) && port > 0),
+    ),
+  ].sort((left, right) => left - right);
+};
 
 // =============================================================================
 // RECONNECTING WEBSOCKET
@@ -3598,6 +3680,9 @@ class TerminalManager {
     this.tabDragThresholdPx = 6;
     this.resizeDebounceMs = 80;
     this.debugMode = false;
+    this.telemetryRefreshTimer = null;
+    this.telemetryRefreshPromise = null;
+    this.telemetryRefreshInterval = null;
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3697,6 +3782,7 @@ class TerminalManager {
 
     // Mobile swipe support
     this.setupMobileSwipe();
+    this.startTelemetryRefreshLoop();
 
     // Check for existing terminals
     this.checkExistingTerminals();
@@ -3730,14 +3816,206 @@ class TerminalManager {
 
   updateWorkspaceLabel(workspaceId, cwd) {
     if (!workspaceId) return;
-    const label = this.formatCwdLabel(cwd);
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
       if (tab.dataset.workspaceId === workspaceId) {
-        const labelEl = tab.querySelector(".tab-label");
-        if (labelEl) labelEl.textContent = label;
-        if (cwd) tab.title = cwd;
+        this.renderWorkspaceTab(tab, cwd);
       }
     });
+  }
+
+  startTelemetryRefreshLoop() {
+    this.queueTelemetryRefresh(0);
+    if (this.telemetryRefreshInterval) {
+      clearInterval(this.telemetryRefreshInterval);
+    }
+    this.telemetryRefreshInterval = setInterval(
+      () => this.queueTelemetryRefresh(0),
+      5000,
+    );
+  }
+
+  queueTelemetryRefresh(delay = 150) {
+    if (this.telemetryRefreshTimer) clearTimeout(this.telemetryRefreshTimer);
+    this.telemetryRefreshTimer = setTimeout(() => {
+      this.telemetryRefreshTimer = null;
+      void this.refreshTerminalTelemetry();
+    }, delay);
+  }
+
+  async refreshTerminalTelemetry() {
+    if (this.telemetryRefreshPromise) return this.telemetryRefreshPromise;
+    this.telemetryRefreshPromise = (async () => {
+      try {
+        const response = await fetch("/api/terminals");
+        if (!response.ok) return;
+        const serverTerminals = await response.json();
+        const telemetryById = new Map(
+          serverTerminals
+            .filter((terminal) => terminal?.id)
+            .map((terminal) => [terminal.id, terminal]),
+        );
+
+        this.terminals.forEach((terminal, id) => {
+          const next = telemetryById.get(id);
+          if (!next) return;
+          terminal.busy = Boolean(next.busy);
+          terminal.ports = normalizeWorkspacePorts(next.ports);
+          terminal.isWorktree = Boolean(next.isWorktree);
+          terminal.backendMode = next.backendMode || null;
+          if (typeof next.cwd === "string" && next.cwd) {
+            terminal.cwd = next.cwd;
+            this.sessionRegistry.update(id, { cwd: next.cwd });
+          }
+        });
+
+        this.updateTabGroups();
+      } catch (err) {
+        dbg("telemetry refresh failed", err);
+      } finally {
+        this.telemetryRefreshPromise = null;
+      }
+    })();
+    return this.telemetryRefreshPromise;
+  }
+
+  getWorkspaceTerminals(workspaceId) {
+    if (!workspaceId) return [];
+    const terminals = [];
+    this.terminals.forEach((terminal, id) => {
+      if (terminal.workspaceId === workspaceId) {
+        terminals.push({ id, ...terminal });
+      }
+    });
+    return terminals;
+  }
+
+  getWorkspaceSnapshot(workspaceId, preferredCwd = null) {
+    const terminals = this.getWorkspaceTerminals(workspaceId);
+    const activeTerminalId = this.resolveWorkspaceTerminalId(workspaceId);
+    const activeTerminal = activeTerminalId
+      ? this.terminals.get(activeTerminalId)
+      : null;
+    const fallbackTerminal = terminals[0] || null;
+    const cwd =
+      preferredCwd ||
+      activeTerminal?.cwd ||
+      fallbackTerminal?.cwd ||
+      "";
+    const ports = normalizeWorkspacePorts(
+      terminals.flatMap((terminal) => terminal.ports || []),
+    );
+    const busy = terminals.some((terminal) => Boolean(terminal.busy));
+    const isWorktree = terminals.some((terminal) => Boolean(terminal.isWorktree));
+    const descriptors = TerminalColors.getWorkspaceSignalDescriptors({
+      busy,
+      ports,
+      isWorktree,
+    });
+    const primarySignalDescriptor = TerminalColors.getPrimaryWorkspaceSignal({
+      busy,
+      ports,
+      isWorktree,
+      cwd,
+    }).primarySignal;
+
+    return {
+      count: terminals.length,
+      colors: terminals.map((terminal) =>
+        TerminalColors.hashCwdToColor(terminal.cwd || cwd || "terminal"),
+      ),
+      cwd,
+      label: this.formatCwdLabel(cwd),
+      busy,
+      ports,
+      isWorktree,
+      descriptors,
+      primarySignal:
+        primarySignalDescriptor?.key?.startsWith("ports:")
+          ? "ports"
+          : primarySignalDescriptor?.key || "none",
+      primarySignalLabel: primarySignalDescriptor?.label || "",
+    };
+  }
+
+  composeWorkspaceTooltip(snapshot) {
+    const lines = [snapshot.cwd || "Terminal"];
+    lines.push(
+      `Workspace: ${snapshot.count} terminal${snapshot.count === 1 ? "" : "s"}`,
+    );
+    if (snapshot.descriptors.length > 0) {
+      lines.push(`Signals: ${snapshot.descriptors.map((d) => d.label).join(" • ")}`);
+    } else {
+      lines.push("Signals: none");
+    }
+    return lines.join("\n");
+  }
+
+  applyWorkspaceSignals(tab, snapshot) {
+    const signalBadge = tab.querySelector(".tab-signal-badge");
+
+    tab.dataset.primarySignal = snapshot.primarySignal;
+    tab.dataset.busy = snapshot.busy ? "true" : "false";
+    tab.dataset.ports = snapshot.ports.join(",");
+    tab.dataset.isWorktree = snapshot.isWorktree ? "true" : "false";
+    tab.title = this.composeWorkspaceTooltip(snapshot);
+
+    if (signalBadge) {
+      signalBadge.textContent = snapshot.primarySignalLabel;
+      signalBadge.dataset.signal = snapshot.primarySignal;
+      signalBadge.hidden = !snapshot.primarySignalLabel;
+      signalBadge.setAttribute(
+        "aria-hidden",
+        snapshot.primarySignalLabel ? "false" : "true",
+      );
+    }
+  }
+
+  renderWorkspaceTab(tab, preferredCwd = null) {
+    const dot = tab.querySelector(".tab-dot");
+    const countBadge = tab.querySelector(".tab-count");
+    const labelEl = tab.querySelector(".tab-label");
+    const snapshot = this.getWorkspaceSnapshot(
+      tab.dataset.workspaceId,
+      preferredCwd,
+    );
+    const blended = TerminalColors.blendWorkspaceColors(snapshot.colors);
+
+    if (labelEl) labelEl.textContent = snapshot.label;
+
+    if (snapshot.count > 1) {
+      tab.classList.add("multicolor");
+      tab.classList.remove("grouped");
+      const color1 = blended[0] || "#58a6ff";
+      const color2 = blended[1] || color1;
+      const color3 = blended[2] || color2;
+      tab.style.setProperty("--color-1", TerminalColors.hexToRgba(color1, 0.2));
+      tab.style.setProperty("--color-2", TerminalColors.hexToRgba(color2, 0.2));
+      tab.style.setProperty("--color-3", TerminalColors.hexToRgba(color3, 0.2));
+      tab.style.setProperty("--color-1-solid", color1);
+      tab.style.setProperty("--color-2-solid", color2);
+      tab.style.setProperty("--color-3-solid", color3);
+      tab.style.setProperty(
+        "--tab-border",
+        TerminalColors.hexToRgba(color1, 0.35),
+      );
+      if (countBadge) countBadge.textContent = snapshot.count;
+      if (dot) dot.style.removeProperty("background-color");
+    } else {
+      tab.classList.remove("multicolor", "grouped");
+      const singleColor = blended[0] || "#58a6ff";
+      if (dot) dot.style.backgroundColor = singleColor;
+      tab.style.setProperty("--color-1-solid", singleColor);
+      tab.style.removeProperty("--color-1");
+      tab.style.removeProperty("--color-2");
+      tab.style.removeProperty("--color-3");
+      tab.style.removeProperty("--color-2-solid");
+      tab.style.removeProperty("--color-3-solid");
+      tab.style.removeProperty("--tab-border");
+      tab.style.removeProperty("--group-color");
+      if (countBadge) countBadge.textContent = "";
+    }
+
+    this.applyWorkspaceSignals(tab, snapshot);
   }
 
   parseOsc7Cwd(data) {
@@ -4027,6 +4305,7 @@ class TerminalManager {
           );
         }
         terminal.write(data);
+        this.queueTelemetryRefresh();
       },
       onStatusChange: (status, extra) => {
         dbg(`[reconnect] Status change for ${id}: ${status}`, extra);
@@ -4085,6 +4364,10 @@ class TerminalManager {
       debugOverlay,
       dimensionTimer: null,
       cwd,
+      busy: false,
+      ports: [],
+      isWorktree: false,
+      backendMode: null,
       tabNum,
       workspaceId,
       resizeObserver: null,
@@ -4106,6 +4389,7 @@ class TerminalManager {
     this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
 
     this.addTab(id, cwd, tabNum, workspaceId);
+    this.queueTelemetryRefresh(0);
     this.switchTo(id);
     this.attachResizeObserver(id);
 
@@ -4879,7 +5163,10 @@ class TerminalManager {
         `${protocol}//${location.host}/ws/terminals/${id}`,
         id,
         {
-          onMessage: (data) => terminal.write(data),
+          onMessage: (data) => {
+            terminal.write(data);
+            this.queueTelemetryRefresh();
+          },
           onStatusChange: (status, extra) =>
             this.handleStatusChange(id, status, extra),
         },
@@ -4943,6 +5230,10 @@ class TerminalManager {
         debugOverlay,
         dimensionTimer: null,
         cwd,
+        busy: false,
+        ports: [],
+        isWorktree: false,
+        backendMode: null,
         tabNum,
         workspaceId,
         resizeObserver: null,
@@ -4964,6 +5255,7 @@ class TerminalManager {
         // Update tab badge count for split workspaces
         this.updateTabGroups();
       }
+      this.queueTelemetryRefresh(0);
       this.switchTo(id);
       this.attachResizeObserver(id);
 
@@ -4988,9 +5280,9 @@ class TerminalManager {
       <span class="tab-index">${tabNum}</span>
       <span class="tab-label">${label}</span>
       <span class="tab-count"></span>
+      <span class="tab-signal-badge" hidden aria-hidden="true"></span>
       <button class="tab-close" title="Close (Ctrl+W)">&times;</button>
     `;
-    if (cwd) tab.title = cwd;
 
     tab.querySelector(".tab-close").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -5064,74 +5356,8 @@ class TerminalManager {
   }
 
   updateTabGroups() {
-    // Count terminals per workspace
-    const workspaceCounts = new Map();
-    const workspaceColors = new Map();
-    this.terminals.forEach((t) => {
-      if (t.workspaceId) {
-        const count = workspaceCounts.get(t.workspaceId) || 0;
-        workspaceCounts.set(t.workspaceId, count + 1);
-        const cwdColor = TerminalColors.hashCwdToColor(t.cwd || "terminal");
-        const colors = workspaceColors.get(t.workspaceId) || [];
-        colors.push(cwdColor);
-        workspaceColors.set(t.workspaceId, colors);
-      }
-    });
-
-    // Update tab colors based on terminal count
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
-      const workspaceId = tab.dataset.workspaceId;
-      const dot = tab.querySelector(".tab-dot");
-      const countBadge = tab.querySelector(".tab-count");
-      const count = workspaceCounts.get(workspaceId) || 0;
-      const blended = TerminalColors.blendWorkspaceColors(
-        workspaceColors.get(workspaceId) || [],
-      );
-
-      if (count > 1) {
-        // Multicolor workspace tab (multiple terminals)
-        tab.classList.add("multicolor");
-        tab.classList.remove("grouped");
-        const color1 = blended[0] || "#58a6ff";
-        const color2 = blended[1] || color1;
-        const color3 = blended[2] || color2;
-        tab.style.setProperty(
-          "--color-1",
-          TerminalColors.hexToRgba(color1, 0.2),
-        );
-        tab.style.setProperty(
-          "--color-2",
-          TerminalColors.hexToRgba(color2, 0.2),
-        );
-        tab.style.setProperty(
-          "--color-3",
-          TerminalColors.hexToRgba(color3, 0.2),
-        );
-        tab.style.setProperty("--color-1-solid", color1);
-        tab.style.setProperty("--color-2-solid", color2);
-        tab.style.setProperty("--color-3-solid", color3);
-        tab.style.setProperty(
-          "--tab-border",
-          TerminalColors.hexToRgba(color1, 0.35),
-        );
-
-        if (countBadge) countBadge.textContent = count;
-        if (dot) dot.style.removeProperty("background-color");
-      } else {
-        // Single terminal workspace
-        tab.classList.remove("multicolor", "grouped");
-        const singleColor = blended[0] || "#58a6ff";
-        if (dot) dot.style.backgroundColor = singleColor;
-        tab.style.setProperty("--color-1-solid", singleColor);
-        tab.style.removeProperty("--color-1");
-        tab.style.removeProperty("--color-2");
-        tab.style.removeProperty("--color-3");
-        tab.style.removeProperty("--color-2-solid");
-        tab.style.removeProperty("--color-3-solid");
-        tab.style.removeProperty("--tab-border");
-        tab.style.removeProperty("--group-color");
-        if (countBadge) countBadge.textContent = "";
-      }
+      this.renderWorkspaceTab(tab);
     });
   }
 

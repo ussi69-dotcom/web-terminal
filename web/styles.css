@@ -281,6 +281,57 @@ body {
   display: inline-flex;
 }
 
+.tab-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(110, 118, 129, 0.14);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tab-signal-badge[hidden] {
+  display: none;
+}
+
+.tab[data-primary-signal="busy"] {
+  border-color: rgba(248, 81, 73, 0.35);
+}
+
+.tab[data-primary-signal="busy"] .tab-signal-badge {
+  background: rgba(248, 81, 73, 0.12);
+  border-color: rgba(248, 81, 73, 0.35);
+  color: #ffb3ad;
+}
+
+.tab[data-primary-signal="ports"] {
+  border-color: rgba(88, 166, 255, 0.35);
+}
+
+.tab[data-primary-signal="ports"] .tab-signal-badge {
+  background: rgba(88, 166, 255, 0.12);
+  border-color: rgba(88, 166, 255, 0.35);
+  color: #a9d1ff;
+}
+
+.tab[data-primary-signal="worktree"] {
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.tab[data-primary-signal="worktree"] .tab-signal-badge {
+  background: rgba(63, 185, 80, 0.12);
+  border-color: rgba(63, 185, 80, 0.35);
+  color: #9be7a9;
+}
+
 .tab-index {
   font-size: 10px;
   color: var(--text-muted);
