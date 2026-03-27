@@ -3726,6 +3726,7 @@ class TerminalManager {
     // Toolbar action buttons
     this.setupToolbarActions();
     this.updateWrapButton();
+    this.updateLinkedViewButton();
 
     // Fullscreen
     document
@@ -3793,6 +3794,7 @@ class TerminalManager {
     document.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const action = btn.dataset.action;
+        if (action === "linked-view") this.createLinkedView();
         if (action === "file-manager") this.fileManager.open();
         else if (action === "clipboard") this.clipboardManager.togglePanel();
         else if (action === "copy") this.copySelection();
@@ -3812,6 +3814,28 @@ class TerminalManager {
     const parts = cleaned.split("/");
     const last = parts[parts.length - 1];
     return last || "/";
+  }
+
+  getActiveTerminal() {
+    if (!this.activeId) return null;
+    return this.terminals.get(this.activeId) || null;
+  }
+
+  canCreateLinkedView(terminal = this.getActiveTerminal()) {
+    return Boolean(
+      terminal &&
+        terminal.backendMode === "tmux" &&
+        terminal.supportsLinkedView,
+    );
+  }
+
+  updateLinkedViewButton() {
+    const button = document.getElementById("linked-view-btn");
+    if (!button) return;
+    const isAvailable = this.canCreateLinkedView();
+    button.hidden = !isAvailable;
+    button.disabled = !isAvailable;
+    button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
   }
 
   updateWorkspaceLabel(workspaceId, cwd) {
@@ -3862,6 +3886,7 @@ class TerminalManager {
           terminal.ports = normalizeWorkspacePorts(next.ports);
           terminal.isWorktree = Boolean(next.isWorktree);
           terminal.backendMode = next.backendMode || null;
+          terminal.supportsLinkedView = Boolean(next.supportsLinkedView);
           const hasClientCwd =
             typeof terminal.cwd === "string" && terminal.cwd.trim().length > 0;
           if (!hasClientCwd && typeof next.cwd === "string" && next.cwd) {
@@ -3871,6 +3896,7 @@ class TerminalManager {
         });
 
         this.updateTabGroups();
+        this.updateLinkedViewButton();
       } catch (err) {
         dbg("telemetry refresh failed", err);
       } finally {
@@ -4219,7 +4245,10 @@ class TerminalManager {
         // Reconnect terminals, using saved session data where available
         for (const t of serverTerminals) {
           const savedSession = this.sessionRegistry.get(t.id);
-          await this.reconnectToTerminal(t.id, t.cwd, savedSession);
+          await this.reconnectToTerminal(t.id, t.cwd, savedSession, {
+            backendMode: t.backendMode || null,
+            supportsLinkedView: Boolean(t.supportsLinkedView),
+          });
         }
         return;
       }
@@ -4229,7 +4258,13 @@ class TerminalManager {
     this.createTerminal();
   }
 
-  async reconnectToTerminal(id, cwd, savedSession = null) {
+  async reconnectToTerminal(id, cwd, savedSession = null, options = {}) {
+    const {
+      showReconnectBanner = true,
+      isReconnection = true,
+      backendMode = null,
+      supportsLinkedView = false,
+    } = options;
     // Use saved workspace info if available, otherwise create new
     let workspaceId;
     let tabNum;
@@ -4296,7 +4331,9 @@ class TerminalManager {
     fitAddon.fit();
 
     dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
-    terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
+    if (showReconnectBanner) {
+      terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
+    }
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}`;
@@ -4373,7 +4410,8 @@ class TerminalManager {
       busy: false,
       ports: [],
       isWorktree: false,
-      backendMode: null,
+      backendMode,
+      supportsLinkedView,
       tabNum,
       workspaceId,
       resizeObserver: null,
@@ -4384,7 +4422,7 @@ class TerminalManager {
       inputFallbackCleanup,
       inputState,
       hasConnected: false, // Track if WebSocket has ever successfully connected
-      isReconnection: true, // Mark this as a reconnection scenario
+      isReconnection,
     });
 
     dbg(
@@ -5106,7 +5144,9 @@ class TerminalManager {
 
       if (!res.ok) throw new Error("Failed to create terminal");
 
-      const { id } = await res.json();
+      const terminalInfo = await res.json();
+      const { id } = terminalInfo;
+      const resolvedCwd = terminalInfo.cwd || cwd;
 
       // Determine workspace ID
       let workspaceId;
@@ -5235,11 +5275,12 @@ class TerminalManager {
         sizeWarning,
         debugOverlay,
         dimensionTimer: null,
-        cwd,
+        cwd: resolvedCwd,
         busy: false,
         ports: [],
         isWorktree: false,
-        backendMode: null,
+        backendMode: terminalInfo.backendMode || null,
+        supportsLinkedView: Boolean(terminalInfo.supportsLinkedView),
         tabNum,
         workspaceId,
         resizeObserver: null,
@@ -5252,11 +5293,11 @@ class TerminalManager {
       });
 
       // Register with session registry for reconnection persistence
-      this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
+      this.sessionRegistry.register(id, { workspaceId, cwd: resolvedCwd, tabNum });
 
       // Only add tab for new workspaces, not splits
       if (!split) {
-        this.addTab(id, cwd, tabNum, workspaceId);
+        this.addTab(id, resolvedCwd, tabNum, workspaceId);
       } else {
         // Update tab badge count for split workspaces
         this.updateTabGroups();
@@ -5270,6 +5311,33 @@ class TerminalManager {
     } catch (err) {
       console.error("Failed to create terminal:", err);
       alert("Failed to create terminal: " + err.message);
+    }
+  }
+
+  async createLinkedView() {
+    if (!this.activeId) return;
+    const active = this.getActiveTerminal();
+    if (!this.canCreateLinkedView(active)) return;
+
+    try {
+      const res = await fetch(
+        `/api/terminals/${encodeURIComponent(this.activeId)}/linked-view`,
+        { method: "POST" },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || "Failed to create linked view");
+      }
+
+      await this.reconnectToTerminal(payload.id, payload.cwd, null, {
+        showReconnectBanner: false,
+        isReconnection: false,
+        backendMode: payload.backendMode || null,
+        supportsLinkedView: Boolean(payload.supportsLinkedView),
+      });
+    } catch (err) {
+      console.error("Failed to create linked view:", err);
+      alert(`Failed to create linked view: ${err.message}`);
     }
   }
 
@@ -5503,6 +5571,7 @@ class TerminalManager {
         active.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected",
       );
     }
+    this.updateLinkedViewButton();
   }
 
   switchToIndex(index) {
@@ -5570,6 +5639,7 @@ class TerminalManager {
         this.updateConnectionStatus("disconnected");
       }
     }
+    this.updateLinkedViewButton();
   }
 
   sendResize(id, colsOverride = null, rowsOverride = null) {
@@ -5796,6 +5866,7 @@ document.addEventListener("DOMContentLoaded", () => {
           menu: "≡",
           folder: "📁",
           "folder-open": "📂",
+          "copy-plus": "⧉+",
           "more-horizontal": "⋯",
           "chevron-up": "↑",
           "chevron-down": "↓",

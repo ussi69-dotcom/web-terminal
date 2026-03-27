@@ -147,6 +147,15 @@ body {
   stroke-width: 1.5;
 }
 
+.btn-icon-tmux:not([hidden]) {
+  border-color: rgba(88, 166, 255, 0.3);
+  color: var(--accent-blue);
+}
+
+.btn-icon-tmux:not([hidden]):hover {
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
 /* =============================================================================
    TABS
    ============================================================================= */
