@@ -4233,6 +4233,10 @@ class TerminalManager {
     // Use saved workspace info if available, otherwise create new
     let workspaceId;
     let tabNum;
+    const restoredCwd =
+      typeof savedSession?.cwd === "string" && savedSession.cwd
+        ? savedSession.cwd
+        : cwd;
 
     if (savedSession?.workspaceId) {
       // Restore from saved session
@@ -4365,7 +4369,7 @@ class TerminalManager {
       sizeWarning,
       debugOverlay,
       dimensionTimer: null,
-      cwd,
+      cwd: restoredCwd,
       busy: false,
       ports: [],
       isWorktree: false,
@@ -4388,9 +4392,9 @@ class TerminalManager {
     );
 
     // Register with session registry for future reconnection
-    this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
+    this.sessionRegistry.register(id, { workspaceId, cwd: restoredCwd, tabNum });
 
-    this.addTab(id, cwd, tabNum, workspaceId);
+    this.addTab(id, restoredCwd, tabNum, workspaceId);
     this.queueTelemetryRefresh(0);
     this.switchTo(id);
     this.attachResizeObserver(id);

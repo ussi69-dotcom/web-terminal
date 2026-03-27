@@ -242,4 +242,73 @@ test.describe("Workspace telemetry contract", () => {
     });
     expect(finalState.title).toContain(clientCwd);
   });
+
+  test("saved client-side cwd survives page reload reconnect", async ({
+    page,
+  }) => {
+    await page.goto(BASE_URL);
+    await waitForTerminal(page);
+
+    const clientCwd = `/tmp/deckterm-reload-cwd-${Date.now()}`;
+    const expectedLabel = path.basename(clientCwd);
+
+    const workspaceContext = await page.evaluate((nextCwd) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const activeId = tm?.activeId ?? null;
+      const active = tm?.terminals?.get(activeId);
+      const workspaceId = active?.workspaceId ?? null;
+
+      if (!activeId || !workspaceId || !active) {
+        return null;
+      }
+
+      active.cwd = nextCwd;
+      tm.sessionRegistry.update(activeId, { cwd: nextCwd });
+      tm.updateWorkspaceLabel(workspaceId, nextCwd);
+
+      return { activeId, workspaceId };
+    }, clientCwd);
+
+    expect(workspaceContext).toBeTruthy();
+
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await waitForTerminal(page);
+
+    const tabSelector = `.tab[data-workspace-id="${workspaceContext?.workspaceId}"]`;
+    await expect(page.locator(`${tabSelector} .tab-label`)).toHaveText(
+      expectedLabel,
+    );
+    await expect(page.locator(tabSelector)).toHaveAttribute(
+      "title",
+      new RegExp(clientCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+
+    const restoredState = await page.evaluate(
+      ({ activeId, workspaceId }) => {
+        // @ts-ignore
+        const tm = window.terminalManager;
+        const active = tm?.terminals?.get(activeId);
+        const tab = document.querySelector(
+          `.tab[data-workspace-id="${workspaceId}"]`,
+        );
+        return {
+          terminalCwd: active?.cwd ?? null,
+          sessionCwd: tm?.sessionRegistry?.get(activeId)?.cwd ?? null,
+          label:
+            tab?.querySelector(".tab-label")?.textContent?.trim() || null,
+          title: tab?.getAttribute("title") || null,
+        };
+      },
+      workspaceContext!,
+    );
+
+    expect(restoredState).toMatchObject({
+      terminalCwd: clientCwd,
+      sessionCwd: clientCwd,
+      label: expectedLabel,
+    });
+    expect(restoredState.title).toContain(clientCwd);
+  });
 });
