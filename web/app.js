@@ -3862,7 +3862,9 @@ class TerminalManager {
           terminal.ports = normalizeWorkspacePorts(next.ports);
           terminal.isWorktree = Boolean(next.isWorktree);
           terminal.backendMode = next.backendMode || null;
-          if (typeof next.cwd === "string" && next.cwd) {
+          const hasClientCwd =
+            typeof terminal.cwd === "string" && terminal.cwd.trim().length > 0;
+          if (!hasClientCwd && typeof next.cwd === "string" && next.cwd) {
             terminal.cwd = next.cwd;
             this.sessionRegistry.update(id, { cwd: next.cwd });
           }
