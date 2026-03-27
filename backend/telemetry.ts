@@ -62,13 +62,20 @@ export async function getTerminalTelemetry(
     !hasDistinctActivity &&
     ageMs <= BUSY_BOOTSTRAP_WINDOW_MS &&
     terminal.scrollback.length > 0;
+  let isWorktree = false;
+
+  if (options.detectWorktree) {
+    try {
+      isWorktree = await options.detectWorktree(terminal.cwd);
+    } catch {
+      isWorktree = false;
+    }
+  }
 
   return {
     busy: hasRecentActivity || hasRecentBootstrapOutput,
     ports: extractPortsFromScrollback(terminal.scrollback),
-    isWorktree: options.detectWorktree
-      ? await options.detectWorktree(terminal.cwd)
-      : false,
+    isWorktree,
     backendMode,
   };
 }
