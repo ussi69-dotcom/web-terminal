@@ -11,6 +11,12 @@ const PALETTE = [
   "#a371f7",
 ];
 
+const SIGNAL_PRIORITIES = {
+  busy: 1,
+  ports: 2,
+  worktree: 3,
+};
+
 function hashCwdToColor(cwd) {
   const input = cwd || "terminal";
   let hash = 2166136261;
@@ -43,20 +49,76 @@ function hexToRgba(hex, alpha = 1) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function normalizePorts(ports) {
+  if (!Array.isArray(ports)) return [];
+  return [...new Set(
+    ports
+      .map((port) => Number(port))
+      .filter((port) => Number.isInteger(port) && port > 0),
+  )].sort((left, right) => left - right);
+}
+
+function getWorkspaceSignalDescriptors({ busy = false, ports = [], isWorktree = false } = {}) {
+  const descriptors = [];
+  if (busy) {
+    descriptors.push({
+      key: "busy",
+      label: "Busy",
+      priority: SIGNAL_PRIORITIES.busy,
+    });
+  }
+
+  const normalizedPorts = normalizePorts(ports);
+  if (normalizedPorts.length > 0) {
+    descriptors.push({
+      key: `ports:${normalizedPorts.join(",")}`,
+      label: `Ports ${normalizedPorts.join(", ")}`,
+      priority: SIGNAL_PRIORITIES.ports,
+    });
+  }
+
+  if (isWorktree) {
+    descriptors.push({
+      key: "worktree",
+      label: "Worktree",
+      priority: SIGNAL_PRIORITIES.worktree,
+    });
+  }
+
+  return descriptors;
+}
+
+function getPrimaryWorkspaceSignal({ busy = false, ports = [], isWorktree = false, cwd } = {}) {
+  return {
+    color: hashCwdToColor(cwd),
+    primarySignal: getWorkspaceSignalDescriptors({ busy, ports, isWorktree })[0] || null,
+  };
+}
+
 if (typeof window !== "undefined") {
   window.TerminalColors = {
     hashCwdToColor,
     blendWorkspaceColors,
     hexToRgba,
+    getWorkspaceSignalDescriptors,
+    getPrimaryWorkspaceSignal,
   };
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { hashCwdToColor, blendWorkspaceColors, hexToRgba };
+  module.exports = {
+    hashCwdToColor,
+    blendWorkspaceColors,
+    hexToRgba,
+    getWorkspaceSignalDescriptors,
+    getPrimaryWorkspaceSignal,
+  };
 }
 
 if (typeof exports !== "undefined") {
   exports.hashCwdToColor = hashCwdToColor;
   exports.blendWorkspaceColors = blendWorkspaceColors;
   exports.hexToRgba = hexToRgba;
+  exports.getWorkspaceSignalDescriptors = getWorkspaceSignalDescriptors;
+  exports.getPrimaryWorkspaceSignal = getPrimaryWorkspaceSignal;
 }
