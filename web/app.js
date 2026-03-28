@@ -4162,6 +4162,14 @@ class TerminalManager {
         e.preventDefault();
         this.switchToNext(e.shiftKey ? -1 : 1);
       }
+      if (e.altKey && e.shiftKey && e.key === "ArrowRight") {
+        e.preventDefault();
+        this.switchToNext(1);
+      }
+      if (e.altKey && e.shiftKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        this.switchToNext(-1);
+      }
       if (e.ctrlKey && e.key === "f") {
         e.preventDefault();
         this.toggleSearch();
@@ -5347,6 +5355,9 @@ class TerminalManager {
     tab.dataset.id = id;
     tab.dataset.workspaceId = workspaceId;
     tab.dataset.index = tabNum % 9 || 9;
+    tab.tabIndex = 0;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", "false");
 
     const label = this.formatCwdLabel(cwd);
     tab.innerHTML = `
@@ -5367,6 +5378,23 @@ class TerminalManager {
       if (e.target.closest(".tab-close")) return;
       const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
       if (targetId) this.switchTo(targetId);
+    });
+    tab.addEventListener("keydown", (e) => {
+      if (e.target.closest(".tab-close")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
+        if (targetId) this.switchTo(targetId);
+      }
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const tabs = Array.from(this.tabs.querySelectorAll(".tab"));
+        const currentIndex = tabs.indexOf(tab);
+        if (currentIndex === -1 || tabs.length <= 1) return;
+        const direction = e.key === "ArrowRight" ? 1 : -1;
+        const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+        tabs[nextIndex]?.focus();
+      }
     });
 
     let pointerStart = null;
@@ -5556,10 +5584,9 @@ class TerminalManager {
     // Highlight tab by workspaceId (works for multi-terminal workspaces)
     const activeWorkspaceId = t?.workspaceId;
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
-      tab.classList.toggle(
-        "active",
-        tab.dataset.workspaceId === activeWorkspaceId,
-      );
+      const isActive = tab.dataset.workspaceId === activeWorkspaceId;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
     });
 
     const active = this.terminals.get(id);

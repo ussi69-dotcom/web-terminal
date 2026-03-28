@@ -37,7 +37,12 @@
             <span class="btn-label">New</span>
           </button>
 
-          <div id="terminals-tabs" class="tabs"></div>
+          <div
+            id="terminals-tabs"
+            class="tabs"
+            role="tablist"
+            aria-label="Workspace tabs"
+          ></div>
 
           <span id="connection-status" class="status-dot" title="Connected">●</span>
         </div>
@@ -283,6 +288,7 @@
                 <tr><td><kbd>Ctrl</kbd> + <kbd>N</kbd></td><td>New workspace tab</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>W</kbd></td><td>Close current workspace</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>Tab</kbd></td><td>Next tab</td></tr>
+                <tr><td><kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>←</kbd>/<kbd>→</kbd></td><td>Previous/next tab</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>1-9</kbd></td><td>Switch to tab number</td></tr>
                 <tr><td>Drag tab → tab</td><td>Merge workspaces</td></tr>
               </table>
