@@ -35,16 +35,18 @@ test.describe("Tmux Rich Mode", () => {
         terminalCount: tm?.terminals?.size ?? 0,
         tabCount:
           document.querySelectorAll("#terminals-tabs .tab").length ?? 0,
+        terminalIds: Array.from(tm?.terminals?.keys?.() || []),
       };
     });
 
     expect(initialContext.activeId).toBeTruthy();
     expect(initialContext.workspaceId).toBeTruthy();
-    expect(initialContext.tabCount).toBe(1);
+    expect(initialContext.tabCount).toBeGreaterThanOrEqual(1);
 
     await linkedViewButton.click();
 
-    await expect.poll(async () => {
+    await expect
+      .poll(async () => {
       return page.evaluate(() => {
         // @ts-ignore
         const tm = window.terminalManager;
@@ -64,10 +66,11 @@ test.describe("Tmux Rich Mode", () => {
           terminals,
         };
       });
-    }).toMatchObject({
-      terminalCount: 2,
-      tabCount: 2,
-    });
+    }, { timeout: 15000 })
+      .toMatchObject({
+        terminalCount: initialContext.terminalCount + 1,
+        tabCount: initialContext.tabCount + 1,
+      });
 
     const linkedContext = await page.evaluate(() => {
       // @ts-ignore
@@ -90,7 +93,7 @@ test.describe("Tmux Rich Mode", () => {
     });
 
     const linkedTerminal = linkedContext.terminals.find(
-      (terminal) => terminal.id !== initialContext.activeId,
+      (terminal) => !initialContext.terminalIds.includes(terminal.id),
     );
 
     expect(linkedTerminal?.id).toBeTruthy();

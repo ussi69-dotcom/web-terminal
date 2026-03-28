@@ -545,7 +545,11 @@ async function killTmuxSessionIfLast(
 
   debug(`[tmux] Killing session ${sessionName}`);
   const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName]);
-  await killProc.exited;
+  const exitCode = await killProc.exited;
+  if (exitCode !== 0) {
+    debug(`[tmux] kill-session returned ${exitCode} for ${sessionName}`);
+    return false;
+  }
   return true;
 }
 
@@ -1023,12 +1027,12 @@ export function createWebApp() {
       return c.json({ error: "Forbidden" }, 403);
     }
 
-    await killTmuxSessionIfLast(term.sessionName, id);
+    closeTerminalSockets(id);
+    removeTerminalState(id);
+    await killTmuxSessionIfLast(term.sessionName);
 
     term.proc.kill();
     term.terminal.close();
-    closeTerminalSockets(id);
-    removeTerminalState(id);
     return c.json({ ok: true });
   });
 
@@ -2157,8 +2161,10 @@ export async function startWebServer(host: string, port: number) {
           }
         }
 
+        closeTerminalSockets(id);
+        removeTerminalState(id);
         try {
-          await killTmuxSessionIfLast(term.sessionName, id);
+          await killTmuxSessionIfLast(term.sessionName);
         } catch (err) {
           if (term.sessionName) {
             debug(`[cleanup] tmux kill-session error for ${id}:`, err);
@@ -2171,8 +2177,6 @@ export async function startWebServer(host: string, port: number) {
         } catch (err) {
           debug(`Cleanup error for ${id}:`, err);
         }
-        closeTerminalSockets(id);
-        removeTerminalState(id);
       }
     }
   };
