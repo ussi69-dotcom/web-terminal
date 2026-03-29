@@ -1695,13 +1695,11 @@ class ExtraKeysManager {
   }
 
   refocusTerminal() {
-    const active = this.tm.terminals.get(this.tm.activeId);
     dbg("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
-    if (active?.terminal) {
-      // MUST use terminal.focus() so xterm.js processes input correctly
-      active.terminal.focus();
-      dbg("[ExtraKeys] terminal.focus() called");
-    }
+    this.tm.focusTerminal(this.tm.activeId, {
+      syncSize: false,
+      scrollToPrompt: platformDetector.hasTouch,
+    });
   }
 
   loadVisibilityState() {
@@ -3595,7 +3593,6 @@ class TerminalManager {
     this.draggingTabId = null;
     this.draggingWorkspaceId = null;
     this.workspaceLastActive = new Map(); // workspaceId -> terminalId
-    this.tabDragThresholdPx = 6;
     this.resizeDebounceMs = 80;
     this.debugMode = false;
 
@@ -3700,6 +3697,56 @@ class TerminalManager {
 
     // Check for existing terminals
     this.checkExistingTerminals();
+  }
+
+  getTerminalTextarea(terminalState) {
+    return terminalState?.element?.querySelector(".xterm-helper-textarea");
+  }
+
+  getTerminalViewport(terminalState) {
+    return terminalState?.element?.querySelector(".xterm-viewport");
+  }
+
+  focusTerminal(
+    id,
+    { syncSize = false, scrollToPrompt = false, ensureVisible = true } = {},
+  ) {
+    const terminalState = this.terminals.get(id);
+    if (!terminalState?.terminal) return;
+
+    if (ensureVisible) {
+      this.tileManager.ensureTileVisible(id);
+    }
+
+    terminalState.terminal.focus();
+
+    const syncPromptVisibility = () => {
+      const textarea = this.getTerminalTextarea(terminalState);
+      textarea?.focus?.({ preventScroll: true });
+
+      if (scrollToPrompt) {
+        terminalState.terminal.scrollToBottom();
+        const viewport = this.getTerminalViewport(terminalState);
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      }
+    };
+
+    syncPromptVisibility();
+
+    requestAnimationFrame(() => {
+      syncPromptVisibility();
+    });
+
+    if (scrollToPrompt) {
+      setTimeout(syncPromptVisibility, 32);
+    }
+
+    if (syncSize) {
+      terminalState.fitAddon?.fit();
+      this.syncTerminalSize(id);
+    }
   }
 
   setupToolbarActions() {
@@ -5003,29 +5050,15 @@ class TerminalManager {
       if (targetId) this.switchTo(targetId);
     });
 
-    let pointerStart = null;
-    tab.addEventListener("pointerdown", (e) => {
-      pointerStart = { x: e.clientX, y: e.clientY };
-    });
-
     // Drag and drop for merging workspaces
     tab.draggable = true;
     tab.addEventListener("dragstart", (e) => {
-      if (pointerStart) {
-        const dx = e.clientX - pointerStart.x;
-        const dy = e.clientY - pointerStart.y;
-        if (Math.hypot(dx, dy) < this.tabDragThresholdPx) {
-          e.preventDefault();
-          return;
-        }
-      }
       e.dataTransfer.setData("text/plain", workspaceId);
       tab.classList.add("dragging");
       this.draggingTabId = id;
       this.draggingWorkspaceId = workspaceId;
     });
     tab.addEventListener("dragend", () => {
-      pointerStart = null;
       tab.classList.remove("dragging");
       this.draggingTabId = null;
       this.draggingWorkspaceId = null;
@@ -5264,9 +5297,10 @@ class TerminalManager {
 
     const active = this.terminals.get(id);
     if (active) {
-      active.fitAddon.fit();
-      active.terminal.focus();
-      this.syncTerminalSize(id);
+      this.focusTerminal(id, {
+        syncSize: true,
+        scrollToPrompt: platformDetector.hasTouch,
+      });
       this.updateConnectionStatus(
         active.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected",
       );
@@ -5398,8 +5432,10 @@ class TerminalManager {
     const active = this.terminals.get(this.activeId);
     if (active) {
       setTimeout(() => {
-        active.fitAddon.fit();
-        this.syncTerminalSize(this.activeId);
+        this.focusTerminal(this.activeId, {
+          syncSize: true,
+          scrollToPrompt: isKeyboardOpen || platformDetector.hasTouch,
+        });
       }, 50);
     }
   }
@@ -5416,8 +5452,7 @@ class TerminalManager {
     const active = this.terminals.get(this.activeId);
     if (!active?.ws) return;
     try {
-      const text = await navigator.clipboard.readText();
-      active.ws.send(JSON.stringify({ type: "input", data: text }));
+      await this.clipboardManager.handlePaste(active.ws);
     } catch (err) {
       console.error("Paste failed:", err);
     }

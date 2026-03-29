@@ -378,6 +378,11 @@ async function getAllowedRealRoots(): Promise<string[]> {
   return roots;
 }
 
+async function getDefaultBrowseRoot(): Promise<string> {
+  const roots = await getAllowedRealRoots();
+  return roots[0] || DEFAULT_ALLOWED_ROOT;
+}
+
 function isWithinAllowedRoots(pathValue: string, roots: string[]): boolean {
   return roots.some(
     (root) => pathValue === root || pathValue.startsWith(`${root}/`),
@@ -1003,13 +1008,12 @@ export function createWebApp() {
     const includeFiles = c.req.query("files") === "true";
     const fs = await import("fs/promises");
     const pathModule = await import("path");
-    const path = await resolveAllowedPath(requestedPath);
-    if (!path) {
-      return c.json({ error: "Forbidden path" }, 403);
-    }
+    const fallbackPath = await getDefaultBrowseRoot();
+    let path = (await resolveAllowedPath(requestedPath)) || fallbackPath;
+    let fellBack = path === fallbackPath && requestedPath !== fallbackPath;
 
-    try {
-      const entries = await fs.readdir(path, { withFileTypes: true });
+    const readDirectory = async (targetPath: string) => {
+      const entries = await fs.readdir(targetPath, { withFileTypes: true });
       const dirs = entries
         .filter((e) => e.isDirectory() && !e.name.startsWith("."))
         .map((e) => e.name)
@@ -1019,7 +1023,8 @@ export function createWebApp() {
         path: string;
         dirs: string[];
         files?: { name: string; size: number }[];
-      } = { path, dirs };
+        fallback?: boolean;
+      } = { path: targetPath, dirs };
 
       if (includeFiles) {
         const fileEntries = entries.filter(
@@ -1028,7 +1033,7 @@ export function createWebApp() {
         const files = await Promise.all(
           fileEntries.map(async (e) => {
             try {
-              const stat = await fs.stat(pathModule.join(path, e.name));
+              const stat = await fs.stat(pathModule.join(targetPath, e.name));
               return { name: e.name, size: stat.size };
             } catch {
               return { name: e.name, size: 0 };
@@ -1038,8 +1043,25 @@ export function createWebApp() {
         result.files = files.sort((a, b) => a.name.localeCompare(b.name));
       }
 
-      return c.json(result);
+      if (fellBack) {
+        result.fallback = true;
+      }
+
+      return result;
+    };
+
+    try {
+      return c.json(await readDirectory(path));
     } catch {
+      if (path !== fallbackPath) {
+        path = fallbackPath;
+        fellBack = true;
+        try {
+          return c.json(await readDirectory(path));
+        } catch {
+          // Fall through to the generic error below.
+        }
+      }
       return c.json({ error: "Cannot read directory" }, 400);
     }
   });
@@ -1651,6 +1673,9 @@ export function createWebApp() {
     "image/jpeg",
     "image/gif",
     "image/webp",
+    "image/avif",
+    "image/heic",
+    "image/heif",
   ];
 
   app.post("/api/clipboard/image", async (c) => {
@@ -1692,6 +1717,12 @@ export function createWebApp() {
           extension = "gif";
         } else if (file.type.includes("webp")) {
           extension = "webp";
+        } else if (file.type.includes("avif")) {
+          extension = "avif";
+        } else if (file.type.includes("heic")) {
+          extension = "heic";
+        } else if (file.type.includes("heif")) {
+          extension = "heif";
         }
       } else {
         // Raw image data in body
@@ -1713,6 +1744,12 @@ export function createWebApp() {
           extension = "gif";
         } else if (contentType.includes("webp")) {
           extension = "webp";
+        } else if (contentType.includes("avif")) {
+          extension = "avif";
+        } else if (contentType.includes("heic")) {
+          extension = "heic";
+        } else if (contentType.includes("heif")) {
+          extension = "heif";
         }
       }
 

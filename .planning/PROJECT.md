@@ -1,90 +1,95 @@
-# DeckTerm - Major Refactor v2.0
+# DeckTerm Upgrade
 
-> Web-based terminal emulator with tmux persistence, optimized for agent-driven development workflows on dedicated servers with Cloudflare tunnels.
+> Versioned upgrade workstream for evolving DeckTerm from a capable web terminal into a sharper agent-oriented terminal platform.
 
-## Vision
+## Project summary
 
-DeckTerm is a **multi-functional web terminal** designed for developers working on remote servers. The v2.0 refactor focuses on:
+DeckTerm already provides a strong web terminal foundation: PTY sessions, tmux-backed persistence, reconnect, mobile extra keys, file management, Git tooling, clipboard flows, and Cloudflare Access protection. This upgrade workstream focuses on closing the gap between that broad feature set and the tighter terminal ergonomics demonstrated by `gmux`.
 
-1. **Seamless session persistence** - close browser, reopen, same state
-2. **Proper terminal scaling** - content fills the entire window
-3. **Modern clipboard handling** - Ctrl+V paste, auto-copy on selection, image support
-4. **Platform-aware UI** - desktop vs mobile optimizations
+The intent is not to turn DeckTerm into a tmux dotfiles repo or replace the browser UI. The intent is to import the highest-signal ideas:
 
-## Goals
+- visible workspace activity state
+- live dev-server/port awareness
+- explicit worktree cues
+- richer tmux-backed workflows when `TMUX_BACKEND=1`
+- lower cognitive load in the codebase and in the tab UX
 
-### Primary
+## Problem and users
 
-- **Fast session reconnection** - under 500ms to restore existing tmux session
-- **Full-window terminal rendering** - no gaps, proper scaling on resize
-- **Native clipboard experience** - Ctrl+V, selection auto-copy, image paste to Claude Code
+### Primary users
 
-### Secondary
+- developers working on remote Linux servers through a browser
+- AI-assisted coding users running Codex / Claude / OpenCode inside terminal sessions
+- desktop-first users who want quick situational awareness across multiple workspaces
+- mobile users who still need safe, usable terminal interaction from a phone or tablet
 
-- **Session lifecycle management** - auto-cleanup orphaned sessions
-- **Platform-adaptive UI** - hide extra keys on desktop, show on mobile with virtual keyboard
-- **Ghostty-inspired UX** - tab search, activity indicators, sensible defaults
+### Core problems
 
-## Non-Goals (Out of Scope for v2.0)
+- DeckTerm exposes many capabilities, but workspace tabs do not yet surface enough runtime state
+- tmux is used mostly as a persistence backend, not yet as a first-class upgrade path
+- frontend and backend orchestration around sessions and workspace UI is concentrated in large files
+- there is no clear upgrade path for bringing `gmux`-style signals into the web experience without overfitting to Ghostty or local-only workflows
 
-- GPU-accelerated rendering (WebGL) - overkill for current use case
-- Kitty graphics protocol - nice-to-have but not priority
-- Multi-user collaboration - single-user focus for now
-- Native app wrapper - web-only
+## v1 scope
 
-## Tech Stack
+For this upgrade cycle, "v1 scope" means the first shippable increment of the upgrade workstream:
 
-| Component           | Technology                | Notes                   |
-| ------------------- | ------------------------- | ----------------------- |
-| Runtime             | Bun 1.3.5+                | Native PTY API required |
-| Backend             | Hono                      | Lightweight, fast       |
-| Frontend            | Vanilla JS + xterm.js 5.x | No framework overhead   |
-| Session Persistence | tmux                      | Server-side state       |
-| Auth                | Cloudflare Access JWT     | Zero-trust              |
+- add workspace/tab signals for:
+  - busy agent activity
+  - active dev-server ports
+  - worktree status
+  - clearer cwd/workspace identity
+- add tmux-rich actions behind `TMUX_BACKEND=1`
+  - at least one of: linked view, save/restore hooks, richer session actions
+- improve keyboard/workspace ergonomics without colliding with browser limitations
+- extract session/telemetry responsibilities into smaller modules where it reduces risk
+- expand verification for reconnect/activity/tmux-backed behavior on dev port `4174`
 
-## Success Criteria
+## Out of scope
 
-- [ ] Session reconnect < 500ms (measure with performance API)
-- [ ] Terminal content fills 100% of tile area (no gaps)
-- [ ] Ctrl+V pastes from system clipboard
-- [ ] Selection auto-copies to clipboard (with visual feedback)
-- [ ] Extra keys bar hidden on desktop, visible on mobile with virtual keyboard
-- [ ] Orphaned sessions cleaned up within 30 minutes of window close
-- [ ] All existing features remain functional (regression test)
+- replacing DeckTerm with tmux or Ghostty
+- browser-native emulation of every Ghostty shortcut
+- modifying `web/vendor/`
+- redesigning Cloudflare Access, filesystem allowlists, or Git/file security model
+- native desktop wrapper
+- multi-user collaboration features
 
-## Key Pain Points Being Addressed
+## Constraints
 
-| Issue            | Current State             | Target State            |
-| ---------------- | ------------------------- | ----------------------- |
-| Slow reconnect   | 2-5 seconds               | < 500ms                 |
-| Content gaps     | Empty space below content | Full window coverage    |
-| Clipboard paste  | Right-click menu only     | Ctrl+V works            |
-| Selection copy   | Manual button             | Auto-copy on select     |
-| Extra keys on PC | Always visible            | Hidden on desktop       |
-| Session cleanup  | Manual                    | Auto after window close |
+- runtime remains Bun with Hono backend and vanilla JS frontend
+- existing security controls must stay intact:
+  - Cloudflare Access support
+  - trusted origins logic
+  - filesystem allowlist validation
+  - owner isolation for terminals
+- tests must run against development on port `4174`, never production `4173`
+- `TMUX_BACKEND` remains optional; raw PTY mode must keep working
+- changes should bias toward incremental upgrades over large rewrites
 
-## Research References
+## Success criteria
 
-- **Codebase analysis**: `docs/research/2026-01-18-codebase-analysis.md`
-- **Ghostty research**: `docs/research/2026-01-18-ghostty-comparison.md`
-- **UI issues screenshot**: `/home/deploy/deckterm/deckterm_dev.jpg`
+- workspace tabs expose enough signal that a user can quickly identify:
+  - which workspace is busy
+  - which workspace is serving a dev app
+  - which workspace is a git worktree
+- `TMUX_BACKEND=1` gains at least one materially better user workflow beyond hidden persistence
+- reconnect behavior does not regress in raw PTY or tmux-backed mode
+- telemetry refresh feels responsive without introducing obvious polling overhead
+- session/telemetry code is easier to reason about than the current monolithic shape
+- verification covers the new signals and tmux-rich flows
 
-## Architecture Decisions
+## Verification expectations
 
-### AD-001: Tmux as Session Backend
+- keep `bun run test:unit` passing
+- add targeted Playwright coverage for workspace signals and tmux-backed session behavior
+- smoke test health and terminal flows on `http://localhost:4174`
+- explicitly verify both:
+  - raw PTY mode
+  - `TMUX_BACKEND=1` mode for the upgraded features
 
-- **Decision**: Keep tmux for session persistence
-- **Rationale**: Already implemented, reliable, proven
-- **Trade-off**: Adds complexity but provides robust session survival
+## Notes and open questions
 
-### AD-002: Platform Detection Strategy
-
-- **Decision**: Use `window.visualViewport` + touch detection + screen width
-- **Rationale**: More reliable than user agent parsing
-- **Implementation**: Show extra keys when virtual keyboard detected OR screen < 768px
-
-### AD-003: Clipboard API Strategy
-
-- **Decision**: Use Clipboard API with OSC52 fallback
-- **Rationale**: Modern browsers support it, OSC52 for TUI tools
-- **Security**: Clipboard confirmation for automated writes (Ghostty-inspired)
+- how much tmux richness belongs in the web UI versus remaining a CLI-only benefit
+- whether live port detection should come from a polling backend service, tmux hooks, or both
+- whether linked session UX should map to a browser-side concept or a true tmux linked session
+- whether busy-state detection should rely on process heuristics, terminal output markers, or a hybrid

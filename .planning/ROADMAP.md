@@ -1,218 +1,104 @@
-# DeckTerm v2.0 Refactor Roadmap
+# DeckTerm Upgrade Roadmap
 
-## Milestone: Session & UI Overhaul (v2.0)
+## Phase Table
 
-| Phase | Name                 | Description                                          | Status       |
-| ----- | -------------------- | ---------------------------------------------------- | ------------ |
-| 1     | Terminal Scaling Fix | Fix content not filling window, remove gaps          | **COMPLETE** |
-| 2     | Platform-Adaptive UI | Hide extra keys on desktop, improve mobile detection | **COMPLETE** |
-| 3     | Clipboard Overhaul   | Ctrl+V paste, auto-copy selection, image support     | **COMPLETE** |
-| 4     | Session Lifecycle    | Fast reconnect, auto-cleanup orphaned sessions       | pending      |
-| 5     | Polish & Testing     | Regression tests, performance benchmarks             | pending      |
+| Phase | Name                               | Description                                                  | Status     |
+| ----- | ---------------------------------- | ------------------------------------------------------------ | ---------- |
+| 1     | Workspace Signals & Telemetry      | Busy, port, worktree, and identity signals in tabs/workspaces | PLAN READY |
+| 2     | Tmux-Rich Session Mode             | First-class tmux-backed workflows beyond persistence         | pending    |
+| 3     | Keyboard & Workspace Ergonomics    | Browser-safe shortcuts, tab affordances, lower-friction UX   | pending    |
+| 4     | Module Decomposition & Hardening   | Extract session/telemetry logic from large files             | pending    |
+| 5     | Verification, Perf, Release Readiness | Regression coverage, performance checks, rollout prep     | pending    |
 
----
+## Deliverables Per Phase
 
-## Phase Details
+### Phase 1: Workspace Signals & Telemetry
 
-### Phase 1: Terminal Scaling Fix
+- backend metadata contract for workspace/terminal status
+- busy indicator for AI-active workspaces
+- live port/dev-server indicator
+- worktree detection that does not rely on naive path heuristics
+- updated tab styling/tooltips for richer situational awareness
+- focused tests for signal rendering and reconnect compatibility
 
-**Goal:** Terminal content fills 100% of available tile area with no gaps
+### Phase 2: Tmux-Rich Session Mode
 
-**Problem Analysis:**
+- explicit `TMUX_BACKEND` capabilities surfaced in DeckTerm
+- at least one of:
+  - linked session action
+  - save/restore session command path
+  - richer tmux session action menu
+- backend guardrails so tmux-only features degrade cleanly in raw PTY mode
+- smoke coverage for tmux-specific flows
 
-- Screenshot shows gap between terminal content and tmux status bar
-- xterm.js `fit` addon may not account for tmux bar height
-- ResizeObserver might not trigger correctly on all resize events
+### Phase 3: Keyboard & Workspace Ergonomics
 
-**Deliverables:**
+- shortcut review against browser conflicts
+- improved tab affordances for workspace state
+- lower-noise default UI for desktop while preserving mobile usability
+- stronger mapping between workspace identity and runtime state
 
-- [x] Diagnose exact cause of content gap (measure actual vs expected rows)
-- [x] Fix xterm.js fit calculation to account for all UI elements
-- [x] Ensure resize works on: window resize, tile resize, split change
-- [x] Remove/hide tmux status bar OR account for its height in calculations
-- [x] Test on multiple screen sizes (mobile, tablet, desktop)
-- [x] Add dimension overlay on resize (Ghostty-style)
-- [x] Add debug overlay (Ctrl+Alt+D)
-- [x] Add Playwright test suite (22 tests)
+### Phase 4: Module Decomposition & Hardening
 
-**Key Files:**
+- extract telemetry/session responsibilities from `backend/server.ts`
+- extract workspace signal/tab logic from `web/app.js`
+- preserve current behavior while shrinking blast radius for future work
+- document new module boundaries
 
-- `web/app.js` - ResizeObserver, fit logic (lines ~2953-3060)
-- `web/styles.css` - container heights, flexbox layout
-- `backend/server.ts` - PTY resize handling
+### Phase 5: Verification, Perf, Release Readiness
 
-**Success Metric:** Visual inspection - no gaps on any screen size
+- expanded Playwright coverage on port `4174`
+- unit coverage for status/color/worktree utilities
+- manual validation matrix for raw PTY and tmux-backed modes
+- README / planning docs refreshed for the upgrade state
+- concise go/no-go checklist for rollout
 
----
+## Dependencies and Sequencing
 
-### Phase 2: Platform-Adaptive UI
+1. Phase 1 first.
+Reason: it delivers the highest-value `gmux` inspiration with the lowest product risk.
 
-**Goal:** Extra keys bar hidden on desktop, visible on mobile only when needed
+2. Phase 2 after Phase 1 metadata exists.
+Reason: tmux-rich features should consume the same status model rather than create a parallel one.
 
-**Problem Analysis:**
+3. Phase 3 can overlap late Phase 2 work once tab/workspace metadata is stable.
 
-- Extra keys bar (ESC, TAB, CTRL, etc.) always visible
-- On desktop, this wastes vertical space
-- On mobile, should appear with virtual keyboard
+4. Phase 4 follows after the new behavior exists and can be extracted safely.
 
-**Deliverables:**
+5. Phase 5 closes the workstream after behavior and structure settle.
 
-- [x] Implement reliable platform detection (not just user-agent)
-  - `window.visualViewport` for keyboard detection
-  - `'ontouchstart' in window` for touch capability
-  - Screen width threshold (< 768px = mobile)
-- [x] Hide extra keys bar on desktop by default
-- [x] Show extra keys bar on mobile when virtual keyboard appears
-- [x] Add toggle button for manual show/hide on desktop (power users)
-- [x] Ensure keyboard shortcuts still work on desktop
+## Approval Points
 
-**Key Files:**
+- after Phase 1: confirm telemetry model and tab UX before adding deeper tmux behavior
+- before Phase 2 ships: confirm which tmux workflows belong in the browser UI
+- before Phase 4 large extractions: confirm acceptable refactor scope versus feature momentum
+- before release/readiness signoff: confirm rollout posture for raw PTY and tmux-backed environments
 
-- `web/app.js` - ExtraKeysManager (lines 1227-1350)
-- `web/index.html` - extra keys bar HTML
-- `web/styles.css` - responsive CSS
+## Risks By Phase
 
-**Success Metric:** Extra keys hidden on desktop browser, visible on mobile with keyboard
+### Phase 1
 
----
+- false positives or stale status for busy/port indicators
+- polling overhead if metadata collection is too aggressive
+- visual clutter if tab signals are too dense
 
-### Phase 3: Clipboard Overhaul
+### Phase 2
 
-**Goal:** Native clipboard experience - Ctrl+V, auto-copy, image support
+- tmux-only behavior diverging too far from raw PTY mode
+- session lifecycle regressions during richer tmux interactions
+- complexity from mixing browser concepts with tmux-native semantics
 
-**Deliverables:**
+### Phase 3
 
-#### 3a: Ctrl+V Paste
+- browser shortcut conflicts, especially on macOS
+- accidental regression for mobile controls while optimizing desktop UX
 
-- [x] Intercept `Ctrl+V` / `Cmd+V` keydown on terminal
-- [x] Read from `navigator.clipboard.readText()`
-- [x] Send text to PTY via WebSocket
-- [x] Handle permission denied gracefully (show paste button)
+### Phase 4
 
-#### 3b: Auto-Copy on Selection
+- refactor churn in large files
+- hidden coupling between reconnect, telemetry, and input handling
 
-- [x] Listen to xterm.js `onSelectionChange` event
-- [x] When selection exists, copy to clipboard automatically
-- [x] Show brief visual feedback (toast: "Copied")
-- [x] Debounce to avoid spam on mouse drag
+### Phase 5
 
-#### 3c: Image Clipboard (for Claude Code)
-
-- [x] Detect `Ctrl+V` with image data in clipboard
-- [x] Convert image to base64 or upload to server
-- [x] Send image path/data to active terminal (if Claude Code running)
-- [x] Fallback: show "Image paste not supported in this context"
-
-#### 3d: OSC52 Enhancement
-
-- [x] Keep existing OSC52 support for TUI tools
-- [x] Add confirmation dialog for automated clipboard writes (Ghostty-inspired)
-- [x] Allow "always allow" preference per session
-
-**Key Files:**
-
-- `web/app.js` - ClipboardManager (lines 1634-1830)
-- `web/app.js` - Terminal keydown handlers
-
-**Success Metric:** Ctrl+V pastes text, selection auto-copies, image paste shows feedback
-
----
-
-### Phase 4: Session Lifecycle
-
-**Goal:** Fast reconnect (< 500ms), auto-cleanup orphaned sessions
-
-**Deliverables:**
-
-#### 4a: Fast Reconnect
-
-- [ ] Profile current reconnect time, identify bottlenecks
-- [ ] Pre-fetch terminal list on page load (parallel with DOM ready)
-- [ ] Optimize tmux attach command (remove unnecessary flags)
-- [ ] Cache session metadata server-side for instant restore
-- [ ] Add performance timing logs
-
-#### 4b: Session Cleanup
-
-- [ ] Track "window closed" vs "browser closed" vs "navigated away"
-- [ ] Send `beforeunload` beacon to mark session as "pending cleanup"
-- [ ] Server: mark session as "orphaned" if no reconnect within 30 minutes
-- [ ] Server: cleanup orphaned tmux sessions in background job
-- [ ] Allow manual "keep session" option for intentional detach
-
-#### 4c: Session State Display
-
-- [ ] Show reconnection progress indicator
-- [ ] Display session age/last activity in tab
-- [ ] Warn before closing terminal with running process
-
-**Key Files:**
-
-- `backend/server.ts` - recoverTmuxSessions, cleanup job
-- `web/app.js` - SessionRegistry, reconnect logic
-
-**Success Metric:** Reconnect < 500ms, orphaned sessions cleaned within 30 min
-
----
-
-### Phase 5: Polish & Testing
-
-**Goal:** Ensure quality, no regressions, document changes
-
-**Deliverables:**
-
-- [ ] Create E2E tests with Playwright
-  - Terminal create/close
-  - Resize behavior
-  - Clipboard operations
-  - Session reconnect
-- [ ] Performance benchmarks
-  - Reconnect time
-  - Scroll performance (10k lines)
-  - Keystroke latency
-- [ ] Update README with new features
-- [ ] Update AGENTS.md if architecture changed
-- [ ] Create user-facing changelog
-
-**Key Files:**
-
-- `tests/` - new test files
-- `README.md` - documentation
-- `docs/` - technical documentation
-
-**Success Metric:** All tests pass, no regressions, docs updated
-
----
-
-## Dependencies Between Phases
-
-```
-Phase 1 (Scaling) ──┐
-                    ├──► Phase 5 (Testing)
-Phase 2 (Platform) ─┤
-                    │
-Phase 3 (Clipboard) ┤
-                    │
-Phase 4 (Sessions) ─┘
-```
-
-Phases 1-4 can be worked on in parallel. Phase 5 requires all others to be complete.
-
----
-
-## Risk Assessment
-
-| Risk                                 | Likelihood | Impact | Mitigation                      |
-| ------------------------------------ | ---------- | ------ | ------------------------------- |
-| xterm.js fit addon limitations       | Medium     | High   | May need custom fit calculation |
-| Clipboard API browser differences    | High       | Medium | Graceful fallback to buttons    |
-| Tmux session recovery edge cases     | Medium     | High   | Extensive testing, logging      |
-| Mobile keyboard detection unreliable | High       | Low    | Manual toggle as fallback       |
-
----
-
-## Notes
-
-- All changes on `deckterm_dev` environment first
-- Test each phase before merging to production
-- Keep backward compatibility with existing sessions
+- flaky tmux-backed E2E coverage
+- incomplete verification across both backend modes

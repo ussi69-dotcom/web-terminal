@@ -1,4 +1,4 @@
-# STATE.md - DeckTerm
+# STATE.md - DeckTerm Upgrade
 
 > Living memory across sessions. Update after each significant work block.
 
@@ -6,136 +6,85 @@
 
 ## Current Focus
 
-**Phase:** Lazygit-inspired Git Panel
+**Phase:** 1 - Workspace Signals & Telemetry
 **Status:** PLAN READY
-**Last Updated:** 2026-01-20 19:50
+**Mode:** autonomous-kickoff
+**Last Updated:** 2026-03-27 22:17 UTC
 
-**Active Plan:** `docs/plans/2026-01-20-lazygit-git-panel.md`
-**Design Doc:** `docs/plans/2026-01-20-lazygit-git-panel-design.md`
+**Active Plan:** `docs/plans/2026-03-27-upgrade.md`
+**Worktree:** `/home/deploy/deckterm`
+**Design Doc:** `docs/plans/2026-03-27-upgrade-design.md`
 
 ## What's Done
 
-### Previous Milestone: Terminal UI Stability (v1.x) - COMPLETE
-
-- [x] Task 0: Worktree + baseline setup
-- [x] Task 1: Diagnostika (root-cause evidence) - `35b127a`
-- [x] Task 2: Workspace-scoped relayout - `fb4a6a7`
-- [x] Task 3: Resize pipeline (per-tile, debounced) - `d4e33e7`
-- [x] Task 4: Horizontal overflow strategy - `a4375d6`
-- [x] Task 5: Tab colors from cwd with gradient - `accc9c9`
-- [x] Task 6: Memory leak cleanup - `88983f9`
-- [x] Task 7: Backend resize sync - `b193bd9`
-- [x] Task 8: Research doc - `ddd5c3a`
-
-**Post-plan fixes:**
-
-- [x] Fix terminal-colors ESM export for browser - `2a86587`, `51517ea`
-- [x] Fix RAM calculation (MemAvailable) - `5733ff5`, `adcda52`
-- [x] Tab label/colors via OSC 7 cwd - `0cafd79`
-- [x] Gateway execute_job implementation - `54fdf1e`
-
-### Current Milestone: v2.0 Refactor
-
-- [x] Project kickoff - codebase analysis
-- [x] Ghostty research for feature inspiration
-- [x] Screenshot analysis (UI issues identified)
-- [x] PROJECT.md created
-- [x] ROADMAP.md created with 5 phases
-- [x] Phase 1: Terminal Scaling Fix - COMPLETE (7 commits, 22 tests passing)
-- [ ] Phase 2: Platform-Adaptive UI
-- [ ] Phase 3: Clipboard Overhaul
-- [ ] Phase 4: Session Lifecycle
-- [ ] Phase 5: Polish & Testing
+- [x] Existing DeckTerm baseline established
+  - web PTY terminal
+  - reconnect + scrollback replay
+  - optional tmux backend persistence
+  - file manager
+  - Git panel
+  - clipboard + OSC52 flows
+  - OpenCode integration
+  - Cloudflare Access support
+- [x] Previous v2.x planning/history preserved in repo docs and commits
+- [x] Comparative research against `gmux` completed
+- [x] Upgrade workstream versioned and named `upgrade`
+- [x] Upgrade design doc written
+- [x] Upgrade implementation plan written
 
 ## What's In Progress
 
-- [ ] Phase 2: Platform-Adaptive UI (next)
+- [ ] Phase 1 implementation has not started yet
+- [ ] Final choice of tmux-rich feature set for Phase 2 remains open
 
 ## Decisions Made
 
-| Decision                              | Rationale                                    | Date       |
-| ------------------------------------- | -------------------------------------------- | ---------- |
-| Per-tile ResizeObserver               | Better than global resize for multi-terminal | 2026-01-12 |
-| Sticky cols for horizontal overflow   | xterm.js lacks native h-scroll               | 2026-01-12 |
-| FNV-1a hash for cwd colors            | Stable, fast, deterministic                  | 2026-01-12 |
-| Keep tmux backend                     | Already implemented, reliable persistence    | 2026-01-18 |
-| Platform detection via visualViewport | More reliable than user-agent                | 2026-01-18 |
-| Clipboard API + OSC52 fallback        | Modern browsers + TUI compatibility          | 2026-01-18 |
-| Extra keys hidden on desktop          | Saves vertical space, keyboard shortcuts OK  | 2026-01-18 |
-| 30-min orphan cleanup                 | Balance between persistence and cleanup      | 2026-01-18 |
+| Decision | Rationale | Date |
+| --- | --- | --- |
+| Treat this as an upgrade adaptation, not a fresh kickoff | Repo already has significant code and existing autonomous memory | 2026-03-27 |
+| Name the new workstream `upgrade` | User explicitly requested versioning under this name | 2026-03-27 |
+| Use hybrid browser-first telemetry with optional tmux enrichments | Preserves DeckTerm strengths while importing the best of `gmux` | 2026-03-27 |
+| Keep DeckTerm as a web-first product | `gmux` is inspiration, not a product replacement path | 2026-03-27 |
+| Detect worktrees via Git data, not path substring heuristics | More reliable than matching `_worktrees/` in paths | 2026-03-27 |
+| Preserve both raw PTY and tmux-backed operation | tmux remains optional in current architecture | 2026-03-27 |
 
 ## Blockers & Open Questions
 
-1. **xterm.js fit addon**: May need custom calculation if addon doesn't account for tmux bar
-2. **Image clipboard to Claude Code**: Need to research how Claude Code accepts image input
-3. **Mobile keyboard detection**: `visualViewport` API coverage on older Android
+1. Busy-state signal source:
+Should this come from process heuristics, terminal output markers, or both?
+
+2. Port detection architecture:
+Should we poll from the backend, mirror `gmux`-style process-tree detection, or reuse tmux-side data when available?
+
+3. Tmux-rich browser UX:
+Should linked sessions appear as browser-level workspaces, true tmux linked sessions, or both?
+
+4. Refactor boundaries:
+How much extraction from `web/app.js` / `backend/server.ts` is safe in the same cycle as feature work?
 
 ## Context for Next Session
 
-> v2.0 Refactor planning complete. Ready to start Phase 1 (Terminal Scaling Fix).
-> Key issue: terminal content doesn't fill window (visible in screenshot).
-
-```
-Plan file: .planning/ROADMAP.md
-Current task: Phase 1 - Terminal Scaling Fix
-Next step: Diagnose exact cause of content gap
-Key files: web/app.js (ResizeObserver), web/styles.css, backend/server.ts
-Watch out for: tmux status bar height, xterm.js fit addon behavior
-```
-
-**To resume:** `cd /home/deploy/deckterm_dev && claude` then run `/discuss-phase 1`
-
-## Phase Roadmap Reference
-
-| Phase | Name                 | Status   |
-| ----- | -------------------- | -------- |
-| 1     | Terminal Scaling Fix | COMPLETE |
-| 2     | Platform-Adaptive UI | pending  |
-| 3     | Clipboard Overhaul   | pending  |
-| 4     | Session Lifecycle    | pending  |
-| 5     | Polish & Testing     | pending  |
+Plan file: `docs/plans/2026-03-27-upgrade.md`
+Current task: Phase 1 kickoff - codify workspace metadata contract and first failing tests
+Next step: implement the backend/frontend telemetry seam without regressing reconnect behavior
+Key files: `backend/server.ts`, `web/app.js`, `web/styles.css`, `web/terminal-colors.js`, `web/terminal-colors.test.js`, `tests/`
+Watch out for: `TMUX_BACKEND` parity, polling overhead, browser shortcut conflicts, existing auth/path guardrails
 
 ---
 
 ## Session Log
 
-### 2026-01-18 (Phase 1 Complete + Infrastructure Fix)
+### 2026-03-27
 
-- Completed: Phase 1 Terminal Scaling Fix (7 commits)
-  - d459950: hide tmux status bar
-  - b537b26: dimension overlay (Ghostty-style)
-  - f63e4e1: minimum 80x24 size warning
-  - 4ae579e: debug overlay (Ctrl+Alt+D)
-  - fa3d2ab: resize debounce 80ms
-  - 6eb5acc: hide status bar for recovered sessions
-  - b964d92: Playwright test suite (22 tests)
-- Fixed: Port configuration (tests were hitting prod 4173 instead of dev 4174)
-- Added: Systemd services for both environments
-- Added: CLAUDE.md with port/environment documentation
-- Tests: 22/22 passing on port 4174
+- Reviewed current DeckTerm implementation and planning state
+- Researched `OndrejDrapalik/gmux` directly from the live repository
+- Compared DeckTerm strengths versus `gmux`
+- Selected upgrade direction:
+  - import runtime signals and tmux-rich ideas
+  - avoid copying Ghostty-local assumptions into the browser product
+- Rebased autonomous planning memory onto the new `upgrade` workstream
 
-### 2026-01-18 (Refactor Kickoff)
+### Historical Note
 
-- Started: v2.0 refactor planning
-- Completed: Codebase analysis, Ghostty research, screenshot review
-- Created: PROJECT.md, ROADMAP.md (5 phases)
-- Key findings:
-  - Terminal content gaps due to fit/resize issues
-  - Extra keys bar visible on desktop (should hide)
-  - Clipboard needs Ctrl+V, auto-copy, image support
-  - Session reconnect slow, needs optimization
-- Next: Start Phase 1 implementation
-
-### 2026-01-12 - 2026-01-18 (Previous)
-
-- Completed: Terminal UI Stability plan (8 tasks)
-- Completed: Post-plan bug fixes (ESM, RAM, OSC 7)
-- Completed: Gateway execute_job implementation
-- Status: All stable, ready for v2.0 refactor
-
-### 2026-01-12
-
-- Started: Terminal UI stability implementation
-- Completed: Tasks 0-8 (all plan tasks)
-- Issues: None significant
-- Next: Plan complete
+- Earlier v2.0 planning artifacts and execution history remain part of repo history and existing docs.
+- This state file is now the source of truth for the `upgrade` workstream.
