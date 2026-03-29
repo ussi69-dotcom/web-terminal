@@ -98,6 +98,48 @@ test.describe("Mobile regressions", () => {
     expect(visuals.composition.opacity).toBe("0");
   });
 
+  test("touch beforeinput commits text without mutating helper textarea", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      const textarea = active?.element?.querySelector(".xterm-helper-textarea");
+      if (!active || !textarea) {
+        return { error: "missing-terminal" };
+      }
+
+      const sent = [];
+      const originalSend = active.ws.send.bind(active.ws);
+      active.ws.send = (payload) => {
+        sent.push(JSON.parse(payload));
+        return originalSend(payload);
+      };
+
+      textarea.value = "";
+      const event = new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: "x",
+      });
+      textarea.dispatchEvent(event);
+
+      active.ws.send = originalSend;
+
+      return {
+        defaultPrevented: event.defaultPrevented,
+        textareaValue: textarea.value,
+        lastSent: sent.at(-1) || null,
+      };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.textareaValue).toBe("");
+    expect(result.lastSent).toEqual({ type: "input", data: "x" });
+  });
+
   test("reselecting the active mobile terminal restores prompt visibility", async ({
     page,
   }) => {

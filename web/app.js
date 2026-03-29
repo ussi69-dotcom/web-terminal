@@ -4731,6 +4731,38 @@ class TerminalManager {
     let lastCompositionCommitAt = 0;
     let lastCompositionCommitData = "";
 
+    const sendCommittedData = (source, inputType, data, e) => {
+      if (!data) {
+        return false;
+      }
+
+      // Mark that fallback is handling this input BEFORE sending
+      // This prevents onData from double-processing the same input
+      if (inputState) {
+        inputState.lastFallbackAt = performance.now();
+        inputState.lastFallbackData = data;
+      }
+
+      const finalData = this.applyExtraKeyModifiers(data);
+      ws.send(JSON.stringify({ type: "input", data: finalData }));
+
+      if (DEBUG) {
+        dbg("[ExtraKeys] mobile input fallback:", {
+          source,
+          inputType,
+          composed: e?.composed,
+          data,
+          finalData,
+        });
+      }
+
+      textarea.value = "";
+      lastValue = "";
+      lastCompositionCommitAt = performance.now();
+      lastCompositionCommitData = data;
+      return true;
+    };
+
     const commitTextareaValue = (source, e) => {
       // Debug: direct DOM update
       const dbg = document.getElementById("modifier-debug");
@@ -4763,30 +4795,7 @@ class TerminalManager {
         return;
       }
 
-      // Mark that fallback is handling this input BEFORE sending
-      // This prevents onData from double-processing the same input
-      if (inputState) {
-        inputState.lastFallbackAt = performance.now();
-        inputState.lastFallbackData = data;
-      }
-
-      const finalData = this.applyExtraKeyModifiers(data);
-      ws.send(JSON.stringify({ type: "input", data: finalData }));
-
-      if (DEBUG) {
-        dbg("[ExtraKeys] mobile input fallback:", {
-          source,
-          inputType,
-          composed: e?.composed,
-          data,
-          finalData,
-        });
-      }
-
-      textarea.value = "";
-      lastValue = "";
-      lastCompositionCommitAt = performance.now();
-      lastCompositionCommitData = data;
+      sendCommittedData(source, inputType, data, e);
     };
     const handler = (e) => {
       if (DEBUG) {
@@ -4853,6 +4862,23 @@ class TerminalManager {
           value: textarea.value,
         });
       }
+
+      if (!platformDetector.hasTouch || !e || e.isComposing) {
+        return;
+      }
+
+      const inputType = e.inputType || "";
+      if (inputType !== "insertText" && inputType !== "insertReplacementText") {
+        return;
+      }
+
+      const data = typeof e.data === "string" ? e.data : "";
+      if (!data) {
+        return;
+      }
+
+      e.preventDefault();
+      sendCommittedData("beforeinput", inputType, data, e);
     };
 
     const compositionStartHandler = compositionHandler("start");
