@@ -191,15 +191,23 @@ class ReconnectingWebSocket {
     this.heartbeatInterval = null;
     this.heartbeatTimeout = null;
     this.intentionallyClosed = false;
+    this.openedOnce = false;
+    this.awaitingReconnectReady = false;
     this.connect();
   }
 
   connect() {
+    const isReconnectTransport = this.openedOnce || this.retryCount > 0;
     this.ws = new WebSocket(this.url);
     this.ws.onopen = () => {
       this.retryCount = 0;
       this.startHeartbeat();
-      this.callbacks.onStatusChange("connected");
+      this.openedOnce = true;
+      this.awaitingReconnectReady = isReconnectTransport;
+      this.callbacks.onTransportOpen?.(isReconnectTransport);
+      if (!isReconnectTransport) {
+        this.callbacks.onStatusChange("connected");
+      }
     };
     this.ws.onmessage = (e) => {
       try {
@@ -212,14 +220,24 @@ class ReconnectingWebSocket {
           this.clearHeartbeatTimeout();
           return;
         }
+        if (data.type === "reconnect_lifecycle") {
+          this.callbacks.onLifecycle?.(data);
+          if (data.phase === "ready" && this.awaitingReconnectReady) {
+            this.awaitingReconnectReady = false;
+            this.callbacks.onStatusChange("connected", { resumed: true });
+          }
+          return;
+        }
         if (data.type === "exit") {
           this.callbacks.onStatusChange("exited", data.code);
           this.intentionallyClosed = true;
+          this.awaitingReconnectReady = false;
           return;
         }
         if (data.type === "terminal_dead") {
           this.callbacks.onStatusChange("dead");
           this.intentionallyClosed = true;
+          this.awaitingReconnectReady = false;
           return;
         }
       } catch {}
@@ -2337,55 +2355,86 @@ class ClipboardManager {
   }
 
   // Handle Ctrl+V paste with size warning and image support
-  async handlePaste(terminalWs) {
+  async handlePaste(terminalWs, clipboardData = null) {
+    if (clipboardData) {
+      const handled = await this.handleClipboardDataTransfer(
+        clipboardData,
+        terminalWs,
+      );
+      if (handled) return;
+    }
+
     try {
       const clipboardItems = await navigator.clipboard.read();
-
-      for (const item of clipboardItems) {
-        // Check for image types first
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          await this.handleImagePaste(blob, terminalWs);
-          return;
-        }
-
-        // Handle text
-        if (item.types.includes("text/plain")) {
-          const blob = await item.getType("text/plain");
-          const text = await blob.text();
-
-          if (!text) continue;
-
-          const sizeBytes = new Blob([text]).size;
-          const sizeKB = sizeBytes / 1024;
-
-          if (sizeKB > 5) {
-            this.showPasteConfirmation(text, sizeBytes, terminalWs);
-          } else {
-            this.executePaste(text, terminalWs);
-          }
-          return;
-        }
-      }
+      if (await this.handleClipboardItems(clipboardItems, terminalWs)) return;
     } catch (err) {
       // Fallback for browsers that don't support clipboard.read()
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          const sizeBytes = new Blob([text]).size;
-          const sizeKB = sizeBytes / 1024;
-
-          if (sizeKB > 5) {
-            this.showPasteConfirmation(text, sizeBytes, terminalWs);
-          } else {
-            this.executePaste(text, terminalWs);
-          }
+          this.handleTextPaste(text, terminalWs);
+          return;
         }
       } catch (readErr) {
         console.error("Clipboard read failed:", readErr);
         this.showToast("Clipboard access denied. Use paste button.", "error");
       }
+    }
+  }
+
+  async handleClipboardItems(clipboardItems, terminalWs) {
+    for (const item of clipboardItems) {
+      const imageType = item.types.find((t) => t.startsWith("image/"));
+      if (imageType) {
+        const blob = await item.getType(imageType);
+        await this.handleImagePaste(blob, terminalWs);
+        return true;
+      }
+
+      if (item.types.includes("text/plain")) {
+        const blob = await item.getType("text/plain");
+        const text = await blob.text();
+        if (!text) continue;
+        this.handleTextPaste(text, terminalWs);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async handleClipboardDataTransfer(clipboardData, terminalWs) {
+    if (!clipboardData) return false;
+
+    const items = Array.from(clipboardData.items || []);
+    const imageItem = items.find(
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
+    );
+    if (imageItem) {
+      const file = imageItem.getAsFile?.();
+      if (file) {
+        await this.handleImagePaste(file, terminalWs);
+        return true;
+      }
+    }
+
+    const text = clipboardData.getData?.("text/plain");
+    if (text) {
+      this.handleTextPaste(text, terminalWs);
+      return true;
+    }
+
+    return false;
+  }
+
+  handleTextPaste(text, terminalWs) {
+    const sizeBytes = new Blob([text]).size;
+    const sizeKB = sizeBytes / 1024;
+
+    if (sizeKB > 5) {
+      this.showPasteConfirmation(text, sizeBytes, terminalWs);
+    } else {
+      this.executePaste(text, terminalWs);
     }
   }
 
@@ -3595,6 +3644,10 @@ class TerminalManager {
     this.workspaceLastActive = new Map(); // workspaceId -> terminalId
     this.resizeDebounceMs = 80;
     this.debugMode = false;
+    this.bootstrapPromise = null;
+    this.bootstrapPending = false;
+    this.viewportSyncFrame = 0;
+    this.viewportFocusTimer = null;
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3682,11 +3735,7 @@ class TerminalManager {
     });
 
     // Virtual keyboard detection
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", () =>
-        this.handleViewportResize(),
-      );
-    }
+    this.setupViewportResizeHandling();
 
     // Initialize sub-managers
     this.extraKeys = new ExtraKeysManager(this);
@@ -3696,7 +3745,56 @@ class TerminalManager {
     this.setupMobileSwipe();
 
     // Check for existing terminals
-    this.checkExistingTerminals();
+    this.startBootstrap();
+  }
+
+  startBootstrap() {
+    if (this.bootstrapPromise) return this.bootstrapPromise;
+
+    window.__decktermBootstrapReady = false;
+    this.setBootstrapPending(true);
+
+    this.bootstrapPromise = (async () => {
+      try {
+        await this.checkExistingTerminals();
+      } finally {
+        this.setBootstrapPending(false);
+        window.__decktermBootstrapReady = true;
+      }
+    })();
+
+    window.__decktermBootstrapPromise = this.bootstrapPromise;
+    return this.bootstrapPromise;
+  }
+
+  async waitForBootstrap() {
+    await (this.bootstrapPromise || Promise.resolve());
+  }
+
+  setBootstrapPending(isPending) {
+    this.bootstrapPending = isPending;
+    document.body.dataset.bootstrapState = isPending ? "pending" : "ready";
+    const newButton = document.getElementById("new-terminal");
+    if (newButton) newButton.disabled = isPending;
+  }
+
+  setupViewportResizeHandling() {
+    if (!window.visualViewport) return;
+
+    const scheduleViewportSync = () => {
+      if (this.viewportSyncFrame) return;
+      this.viewportSyncFrame = requestAnimationFrame(() => {
+        this.viewportSyncFrame = 0;
+        this.handleViewportResize();
+      });
+    };
+
+    const viewport = window.visualViewport;
+    viewport.addEventListener("resize", scheduleViewportSync);
+    viewport.addEventListener("scroll", scheduleViewportSync);
+    if ("onscrollend" in viewport) {
+      viewport.addEventListener("scrollend", scheduleViewportSync);
+    }
   }
 
   getTerminalTextarea(terminalState) {
@@ -3993,7 +4091,7 @@ class TerminalManager {
     } catch (err) {
       console.error("Failed to check existing terminals:", err);
     }
-    this.createTerminal();
+    await this.createTerminal(false, { skipBootstrapWait: true });
   }
 
   async reconnectToTerminal(id, cwd, savedSession = null) {
@@ -4079,6 +4177,10 @@ class TerminalManager {
         dbg(`[reconnect] Status change for ${id}: ${status}`, extra);
         this.handleStatusChange(id, status, extra);
       },
+      onLifecycle: (message) => {
+        dbg(`[reconnect] Lifecycle for ${id}: ${message.phase}`, message);
+        this.handleReconnectLifecycle(id, message);
+      },
     });
 
     const inputState = {
@@ -4116,6 +4218,7 @@ class TerminalManager {
       element,
       inputState,
     );
+    const pasteFallbackCleanup = this.attachClipboardPasteFallback(ws, element);
     dbg("[ExtraKeys] attachMobileInputFallback (reconnect)", {
       id,
       attached: !!inputFallbackCleanup,
@@ -4137,12 +4240,17 @@ class TerminalManager {
       resizeObserver: null,
       resizeTimer: null,
       preferredCols: 0,
+      lastSentCols: null,
+      lastSentRows: null,
+      fitFrame: 0,
       onDataDisposable,
       osc7Disposable,
       inputFallbackCleanup,
+      pasteFallbackCleanup,
       inputState,
       hasConnected: false, // Track if WebSocket has ever successfully connected
       isReconnection: true, // Mark this as a reconnection scenario
+      awaitingReconnectReady: false,
     });
 
     dbg(
@@ -4446,6 +4554,26 @@ class TerminalManager {
     };
   }
 
+  attachClipboardPasteFallback(ws, element) {
+    if (!ws || !element) return null;
+
+    const textarea = element.querySelector(".xterm-helper-textarea");
+    if (!textarea) return null;
+
+    const pasteHandler = (event) => {
+      if (!event.clipboardData) return;
+      event.preventDefault();
+      this.clipboardManager.handlePaste(ws, event.clipboardData).catch((err) => {
+        console.error("Clipboard paste fallback failed:", err);
+      });
+    };
+
+    textarea.addEventListener("paste", pasteHandler, true);
+    return () => {
+      textarea.removeEventListener("paste", pasteHandler, true);
+    };
+  }
+
   createXtermInstance() {
     const terminal = new Terminal({
       theme: {
@@ -4628,58 +4756,15 @@ class TerminalManager {
         dbg(`[reconnect] Terminal ${id} marked as hasConnected=true`);
       }
 
-      if (t && t.fitAddon && t.terminal && t.ws) {
-        dbg(
-          `[reconnect] WebSocket connected for ${id}, syncing size and forcing refresh...`,
-        );
-        requestAnimationFrame(() => {
-          try {
-            t.fitAddon.fit();
-            const cols = t.terminal.cols;
-            const rows = t.terminal.rows;
-            // Send resize to trigger SIGWINCH on server
-            t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-            dbg(`[reconnect] Sent resize ${cols}x${rows} for ${id}`);
-
-            // Force xterm.js to refresh the viewport after a delay
-            // This ensures any data received is properly rendered
-            setTimeout(() => {
-              try {
-                t.terminal.refresh(0, t.terminal.rows - 1);
-                dbg(`[reconnect] Forced xterm refresh for ${id}`);
-              } catch (e) {
-                console.warn(`[reconnect] xterm refresh failed for ${id}:`, e);
-              }
-            }, 500);
-
-            // Additional refresh after SIGWINCH sequence completes (server sends 3 cycles over ~2.5s)
-            setTimeout(() => {
-              try {
-                t.terminal.refresh(0, t.terminal.rows - 1);
-                dbg(
-                  `[reconnect] Second xterm refresh for ${id} (post-SIGWINCH)`,
-                );
-              } catch (e) {
-                console.warn(
-                  `[reconnect] Second xterm refresh failed for ${id}:`,
-                  e,
-                );
-              }
-            }, 3000);
-          } catch (e) {
-            console.warn(`[resize] Failed initial sync for ${id}:`, e);
-          }
-        });
+      if (t?.awaitingReconnectReady) {
+        dbg(`[reconnect] Transport connected for ${id}, waiting for ready`);
+        return;
       }
-    }
 
-    // Only show "reconnecting" if we haven't successfully connected yet
-    // This prevents status flickering from rapid connect/disconnect cycles
-    if (status === "reconnecting" && t?.hasConnected) {
-      dbg(
-        `[reconnect] Ignoring reconnecting status for ${id} (already connected once)`,
-      );
-      return; // Don't update tab to reconnecting if we've already connected
+      this.performReconnectLayoutSync(id, {
+        forceResize: true,
+        scrollToPrompt: platformDetector.hasTouch,
+      });
     }
 
     const tab = this.tabs.querySelector(`[data-id="${id}"]`);
@@ -4706,6 +4791,59 @@ class TerminalManager {
 
   retryConnection(id) {
     this.terminals.get(id)?.ws?.retry();
+  }
+
+  performReconnectLayoutSync(
+    id,
+    { forceResize = false, scrollToPrompt = false } = {},
+  ) {
+    const t = this.terminals.get(id);
+    if (!t?.fitAddon || !t?.terminal) return;
+
+    requestAnimationFrame(() => {
+      try {
+        t.fitAddon.fit();
+        this.sendResize(id, t.terminal.cols, t.terminal.rows, {
+          force: forceResize,
+        });
+        t.terminal.refresh(0, Math.max(0, t.terminal.rows - 1));
+        if (scrollToPrompt) {
+          t.terminal.scrollToBottom();
+          const viewport = this.getTerminalViewport(t);
+          if (viewport) viewport.scrollTop = viewport.scrollHeight;
+        }
+      } catch (err) {
+        console.warn(`[reconnect] Layout sync failed for ${id}:`, err);
+      }
+    });
+  }
+
+  handleReconnectLifecycle(id, message) {
+    const t = this.terminals.get(id);
+    if (!t) return;
+
+    if (message.phase === "replay-start") {
+      t.awaitingReconnectReady = true;
+      return;
+    }
+
+    if (message.phase === "replay-complete") {
+      this.performReconnectLayoutSync(id, {
+        forceResize: true,
+        scrollToPrompt: platformDetector.hasTouch,
+      });
+      t.ws?.send(JSON.stringify({ type: "resume-ready" }));
+      return;
+    }
+
+    if (message.phase === "ready") {
+      t.awaitingReconnectReady = false;
+      this.focusTerminal(id, {
+        syncSize: false,
+        scrollToPrompt: platformDetector.hasTouch,
+        ensureVisible: false,
+      });
+    }
   }
 
   scheduleResize(id) {
@@ -4814,7 +4952,9 @@ class TerminalManager {
 
     const observer = new ResizeObserver(() => {
       if (!t.element || t.element.offsetParent === null) return;
-      requestAnimationFrame(() => {
+      if (t.fitFrame) return;
+      t.fitFrame = requestAnimationFrame(() => {
+        t.fitFrame = 0;
         try {
           t.fitAddon.fit();
 
@@ -4851,7 +4991,12 @@ class TerminalManager {
   }
 
   // Create a new terminal in a new workspace (split=false) or current workspace (split=true)
-  async createTerminal(split = false) {
+  async createTerminal(split = false, options = {}) {
+    const { skipBootstrapWait = false } = options;
+    if (!skipBootstrapWait) {
+      await this.waitForBootstrap();
+    }
+
     const cwd = this.directoryInput?.value.trim() || undefined;
 
     try {
@@ -4929,6 +5074,7 @@ class TerminalManager {
           onMessage: (data) => terminal.write(data),
           onStatusChange: (status, extra) =>
             this.handleStatusChange(id, status, extra),
+          onLifecycle: (message) => this.handleReconnectLifecycle(id, message),
         },
       );
 
@@ -4972,6 +5118,10 @@ class TerminalManager {
         element,
         inputState,
       );
+      const pasteFallbackCleanup = this.attachClipboardPasteFallback(
+        ws,
+        element,
+      );
       dbg("[ExtraKeys] attachMobileInputFallback (create)", {
         id,
         attached: !!inputFallbackCleanup,
@@ -4995,10 +5145,15 @@ class TerminalManager {
         resizeObserver: null,
         resizeTimer: null,
         preferredCols: 0,
+        lastSentCols: null,
+        lastSentRows: null,
+        fitFrame: 0,
         onDataDisposable,
         osc7Disposable,
         inputFallbackCleanup,
+        pasteFallbackCleanup,
         inputState,
+        awaitingReconnectReady: false,
       });
 
       // Register with session registry for reconnection persistence
@@ -5330,9 +5485,11 @@ class TerminalManager {
 
     t.ws?.close();
     t.inputFallbackCleanup?.();
+    t.pasteFallbackCleanup?.();
     if (t.resizeObserver) t.resizeObserver.disconnect();
     if (t.resizeTimer) clearTimeout(t.resizeTimer);
     if (t.dimensionTimer) clearTimeout(t.dimensionTimer);
+    if (t.fitFrame) cancelAnimationFrame(t.fitFrame);
     t.onDataDisposable?.dispose?.();
     t.osc7Disposable?.dispose?.();
     try {
@@ -5374,11 +5531,17 @@ class TerminalManager {
     }
   }
 
-  sendResize(id, colsOverride = null, rowsOverride = null) {
+  sendResize(id, colsOverride = null, rowsOverride = null, options = {}) {
     const t = this.terminals.get(id);
     if (!t?.ws) return;
+    const { force = false } = options;
     const cols = colsOverride ?? t.terminal.cols;
     const rows = rowsOverride ?? t.terminal.rows;
+    if (!force && t.lastSentCols === cols && t.lastSentRows === rows) {
+      return;
+    }
+    t.lastSentCols = cols;
+    t.lastSentRows = rows;
     t.ws.send(JSON.stringify({ type: "resize", cols, rows }));
   }
 
@@ -5431,12 +5594,13 @@ class TerminalManager {
 
     const active = this.terminals.get(this.activeId);
     if (active) {
-      setTimeout(() => {
+      if (this.viewportFocusTimer) clearTimeout(this.viewportFocusTimer);
+      this.viewportFocusTimer = setTimeout(() => {
         this.focusTerminal(this.activeId, {
           syncSize: true,
           scrollToPrompt: isKeyboardOpen || platformDetector.hasTouch,
         });
-      }, 50);
+      }, isKeyboardOpen ? 50 : 0);
     }
   }
 

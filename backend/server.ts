@@ -132,7 +132,46 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
+const socketReconnectState = new WeakMap<
+  ServerWebSocket<WsData>,
+  { pendingReady: boolean }
+>();
 const utf8Decoder = new TextDecoder();
+
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function sendReconnectLifecycle(
+  ws: ServerWebSocket<WsData>,
+  phase: "replay-start" | "replay-complete" | "ready",
+  extra: Record<string, unknown> = {},
+) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "reconnect_lifecycle", phase, ...extra }));
+}
+
+async function finalizeReconnectReady(
+  ws: ServerWebSocket<WsData>,
+  terminalId: string,
+  term: Terminal,
+) {
+  if (TMUX_BACKEND) {
+    sendReconnectLifecycle(ws, "ready");
+    return;
+  }
+
+  try {
+    const originalCols = term.cols;
+    const originalRows = term.rows;
+    term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
+    await sleep(120);
+    term.terminal.resize(originalCols, originalRows);
+  } catch (err) {
+    debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
+  } finally {
+    sendReconnectLifecycle(ws, "ready");
+  }
+}
 
 const openCodeCircuit = {
   failures: 0,
@@ -1916,6 +1955,7 @@ export async function startWebServer(host: string, port: number) {
         const socketsCount = sockets.size;
         const isReconnect = term.hadSocketConnection;
         term.hadSocketConnection = true;
+        socketReconnectState.set(ws, { pendingReady: isReconnect });
 
         console.log(
           `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), sockets: ${socketsCount}, reconnect: ${isReconnect}`,
@@ -1936,6 +1976,8 @@ export async function startWebServer(host: string, port: number) {
 
           (async () => {
             let replayed = false;
+
+            sendReconnectLifecycle(ws, "replay-start");
 
             if (TMUX_BACKEND && term.sessionName) {
               try {
@@ -1973,25 +2015,9 @@ export async function startWebServer(host: string, port: number) {
               replayBufferFallback();
             }
 
-            if (!TMUX_BACKEND) {
-              // Trigger a redraw for TUIs after scrollback replay.
-              setTimeout(() => {
-                try {
-                  const originalCols = term.cols;
-                  const originalRows = term.rows;
-                  term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
-                  setTimeout(() => {
-                    try {
-                      term.terminal.resize(originalCols, originalRows);
-                    } catch (err) {
-                      debug(`[reconnect] restore resize failed for ${terminalId}`, err);
-                    }
-                  }, 200);
-                } catch (err) {
-                  debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
-                }
-              }, 200);
-            }
+            sendReconnectLifecycle(ws, "replay-complete", {
+              requiresRedraw: !TMUX_BACKEND,
+            });
           })();
         }
       },
@@ -2046,6 +2072,13 @@ export async function startWebServer(host: string, port: number) {
                 }
                 return;
               }
+              if (parsed.type === "resume-ready") {
+                const reconnectState = socketReconnectState.get(ws);
+                if (!reconnectState?.pendingReady) return;
+                reconnectState.pendingReady = false;
+                void finalizeReconnectReady(ws, terminalId, term);
+                return;
+              }
             } catch {
               debug(`Raw input ${terminalId}`);
               term.lastActivityAt = Date.now();
@@ -2072,6 +2105,7 @@ export async function startWebServer(host: string, port: number) {
 
       close(ws: ServerWebSocket<WsData>) {
         const data = ws.data;
+        socketReconnectState.delete(ws);
 
         if (data.type === "opencode_proxy") {
           try {

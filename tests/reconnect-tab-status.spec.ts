@@ -67,6 +67,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
       return tab ? tab.className : "TAB_NOT_FOUND";
     }, terminalId);
     console.log(`Tab classes during reconnect: ${reconnectingTabClass}`);
+    expect(reconnectingTabClass).toContain("reconnecting");
 
     await page.screenshot({
       path: "test-results/tab-02-during-reconnect.png",

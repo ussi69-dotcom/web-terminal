@@ -32,6 +32,15 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     timeout: 5000,
   });
 
+  await page
+    .evaluate(async () => {
+      const pendingBootstrap = (window as any).__decktermBootstrapPromise;
+      if (pendingBootstrap) {
+        await pendingBootstrap.catch(() => {});
+      }
+    })
+    .catch(() => {});
+
   let hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
 
   if (!hasTerminal) {
@@ -62,6 +71,12 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
   // Wait for terminal to be actually connected (cursor visible or content rendered)
   await page.waitForFunction(
     () => {
+      const tm = (window as any).terminalManager;
+      const active = tm?.terminals?.get?.(tm?.activeId);
+      if (active?.ws?.readyState === WebSocket.OPEN && active?.terminal) {
+        return true;
+      }
+
       // Check if any terminal has a cursor (sign of active connection)
       const cursor = document.querySelector(".xterm-cursor-layer canvas");
       if (cursor) return true;
