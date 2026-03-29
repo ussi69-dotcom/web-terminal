@@ -805,6 +805,10 @@ class PlatformDetector {
 
 const platformDetector = new PlatformDetector();
 
+function syncInteractionModeClasses() {
+  document.body.classList.toggle("touch-input-mode", platformDetector.hasTouch);
+}
+
 // =============================================================================
 // TILE MANAGER - Smart tiling window manager
 // =============================================================================
@@ -6073,6 +6077,9 @@ function initLucideIcons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  syncInteractionModeClasses();
+  platformDetector.onChange(() => syncInteractionModeClasses());
+
   document
     .getElementById("debug-panel-close")
     ?.addEventListener("click", () => {

@@ -57,6 +57,47 @@ test.describe("Mobile regressions", () => {
     expect(state.hasEntries).toBe(true);
   });
 
+  test("touch input helpers stay visually hidden at the cursor", async ({
+    page,
+  }) => {
+    await page.keyboard.type("abc");
+
+    const visuals = await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      const textarea = active?.element?.querySelector(".xterm-helper-textarea");
+      const composition = active?.element?.querySelector(".composition-view");
+      const textareaStyle = textarea ? getComputedStyle(textarea) : null;
+      const compositionStyle = composition
+        ? getComputedStyle(composition)
+        : null;
+
+      return {
+        textarea: {
+          opacity: textareaStyle?.opacity || "",
+          color: textareaStyle?.color || "",
+          backgroundColor: textareaStyle?.backgroundColor || "",
+          caretColor: textareaStyle?.caretColor || "",
+          webkitTextFillColor: textareaStyle?.webkitTextFillColor || "",
+        },
+        composition: {
+          color: compositionStyle?.color || "",
+          backgroundColor: compositionStyle?.backgroundColor || "",
+          opacity: compositionStyle?.opacity || "",
+        },
+      };
+    });
+
+    expect(visuals.textarea.opacity).toBe("0");
+    expect(visuals.textarea.color).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.caretColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.color).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.opacity).toBe("0");
+  });
+
   test("reselecting the active mobile terminal restores prompt visibility", async ({
     page,
   }) => {

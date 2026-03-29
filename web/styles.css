@@ -704,6 +704,22 @@ body {
   background: #58a6ff !important;
 }
 
+body.touch-input-mode .xterm .xterm-helper-textarea {
+  color: transparent !important;
+  background: transparent !important;
+  caret-color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+body.touch-input-mode .xterm .composition-view,
+body.touch-input-mode .xterm .composition-view.active {
+  color: transparent !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
 /* =============================================================================
    TERMINAL OVERLAY (reconnect/error states)
    ============================================================================= */
