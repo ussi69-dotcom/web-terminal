@@ -101,4 +101,159 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
     expect(json.path).toContain("/tmp/deckterm-clipboard/");
     expect(json.filename).toMatch(/^clipboard-\d+-[a-z0-9]+\.png$/);
   });
+
+  test("pasteClipboard uploads image clipboard content", async ({ page }) => {
+    await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm.terminals.get(tm.activeId);
+
+      const imageBlob = new Blob([Uint8Array.from([137, 80, 78, 71])], {
+        type: "image/png",
+      });
+
+      window.__uploadCalls = [];
+      window.__sentPayloads = [];
+
+      navigator.clipboard.read = async () => [
+        {
+          types: ["image/png"],
+          getType: async () => imageBlob,
+        },
+      ];
+      navigator.clipboard.readText = async () => {
+        throw new Error("readText should not be used for image clipboard");
+      };
+
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (url, init) => {
+        if (String(url).includes("/api/clipboard/image")) {
+          window.__uploadCalls.push({
+            url: String(url),
+            method: init?.method || "GET",
+            isFormData: init?.body instanceof FormData,
+          });
+          return new Response(
+            JSON.stringify({
+              success: true,
+              path: "/tmp/deckterm-clipboard/fake.png",
+              filename: "fake.png",
+              size: 4,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        return realFetch(url, init);
+      };
+
+      const realSend = active.ws.send.bind(active.ws);
+      active.ws.send = (payload) => {
+        window.__sentPayloads.push(String(payload));
+        return realSend(payload);
+      };
+    });
+
+    await page.evaluate(() => window.terminalManager.pasteClipboard());
+
+    await page.waitForFunction(() => (window.__uploadCalls || []).length === 1);
+
+    const result = await page.evaluate(() => ({
+      uploadCalls: window.__uploadCalls || [],
+      sentPayloads: window.__sentPayloads || [],
+    }));
+
+    expect(result.uploadCalls).toHaveLength(1);
+    expect(result.uploadCalls[0].method).toBe("POST");
+    expect(result.uploadCalls[0].isFormData).toBe(true);
+    expect(
+      result.sentPayloads.some((payload) =>
+        payload.includes("/tmp/deckterm-clipboard/fake.png "),
+      ),
+    ).toBe(true);
+  });
+
+  test("native paste event uploads image clipboard content on touch devices", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm.terminals.get(tm.activeId);
+      const textarea = active.element.querySelector(".xterm-helper-textarea");
+      const imageFile = new File([Uint8Array.from([137, 80, 78, 71])], "clip.png", {
+        type: "image/png",
+      });
+
+      window.__pasteUploadCalls = [];
+      window.__pasteSentPayloads = [];
+
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (url, init) => {
+        if (String(url).includes("/api/clipboard/image")) {
+          window.__pasteUploadCalls.push({
+            url: String(url),
+            method: init?.method || "GET",
+            isFormData: init?.body instanceof FormData,
+          });
+          return new Response(
+            JSON.stringify({
+              success: true,
+              path: "/tmp/deckterm-clipboard/pasted.png",
+              filename: "pasted.png",
+              size: 4,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        return realFetch(url, init);
+      };
+
+      const realSend = active.ws.send.bind(active.ws);
+      active.ws.send = (payload) => {
+        window.__pasteSentPayloads.push(String(payload));
+        return realSend(payload);
+      };
+
+      const clipboardData = {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => imageFile,
+          },
+        ],
+        getData: () => "",
+      };
+
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", {
+        configurable: true,
+        value: clipboardData,
+      });
+
+      textarea.dispatchEvent(pasteEvent);
+    });
+
+    await page.waitForFunction(
+      () => (window.__pasteUploadCalls || []).length === 1,
+    );
+
+    const result = await page.evaluate(() => ({
+      uploadCalls: window.__pasteUploadCalls || [],
+      sentPayloads: window.__pasteSentPayloads || [],
+    }));
+
+    expect(result.uploadCalls).toHaveLength(1);
+    expect(result.uploadCalls[0].method).toBe("POST");
+    expect(result.uploadCalls[0].isFormData).toBe(true);
+    expect(
+      result.sentPayloads.some((payload) =>
+        payload.includes("/tmp/deckterm-clipboard/pasted.png "),
+      ),
+    ).toBe(true);
+  });
 });

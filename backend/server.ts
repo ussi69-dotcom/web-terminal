@@ -133,7 +133,46 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<WebSocket>>();
+const socketReconnectState = new WeakMap<
+  ServerWebSocket<WsData>,
+  { pendingReady: boolean }
+>();
 const utf8Decoder = new TextDecoder();
+
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function sendReconnectLifecycle(
+  ws: ServerWebSocket<WsData>,
+  phase: "replay-start" | "replay-complete" | "ready",
+  extra: Record<string, unknown> = {},
+) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "reconnect_lifecycle", phase, ...extra }));
+}
+
+async function finalizeReconnectReady(
+  ws: ServerWebSocket<WsData>,
+  terminalId: string,
+  term: Terminal,
+) {
+  if (TMUX_BACKEND) {
+    sendReconnectLifecycle(ws, "ready");
+    return;
+  }
+
+  try {
+    const originalCols = term.cols;
+    const originalRows = term.rows;
+    term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
+    await sleep(120);
+    term.terminal.resize(originalCols, originalRows);
+  } catch (err) {
+    debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
+  } finally {
+    sendReconnectLifecycle(ws, "ready");
+  }
+}
 
 const openCodeCircuit = {
   failures: 0,
@@ -339,6 +378,11 @@ async function resolveAllowedPath(
       return null;
     }
   }
+}
+
+async function getDefaultBrowseRoot(): Promise<string> {
+  const roots = await getAllowedRealRoots();
+  return roots[0] || resolve(DEFAULT_ALLOWED_ROOT || "/");
 }
 
 const detectGitWorktree = createGitWorktreeDetector({
@@ -1088,13 +1132,12 @@ export function createWebApp() {
     const includeFiles = c.req.query("files") === "true";
     const fs = await import("fs/promises");
     const pathModule = await import("path");
-    const path = await resolveAllowedPath(requestedPath);
-    if (!path) {
-      return c.json({ error: "Forbidden path" }, 403);
-    }
+    const fallbackPath = await getDefaultBrowseRoot();
+    let path = (await resolveAllowedPath(requestedPath)) || fallbackPath;
+    let fellBack = path === fallbackPath && requestedPath !== fallbackPath;
 
-    try {
-      const entries = await fs.readdir(path, { withFileTypes: true });
+    const readDirectory = async (targetPath: string) => {
+      const entries = await fs.readdir(targetPath, { withFileTypes: true });
       const dirs = entries
         .filter((e) => e.isDirectory() && !e.name.startsWith("."))
         .map((e) => e.name)
@@ -1104,7 +1147,8 @@ export function createWebApp() {
         path: string;
         dirs: string[];
         files?: { name: string; size: number }[];
-      } = { path, dirs };
+        fallback?: boolean;
+      } = { path: targetPath, dirs };
 
       if (includeFiles) {
         const fileEntries = entries.filter(
@@ -1113,7 +1157,7 @@ export function createWebApp() {
         const files = await Promise.all(
           fileEntries.map(async (e) => {
             try {
-              const stat = await fs.stat(pathModule.join(path, e.name));
+              const stat = await fs.stat(pathModule.join(targetPath, e.name));
               return { name: e.name, size: stat.size };
             } catch {
               return { name: e.name, size: 0 };
@@ -1123,8 +1167,22 @@ export function createWebApp() {
         result.files = files.sort((a, b) => a.name.localeCompare(b.name));
       }
 
-      return c.json(result);
-    } catch {
+      if (fellBack) {
+        result.fallback = true;
+      }
+
+      return result;
+    };
+
+    try {
+      return c.json(await readDirectory(path));
+    } catch (err: unknown) {
+      const error = err as { code?: string };
+      if (error.code === "ENOENT" && path !== fallbackPath) {
+        path = fallbackPath;
+        fellBack = true;
+        return c.json(await readDirectory(path));
+      }
       return c.json({ error: "Cannot read directory" }, 400);
     }
   });
@@ -1964,6 +2022,7 @@ export async function startWebServer(host: string, port: number) {
         const socketsCount = sockets.size;
         const isReconnect = term.hadSocketConnection;
         term.hadSocketConnection = true;
+        socketReconnectState.set(ws, { pendingReady: isReconnect });
 
         console.log(
           `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), sockets: ${socketsCount}, reconnect: ${isReconnect}`,
@@ -1984,6 +2043,8 @@ export async function startWebServer(host: string, port: number) {
 
           (async () => {
             let replayed = false;
+
+            sendReconnectLifecycle(ws, "replay-start");
 
             if (TMUX_BACKEND && term.sessionName) {
               try {
@@ -2021,25 +2082,9 @@ export async function startWebServer(host: string, port: number) {
               replayBufferFallback();
             }
 
-            if (!TMUX_BACKEND) {
-              // Trigger a redraw for TUIs after scrollback replay.
-              setTimeout(() => {
-                try {
-                  const originalCols = term.cols;
-                  const originalRows = term.rows;
-                  term.terminal.resize(Math.max(1, originalCols - 1), originalRows);
-                  setTimeout(() => {
-                    try {
-                      term.terminal.resize(originalCols, originalRows);
-                    } catch (err) {
-                      debug(`[reconnect] restore resize failed for ${terminalId}`, err);
-                    }
-                  }, 200);
-                } catch (err) {
-                  debug(`[reconnect] redraw resize failed for ${terminalId}`, err);
-                }
-              }, 200);
-            }
+            sendReconnectLifecycle(ws, "replay-complete", {
+              requiresRedraw: !TMUX_BACKEND,
+            });
           })();
         }
       },
@@ -2094,6 +2139,13 @@ export async function startWebServer(host: string, port: number) {
                 }
                 return;
               }
+              if (parsed.type === "resume-ready") {
+                const reconnectState = socketReconnectState.get(ws);
+                if (!reconnectState?.pendingReady) return;
+                reconnectState.pendingReady = false;
+                void finalizeReconnectReady(ws, terminalId, term);
+                return;
+              }
             } catch {
               debug(`Raw input ${terminalId}`);
               term.lastActivityAt = Date.now();
@@ -2120,6 +2172,7 @@ export async function startWebServer(host: string, port: number) {
 
       close(ws: ServerWebSocket<WsData>) {
         const data = ws.data;
+        socketReconnectState.delete(ws);
 
         if (data.type === "opencode_proxy") {
           try {
