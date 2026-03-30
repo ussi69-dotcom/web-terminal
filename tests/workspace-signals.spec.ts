@@ -315,6 +315,71 @@ test.describe("Workspace telemetry contract", () => {
     expect(notification?.title).toContain("Command finished");
   });
 
+  test("active workspace tab shows agent thinking then responding", async ({
+    page,
+  }) => {
+    await page.goto(BASE_URL);
+    await waitForTerminal(page);
+
+    const workspaceContext = await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm?.activeId);
+      return {
+        activeId: tm?.activeId ?? null,
+        workspaceId: active?.workspaceId ?? null,
+      };
+    });
+
+    expect(workspaceContext.workspaceId).toBeTruthy();
+    expect(workspaceContext.activeId).toBeTruthy();
+
+    const tabSelector = `.tab[data-workspace-id="${workspaceContext.workspaceId}"]`;
+    const thinkingCommand =
+      "printf '\\033]9;9;deckterm;agent;codex;start\\a'; " +
+      "sleep 0.5; " +
+      "printf '\\033]0;⠋ deckterm_dev\\a'; " +
+      "sleep 1.5; " +
+      "printf 'Hello from agent'; " +
+      "sleep 1.5; " +
+      "printf '\\033]9;9;deckterm;agent;codex;done;0\\a'";
+
+    await page.evaluate((command) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(
+        JSON.stringify({ type: "input", data: `${command}\r` }),
+      );
+    }, thinkingCommand);
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent-thinking",
+        badgeText: "Codex Thinking",
+      });
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent-responding",
+        badgeText: "Codex Responding",
+      });
+  });
+
   test("client-side cwd survives telemetry refresh without reverting", async ({
     page,
   }) => {

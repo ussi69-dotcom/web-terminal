@@ -122,9 +122,10 @@ const TerminalColors =
   window.TerminalColors ||
   (() => {
     const SIGNAL_PRIORITIES = {
-      running: 1,
-      ports: 2,
-      worktree: 3,
+      agent: 1,
+      running: 2,
+      ports: 3,
+      worktree: 4,
     };
     const palette = [
       "#58a6ff",
@@ -182,14 +183,42 @@ const TerminalColors =
       ].sort((left, right) => left - right);
     };
 
+    const formatAgentLabel = (agentName, agentState) => {
+      if (!agentName || !agentState) return null;
+      const normalizedAgent =
+        String(agentName).trim().toLowerCase() === "claude"
+          ? "Claude"
+          : String(agentName).trim().toLowerCase() === "codex"
+            ? "Codex"
+            : null;
+      const normalizedState =
+        String(agentState).trim().toLowerCase() === "responding"
+          ? "Responding"
+          : String(agentState).trim().toLowerCase() === "thinking"
+            ? "Thinking"
+            : null;
+      if (!normalizedAgent || !normalizedState) return null;
+      return `${normalizedAgent} ${normalizedState}`;
+    };
+
     const getWorkspaceSignalDescriptors = ({
       running = false,
       busy = false,
+      agentName = null,
+      agentState = null,
       ports = [],
       isWorktree = false,
     } = {}) => {
       const isRunning = Boolean(running || busy);
       const descriptors = [];
+      const agentLabel = formatAgentLabel(agentName, agentState);
+      if (agentLabel) {
+        descriptors.push({
+          key: `agent-${String(agentState).trim().toLowerCase()}`,
+          label: agentLabel,
+          priority: SIGNAL_PRIORITIES.agent,
+        });
+      }
       if (isRunning) {
         descriptors.push({
           key: "running",
@@ -221,13 +250,22 @@ const TerminalColors =
     const getPrimaryWorkspaceSignal = ({
       running = false,
       busy = false,
+      agentName = null,
+      agentState = null,
       ports = [],
       isWorktree = false,
       cwd,
     } = {}) => ({
       color: hashCwdToColor(cwd),
       primarySignal:
-        getWorkspaceSignalDescriptors({ running, busy, ports, isWorktree })[0] ||
+        getWorkspaceSignalDescriptors({
+          running,
+          busy,
+          agentName,
+          agentState,
+          ports,
+          isWorktree,
+        })[0] ||
         null,
     });
 
@@ -4080,6 +4118,8 @@ class TerminalManager {
             running: Boolean(next.running ?? next.busy),
             lastExitCode:
               typeof next.lastExitCode === "number" ? next.lastExitCode : null,
+            agentName: next.agentName || null,
+            agentState: next.agentState || null,
           });
           terminal.ports = normalizeWorkspacePorts(next.ports);
           terminal.isWorktree = Boolean(next.isWorktree);
@@ -4133,14 +4173,24 @@ class TerminalManager {
     const running = terminals.some((terminal) =>
       Boolean(terminal.running ?? terminal.busy),
     );
+    const agentTerminal =
+      activeTerminal?.agentState
+        ? activeTerminal
+        : terminals.find((terminal) => terminal.agentState) || null;
+    const agentName = agentTerminal?.agentName || null;
+    const agentState = agentTerminal?.agentState || null;
     const isWorktree = terminals.some((terminal) => Boolean(terminal.isWorktree));
     const descriptors = TerminalColors.getWorkspaceSignalDescriptors({
       running,
+      agentName,
+      agentState,
       ports,
       isWorktree,
     });
     const primarySignalDescriptor = TerminalColors.getPrimaryWorkspaceSignal({
       running,
+      agentName,
+      agentState,
       ports,
       isWorktree,
       cwd,
@@ -4154,6 +4204,8 @@ class TerminalManager {
       cwd,
       label: this.formatCwdLabel(cwd),
       running,
+      agentName,
+      agentState,
       ports,
       isWorktree,
       descriptors,
@@ -4184,6 +4236,8 @@ class TerminalManager {
     tab.dataset.primarySignal = snapshot.primarySignal;
     tab.dataset.running = snapshot.running ? "true" : "false";
     tab.dataset.busy = snapshot.running ? "true" : "false";
+    tab.dataset.agentName = snapshot.agentName || "";
+    tab.dataset.agentState = snapshot.agentState || "none";
     tab.dataset.ports = snapshot.ports.join(",");
     tab.dataset.isWorktree = snapshot.isWorktree ? "true" : "false";
     tab.title = this.composeWorkspaceTooltip(snapshot);
@@ -4207,10 +4261,20 @@ class TerminalManager {
     const nextRunning = Boolean(nextState.running);
     const nextExitCode =
       typeof nextState.lastExitCode === "number" ? nextState.lastExitCode : null;
+    const nextAgentName =
+      typeof nextState.agentName === "string" && nextState.agentName
+        ? nextState.agentName
+        : null;
+    const nextAgentState =
+      typeof nextState.agentState === "string" && nextState.agentState
+        ? nextState.agentState
+        : null;
 
     terminal.running = nextRunning;
     terminal.busy = nextRunning;
     terminal.lastExitCode = nextExitCode;
+    terminal.agentName = nextRunning ? nextAgentName : null;
+    terminal.agentState = nextRunning ? nextAgentState : null;
 
     if (prevRunning && !nextRunning) {
       this.maybeNotifyCommandFinished(terminal);
@@ -4668,6 +4732,8 @@ class TerminalManager {
       running: false,
       busy: false,
       lastExitCode: null,
+      agentName: null,
+      agentState: null,
       ports: [],
       isWorktree: false,
       backendMode,
@@ -5613,6 +5679,8 @@ class TerminalManager {
         running: false,
         busy: false,
         lastExitCode: null,
+        agentName: null,
+        agentState: null,
         ports: [],
         isWorktree: false,
         backendMode: terminalInfo.backendMode || null,

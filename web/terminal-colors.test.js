@@ -26,8 +26,43 @@ test("getPrimaryWorkspaceSignal prioritizes running over passive workspace signa
     }),
   ).toEqual({
     color: hashCwdToColor("/home/deploy/deckterm"),
-    primarySignal: { key: "running", label: "Running", priority: 1 },
+    primarySignal: { key: "running", label: "Running", priority: 2 },
   });
+});
+
+test("getPrimaryWorkspaceSignal prioritizes agent thinking over generic running", () => {
+  expect(
+    getPrimaryWorkspaceSignal({
+      running: true,
+      agentName: "codex",
+      agentState: "thinking",
+      cwd: "/home/deploy/deckterm",
+    }),
+  ).toEqual({
+    color: hashCwdToColor("/home/deploy/deckterm"),
+    primarySignal: {
+      key: "agent-thinking",
+      label: "Codex Thinking",
+      priority: 1,
+    },
+  });
+});
+
+test("getWorkspaceSignalDescriptors includes responding agent label", () => {
+  expect(
+    getWorkspaceSignalDescriptors({
+      running: true,
+      agentName: "claude",
+      agentState: "responding",
+    }),
+  ).toEqual([
+    {
+      key: "agent-responding",
+      label: "Claude Responding",
+      priority: 1,
+    },
+    { key: "running", label: "Running", priority: 2 },
+  ]);
 });
 
 test("getWorkspaceSignalDescriptors produces stable worktree and port descriptors", () => {
@@ -38,8 +73,8 @@ test("getWorkspaceSignalDescriptors produces stable worktree and port descriptor
       isWorktree: true,
     }),
   ).toEqual([
-    { key: "ports:3000,4174,8080", label: "Ports 3000, 4174, 8080", priority: 2 },
-    { key: "worktree", label: "Worktree", priority: 3 },
+    { key: "ports:3000,4174,8080", label: "Ports 3000, 4174, 8080", priority: 3 },
+    { key: "worktree", label: "Worktree", priority: 4 },
   ]);
 });
 

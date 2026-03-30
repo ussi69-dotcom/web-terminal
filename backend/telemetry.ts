@@ -14,11 +14,15 @@ const PORT_PATTERNS = [
 ];
 
 export type BackendMode = "raw" | "tmux";
+export type AgentName = "codex" | "claude";
+export type AgentState = "thinking" | "responding";
 
 export type TerminalTelemetry = {
   busy: boolean;
   running: boolean;
   lastExitCode: number | null;
+  agentName: AgentName | null;
+  agentState: AgentState | null;
   ports: number[];
   isWorktree: boolean;
   backendMode: BackendMode;
@@ -31,17 +35,23 @@ type TelemetryTerminal = {
   scrollback: string[];
   running?: boolean;
   lastExitCode?: number | null;
+  agentName?: AgentName | null;
+  agentState?: AgentState | null;
 };
 
 export type ShellIntegrationParseState = {
   carry: string;
   running: boolean;
   lastExitCode: number | null;
+  agentName: AgentName | null;
+  agentState: AgentState | null;
 };
 
 export type ShellIntegrationEvent =
   | { type: "running-start" }
-  | { type: "running-done"; exitCode: number | null };
+  | { type: "running-done"; exitCode: number | null }
+  | { type: "agent-start"; agentName: AgentName }
+  | { type: "agent-done"; agentName: AgentName; exitCode: number | null };
 
 type WorktreeDetector = (cwd: string) => Promise<boolean>;
 
@@ -62,6 +72,63 @@ type WorktreeCacheEntry = {
 };
 
 const worktreeCache = new Map<string, WorktreeCacheEntry>();
+const CODEx_TITLE_SPINNER_RE =
+  /\x1b\]0;[\u2800-\u28ff][^\u0007\u001b]*(?:\u0007|\x1b\\)/u;
+const OSC_SEQUENCE_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const CSI_SEQUENCE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const C1_SEQUENCE_RE = /\x1b[@-_]/g;
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b-\x1f\x7f]/g;
+
+function normalizeAgentName(value: string): AgentName | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "codex" || normalized === "claude") {
+    return normalized;
+  }
+  return null;
+}
+
+function stripTerminalControlSequences(input: string): string {
+  return input
+    .replace(OSC_SEQUENCE_RE, "")
+    .replace(CSI_SEQUENCE_RE, "")
+    .replace(C1_SEQUENCE_RE, "")
+    .replace(CONTROL_CHARS_RE, "");
+}
+
+export function classifyAgentOutputPhase(
+  agentName: AgentName | null | undefined,
+  chunk: string,
+): AgentState | null {
+  if (!agentName || !chunk) return null;
+
+  if (
+    agentName === "codex" &&
+    CODEx_TITLE_SPINNER_RE.test(chunk)
+  ) {
+    return "thinking";
+  }
+
+  const visibleText = stripTerminalControlSequences(chunk)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!visibleText) {
+    return null;
+  }
+
+  if (agentName === "claude") {
+    const normalized = visibleText.toLowerCase();
+    if (
+      normalized.includes("working…") ||
+      normalized.includes("working...") ||
+      normalized.includes("running stop hooks")
+    ) {
+      return "thinking";
+    }
+  }
+
+  return "responding";
+}
 
 export async function getTerminalTelemetry(
   terminal: TelemetryTerminal,
@@ -94,6 +161,8 @@ export async function getTerminalTelemetry(
     running: Boolean(terminal.running),
     lastExitCode:
       typeof terminal.lastExitCode === "number" ? terminal.lastExitCode : null,
+    agentName: terminal.agentName || null,
+    agentState: terminal.agentState || null,
     ports: extractPortsFromScrollback(terminal.scrollback),
     isWorktree,
     backendMode,
@@ -106,6 +175,8 @@ export function parseShellIntegrationChunk(
     carry: "",
     running: false,
     lastExitCode: null,
+    agentName: null,
+    agentState: null,
   },
 ): {
   output: string;
@@ -118,6 +189,8 @@ export function parseShellIntegrationChunk(
   let cursor = 0;
   let running = state.running;
   let lastExitCode = state.lastExitCode;
+  let agentName = state.agentName;
+  let agentState = state.agentState;
   let carry = "";
 
   while (cursor < input.length) {
@@ -148,6 +221,29 @@ export function parseShellIntegrationChunk(
       running = false;
       lastExitCode = exitCode;
       events.push({ type: "running-done", exitCode });
+    } else if (payload.startsWith("agent;")) {
+      const [, rawAgentName, action, rawExitCode] = payload.split(";");
+      const normalizedAgentName = normalizeAgentName(rawAgentName || "");
+      if (!normalizedAgentName) {
+        output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+      } else if (action === "start") {
+        agentName = normalizedAgentName;
+        agentState = "thinking";
+        events.push({ type: "agent-start", agentName: normalizedAgentName });
+      } else if (action === "done") {
+        const codeValue = Number.parseInt(rawExitCode || "", 10);
+        const exitCode = Number.isFinite(codeValue) ? codeValue : null;
+        agentName = null;
+        agentState = null;
+        lastExitCode = exitCode;
+        events.push({
+          type: "agent-done",
+          agentName: normalizedAgentName,
+          exitCode,
+        });
+      } else {
+        output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+      }
     } else {
       output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
     }
@@ -162,6 +258,8 @@ export function parseShellIntegrationChunk(
       carry,
       running,
       lastExitCode,
+      agentName,
+      agentState,
     },
   };
 }

@@ -12,9 +12,10 @@ const PALETTE = [
 ];
 
 const SIGNAL_PRIORITIES = {
-  running: 1,
-  ports: 2,
-  worktree: 3,
+  agent: 1,
+  running: 2,
+  ports: 3,
+  worktree: 4,
 };
 
 function hashCwdToColor(cwd) {
@@ -58,14 +59,39 @@ function normalizePorts(ports) {
   )].sort((left, right) => left - right);
 }
 
+function formatAgentLabel(agentName, agentState) {
+  if (!agentName || !agentState) return null;
+  const normalizedAgent =
+    String(agentName).trim().toLowerCase() === "claude" ? "Claude" :
+    String(agentName).trim().toLowerCase() === "codex" ? "Codex" :
+    null;
+  const normalizedState =
+    String(agentState).trim().toLowerCase() === "responding" ? "Responding" :
+    String(agentState).trim().toLowerCase() === "thinking" ? "Thinking" :
+    null;
+
+  if (!normalizedAgent || !normalizedState) return null;
+  return `${normalizedAgent} ${normalizedState}`;
+}
+
 function getWorkspaceSignalDescriptors({
   running = false,
   busy = false,
+  agentName = null,
+  agentState = null,
   ports = [],
   isWorktree = false,
 } = {}) {
   const isRunning = Boolean(running || busy);
   const descriptors = [];
+  const agentLabel = formatAgentLabel(agentName, agentState);
+  if (agentLabel) {
+    descriptors.push({
+      key: `agent-${String(agentState).trim().toLowerCase()}`,
+      label: agentLabel,
+      priority: SIGNAL_PRIORITIES.agent,
+    });
+  }
   if (isRunning) {
     descriptors.push({
       key: "running",
@@ -97,6 +123,8 @@ function getWorkspaceSignalDescriptors({
 function getPrimaryWorkspaceSignal({
   running = false,
   busy = false,
+  agentName = null,
+  agentState = null,
   ports = [],
   isWorktree = false,
   cwd,
@@ -104,7 +132,14 @@ function getPrimaryWorkspaceSignal({
   return {
     color: hashCwdToColor(cwd),
     primarySignal:
-      getWorkspaceSignalDescriptors({ running, busy, ports, isWorktree })[0] ||
+      getWorkspaceSignalDescriptors({
+        running,
+        busy,
+        agentName,
+        agentState,
+        ports,
+        isWorktree,
+      })[0] ||
       null,
   };
 }

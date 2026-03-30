@@ -9,6 +9,7 @@ import {
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
+  classifyAgentOutputPhase,
   createGitWorktreeDetector,
   getTerminalTelemetry,
   parseShellIntegrationChunk,
@@ -65,6 +66,8 @@ type Terminal = {
   hadSocketConnection: boolean; // tracks whether a websocket was ever connected
   running: boolean;
   lastExitCode: number | null;
+  agentName: "codex" | "claude" | null;
+  agentState: "thinking" | "responding" | null;
   shellIntegrationCarry: string;
 };
 
@@ -166,6 +169,8 @@ function broadcastTerminalState(term: Terminal) {
     type: "terminal_state",
     running: term.running,
     lastExitCode: term.lastExitCode,
+    agentName: term.agentName,
+    agentState: term.agentState,
   });
   for (const ws of sockets) {
     try {
@@ -504,6 +509,8 @@ function serializeTerminal(term: Terminal) {
     cwd: term.cwd,
     running: term.running,
     lastExitCode: term.lastExitCode,
+    agentName: term.agentName,
+    agentState: term.agentState,
     backendMode: getBackendMode(),
     supportsLinkedView: supportsLinkedView(term),
   };
@@ -585,6 +592,9 @@ async function ensureBashIntegrationRc(): Promise<string> {
       '__deckterm_running_start() {',
       "  printf '\\033]9;9;deckterm;running;start\\a'",
       '}',
+      '__deckterm_emit_marker() {',
+      "  printf '\\033]9;9;deckterm;%s\\a' \"$1\"",
+      '}',
       '__deckterm_running_done() {',
       '  local exit_code=$?',
       '  if [ "${__deckterm_prompt_seen:-0}" -eq 0 ]; then',
@@ -593,6 +603,21 @@ async function ensureBashIntegrationRc(): Promise<string> {
       '  fi',
       "  printf '\\033]9;9;deckterm;running;done;%s\\a' \"$exit_code\"",
       '}',
+      '__deckterm_run_agent() {',
+      '  local agent_name="$1"',
+      '  shift',
+      '  __deckterm_emit_marker "agent;${agent_name};start"',
+      '  command "$agent_name" "$@"',
+      '  local exit_code=$?',
+      '  __deckterm_emit_marker "agent;${agent_name};done;${exit_code}"',
+      '  return "$exit_code"',
+      '}',
+      'if command -v codex >/dev/null 2>&1; then',
+      '  codex() { __deckterm_run_agent codex "$@"; }',
+      'fi',
+      'if command -v claude >/dev/null 2>&1; then',
+      '  claude() { __deckterm_run_agent claude "$@"; }',
+      'fi',
       'case ";${PROMPT_COMMAND};" in',
       '  *";__deckterm_running_done;"*) ;;',
       '  "")',
@@ -626,6 +651,8 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
           typeof terminalState?.lastExitCode === "number"
             ? terminalState.lastExitCode
             : null,
+        agentName: terminalState?.agentName || null,
+        agentState: terminalState?.agentState || null,
       });
 
       if (terminalState) {
@@ -637,6 +664,32 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
         }
         if (terminalState.lastExitCode !== parsed.state.lastExitCode) {
           terminalState.lastExitCode = parsed.state.lastExitCode;
+          stateChanged = true;
+        }
+        if (terminalState.agentName !== parsed.state.agentName) {
+          terminalState.agentName = parsed.state.agentName;
+          stateChanged = true;
+        }
+        if (terminalState.agentState !== parsed.state.agentState) {
+          terminalState.agentState = parsed.state.agentState;
+          stateChanged = true;
+        }
+        if (parsed.output && terminalState.agentName) {
+          const nextAgentState = classifyAgentOutputPhase(
+            terminalState.agentName,
+            parsed.output,
+          );
+          if (nextAgentState && terminalState.agentState !== nextAgentState) {
+            terminalState.agentState = nextAgentState;
+            stateChanged = true;
+          }
+        }
+        if (
+          !terminalState.running &&
+          (terminalState.agentName || terminalState.agentState)
+        ) {
+          terminalState.agentName = null;
+          terminalState.agentState = null;
           stateChanged = true;
         }
         if (stateChanged) {
@@ -865,6 +918,8 @@ async function createManagedTerminal({
     hadSocketConnection: false,
     running: false,
     lastExitCode: null,
+    agentName: null,
+    agentState: null,
     shellIntegrationCarry: "",
   };
 
