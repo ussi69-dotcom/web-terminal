@@ -22,6 +22,7 @@ Keep two environments available at all times:
 
 - `main` packages a release archive after tests pass.
 - Live deploy is gated by repository variable `ENABLE_PROD_DEPLOY=1`.
+- Promotion from `dev` to `main` happens through a dedicated PR workflow, not direct pushes to `main`.
 - Deploys are atomic:
   - extract to a new release directory
   - install dependencies

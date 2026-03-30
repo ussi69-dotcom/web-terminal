@@ -40,12 +40,25 @@ Repository variables:
 - `PROD_CANDIDATE_PORT` default `4273`
 - `PROD_SERVICE` default `deckterm-prod.service`
 
+Recommended branch protections:
+
+- `dev`: require PRs plus passing `unit` and `smoke-e2e`
+- `main`: require PRs, passing `unit` and `smoke-e2e`, and at least one approval
+
+Local helper:
+
+```bash
+GITHUB_PERSONAL_ACCESS_TOKEN=... \
+bash scripts/configure_github_branch_protection.sh
+```
+
 ## Rollout
 
 1. Push feature branches and merge them into `dev`.
 2. Let CI validate `dev`.
-3. Promote `dev` into `main`.
-4. `Deploy Main` packages the checked-out commit, verifies it, and deploys it.
+3. Run `Promote Dev To Main` or open a PR from `dev` to `main`.
+4. Merge that PR once checks pass.
+5. `Deploy Main` packages the checked-out commit, verifies it, and deploys it.
 
 ## Rollback
 
