@@ -1,4 +1,4 @@
-/* OpenCode Web Terminal - Floating Tiling Window Manager */
+/* DeckTerm - Floating Tiling Window Manager */
 /* Version 2.0 - Complete CSS rewrite for smart tiling */
 
 :root {
@@ -2204,7 +2204,7 @@ body.virtual-keyboard-open .extra-keys {
 }
 
 /* =============================================================================
-   APP PANELS (OpenCode, etc.)
+   APP PANELS
    ============================================================================= */
 
 .app-panel {

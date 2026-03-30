@@ -2433,7 +2433,7 @@ export async function startWebServer(host: string, port: number) {
     },
   });
 
-  console.log(`🚀 OpenCode Web Terminal running at http://${host}:${port}`);
+  console.log(`🚀 DeckTerm running at http://${host}:${port}`);
 
   const cleanupIdleTerminals = async () => {
     const now = Date.now();

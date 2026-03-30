@@ -1,4 +1,4 @@
-// OpenCode Web Terminal - Floating Tiling Window Manager
+// DeckTerm - Floating Tiling Window Manager
 // Version 2.0 - Complete rewrite with smart tiling, groups, and mobile support
 
 // =============================================================================
@@ -2700,152 +2700,6 @@ class ClipboardManager {
 }
 
 // =============================================================================
-// OPENCODE MANAGER - OpenCode panel integration
-// =============================================================================
-
-class OpenCodeManager {
-  constructor() {
-    this.panel = document.getElementById("opencode-panel");
-    this.iframe = document.getElementById("opencode-iframe");
-    this.status = document.getElementById("opencode-status");
-    this.init();
-  }
-
-  init() {
-    this.opencodeUrl = null;
-    this.serverStatus = "unknown";
-
-    document
-      .querySelector('[data-action="opencode"]')
-      ?.addEventListener("click", () => this.toggle());
-    this.panel
-      ?.querySelector(".app-panel-close")
-      ?.addEventListener("click", () => this.hide());
-    document
-      .getElementById("opencode-popout")
-      ?.addEventListener("click", () => this.openInNewWindow());
-    this.checkHealth();
-    setInterval(() => this.checkHealth(), 30000);
-  }
-
-  async checkHealth() {
-    try {
-      const res = await fetch("/api/apps/opencode/health");
-      const data = await res.json();
-      this.opencodeUrl = data.url || null;
-      this.serverStatus = data.status;
-
-      if (!this.opencodeUrl) {
-        this.status.textContent = "not configured";
-        this.status.className = "app-status offline";
-      } else if (data.status === "running") {
-        this.status.textContent = "running";
-        this.status.className = "app-status online";
-      } else {
-        this.status.textContent = "offline";
-        this.status.className = "app-status offline";
-      }
-    } catch {
-      this.status.textContent = "error";
-      this.status.className = "app-status offline";
-    }
-  }
-
-  show() {
-    if (!this.opencodeUrl) {
-      this.showSetupMessage();
-      return;
-    }
-    if (this.serverStatus !== "running") {
-      this.showOfflineMessage();
-      return;
-    }
-    this.panel?.classList.remove("hidden");
-    if (this.iframe && !this.iframe.src) {
-      this.iframe.src = "/apps/opencode/";
-    }
-  }
-
-  showSetupMessage() {
-    this.panel?.classList.remove("hidden");
-    if (this.iframe) {
-      this.iframe.srcdoc = `
-        <html>
-        <head><style>
-          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
-          h2 { color: #58a6ff; }
-          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
-          ol { line-height: 2; }
-        </style></head>
-        <body>
-          <h2>OpenCode Not Configured</h2>
-          <p>To enable OpenCode integration:</p>
-          <ol>
-            <li>Run <code>opencode web --port 4096</code> on your server</li>
-            <li>Expose port 4096 via Cloudflare Tunnel (e.g., opencode.yourdomain.com)</li>
-            <li>Set <code>OPENCODE_URL=https://opencode.yourdomain.com</code> in .env</li>
-            <li>Restart DeckTerm</li>
-          </ol>
-        </body>
-        </html>`;
-    }
-  }
-
-  showOfflineMessage() {
-    this.panel?.classList.remove("hidden");
-    if (this.iframe) {
-      this.iframe.srcdoc = `
-        <html>
-        <head><style>
-          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
-          h2 { color: #f85149; }
-          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
-        </style></head>
-        <body>
-          <h2>OpenCode Server Offline</h2>
-          <p>The OpenCode server is not responding.</p>
-          <p>Start it with: <code>opencode web --port 4096</code></p>
-          <p>Or run in tmux: <code>tmux new -d -s opencode "opencode web --port 4096"</code></p>
-        </body>
-        </html>`;
-    }
-  }
-
-  hide() {
-    this.panel?.classList.add("hidden");
-  }
-
-  openInNewWindow() {
-    if (this.opencodeUrl) {
-      window.open(this.opencodeUrl, "opencode", "width=1200,height=800");
-    } else {
-      alert("OpenCode not configured. Set OPENCODE_URL in .env");
-    }
-  }
-
-  toggle() {
-    if (this.panel?.classList.contains("hidden")) {
-      this.show();
-    } else {
-      this.hide();
-    }
-  }
-
-  notifyResize() {
-    if (
-      this.iframe?.contentWindow &&
-      !this.panel?.classList.contains("hidden")
-    ) {
-      try {
-        this.iframe.contentWindow.postMessage({ type: "resize" }, "*");
-      } catch (e) {
-        console.warn("[OpenCode] Failed to send resize message:", e);
-      }
-    }
-  }
-}
-
-// =============================================================================
 // GIT MANAGER - Git panel integration
 // =============================================================================
 
@@ -3907,7 +3761,6 @@ class TerminalManager {
           active.fitAddon.fit();
           this.syncTerminalSize(this.activeId);
         }
-        window.openCodeManager?.notifyResize();
       }, 150);
     });
 
@@ -6328,6 +6181,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.terminalManager = new TerminalManager();
   window.statsManager = new StatsManager();
-  window.openCodeManager = new OpenCodeManager();
   window.gitManager = new GitManager();
 });

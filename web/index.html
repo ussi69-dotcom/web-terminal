@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
-    <title>OpenCode Web Terminal</title>
+    <title>DeckTerm</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23238636'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='white'>❯</text></svg>" />
     <!-- Nerd Font for terminal icons (Claude Code statusline, etc.) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
@@ -73,10 +73,6 @@
 
           <button id="clipboard-btn" class="btn-icon" data-action="clipboard" title="Clipboard History">
             <i data-lucide="clipboard"></i>
-          </button>
-
-          <button id="opencode-btn" class="btn-icon" data-action="opencode" title="OpenCode">
-            <i data-lucide="code"></i>
           </button>
 
           <button id="git-btn" class="btn-icon" data-action="git" title="Git">
@@ -192,17 +188,6 @@
       <button id="fullscreen-exit" class="fullscreen-exit hidden" title="Exit fullscreen (Esc)">
         <i data-lucide="minimize-2"></i>
       </button>
-    </div>
-
-    <!-- OpenCode Panel -->
-    <div id="opencode-panel" class="app-panel hidden">
-      <div class="app-panel-header">
-        <span>OpenCode</span>
-        <span id="opencode-status" class="app-status">checking...</span>
-        <button id="opencode-popout" class="btn-icon" title="Open in new window">⧉</button>
-        <button class="app-panel-close">&times;</button>
-      </div>
-      <iframe id="opencode-iframe" src="" frameborder="0"></iframe>
     </div>
 
     <!-- Directory Picker Modal -->
