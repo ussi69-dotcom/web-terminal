@@ -70,6 +70,7 @@ type Terminal = {
   agentName: "codex" | "claude" | null;
   agentState: "thinking" | "responding" | null;
   agentHasUserPrompt: boolean;
+  agentRespondingTimer: ReturnType<typeof setTimeout> | null;
   shellIntegrationCarry: string;
 };
 
@@ -93,6 +94,10 @@ const TERMINAL_IDLE_TIMEOUT_MS = parseInt(
   process.env.TERMINAL_IDLE_TIMEOUT_MS || String(2 * 60 * 60 * 1000),
   10,
 ); // 2 hours default
+const AGENT_RESPONDING_IDLE_MS = parseInt(
+  process.env.AGENT_RESPONDING_IDLE_MS || "700",
+  10,
+);
 
 const CF_ACCESS_REQUIRED = process.env.CF_ACCESS_REQUIRED === "1";
 const CF_ACCESS_TEAM_NAME = process.env.CF_ACCESS_TEAM_NAME || "";
@@ -195,6 +200,26 @@ function broadcastTerminalState(term: Terminal) {
       // WebSocket closed
     }
   }
+}
+
+function clearAgentRespondingTimer(term: Terminal) {
+  if (!term.agentRespondingTimer) return;
+  clearTimeout(term.agentRespondingTimer);
+  term.agentRespondingTimer = null;
+}
+
+function scheduleAgentThinkingFallback(term: Terminal) {
+  clearAgentRespondingTimer(term);
+  term.agentRespondingTimer = setTimeout(() => {
+    const current = terminals.get(term.id);
+    if (!current || current !== term) return;
+    term.agentRespondingTimer = null;
+    if (!term.running || !term.agentName || term.agentState !== "responding") {
+      return;
+    }
+    term.agentState = "thinking";
+    broadcastTerminalState(term);
+  }, AGENT_RESPONDING_IDLE_MS);
 }
 
 async function finalizeReconnectReady(
@@ -683,6 +708,9 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
           stateChanged = true;
         }
         if (terminalState.agentName !== parsed.state.agentName) {
+          if (terminalState.agentName && terminalState.agentName !== parsed.state.agentName) {
+            clearAgentRespondingTimer(terminalState);
+          }
           terminalState.agentName = parsed.state.agentName;
           if (parsed.state.agentName) {
             terminalState.agentHasUserPrompt = false;
@@ -703,6 +731,11 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
             classifiedState,
             hasUserPrompted: terminalState.agentHasUserPrompt,
           });
+          if (nextAgentState === "responding") {
+            scheduleAgentThinkingFallback(terminalState);
+          } else if (nextAgentState === "thinking") {
+            clearAgentRespondingTimer(terminalState);
+          }
           if (nextAgentState && terminalState.agentState !== nextAgentState) {
             terminalState.agentState = nextAgentState;
             stateChanged = true;
@@ -712,6 +745,7 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
           !terminalState.running &&
           (terminalState.agentName || terminalState.agentState)
         ) {
+          clearAgentRespondingTimer(terminalState);
           terminalState.agentName = null;
           terminalState.agentState = null;
           terminalState.agentHasUserPrompt = false;
@@ -744,6 +778,10 @@ function closeTerminalSockets(id: string, message?: string) {
 }
 
 function removeTerminalState(id: string) {
+  const terminal = terminals.get(id);
+  if (terminal) {
+    clearAgentRespondingTimer(terminal);
+  }
   terminals.delete(id);
   terminalSockets.delete(id);
 }
@@ -946,6 +984,7 @@ async function createManagedTerminal({
     agentName: null,
     agentState: null,
     agentHasUserPrompt: false,
+    agentRespondingTimer: null,
     shellIntegrationCarry: "",
   };
 
@@ -2328,6 +2367,7 @@ export async function startWebServer(host: string, port: number) {
                 term.lastActivityAt = Date.now();
                 if (term.agentName && hasVisibleUserInput(parsed.data)) {
                   term.agentHasUserPrompt = true;
+                  clearAgentRespondingTimer(term);
                   if (term.agentState !== "thinking") {
                     term.agentState = "thinking";
                     broadcastTerminalState(term);
