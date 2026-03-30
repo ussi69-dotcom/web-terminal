@@ -341,6 +341,8 @@ test.describe("Workspace telemetry contract", () => {
       "printf '\\033]0;⠋ deckterm_dev\\a'; " +
       "sleep 1.5; " +
       "printf 'Hello from agent'; " +
+      "sleep 0.5; " +
+      "printf '\\033]0;⠙ deckterm_dev\\a'; " +
       "sleep 1.5; " +
       "printf '\\033]9;9;deckterm;agent;codex;done;0\\a'";
 
@@ -365,6 +367,21 @@ test.describe("Workspace telemetry contract", () => {
         primarySignal: "agent-thinking",
         badgeText: "Codex Thinking",
       });
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent-responding",
+        badgeText: "Codex Responding",
+      });
+
+    await page.waitForTimeout(500);
 
     await expect
       .poll(async () => {

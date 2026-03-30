@@ -675,10 +675,16 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
           stateChanged = true;
         }
         if (parsed.output && terminalState.agentName) {
-          const nextAgentState = classifyAgentOutputPhase(
+          let nextAgentState = classifyAgentOutputPhase(
             terminalState.agentName,
             parsed.output,
           );
+          if (
+            terminalState.agentState === "responding" &&
+            nextAgentState === "thinking"
+          ) {
+            nextAgentState = "responding";
+          }
           if (nextAgentState && terminalState.agentState !== nextAgentState) {
             terminalState.agentState = nextAgentState;
             stateChanged = true;
