@@ -257,4 +257,101 @@ test.describe("Terminal Tab Status on Reconnection", () => {
       )
       .toContain(reconnectMarker);
   });
+
+  test("should keep increasing reconnect attempts until ready is received", async ({
+    page,
+  }) => {
+    await resetAppState(page, APP_URL);
+
+    const reconnectAttempts = await page.evaluate(async () => {
+      const OriginalWebSocket = window.WebSocket;
+      const originalClearTimeout = window.clearTimeout.bind(window);
+      const originalSetTimeout = window.setTimeout.bind(window);
+      const timerQueue = [];
+      const statuses = [];
+      const instances = [];
+
+      class FakeWebSocket {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSING = 2;
+        static CLOSED = 3;
+
+        constructor(url) {
+          this.url = url;
+          this.readyState = FakeWebSocket.CONNECTING;
+          this.sent = [];
+          this.onopen = null;
+          this.onmessage = null;
+          this.onclose = null;
+          this.onerror = null;
+          instances.push(this);
+        }
+
+        send(payload) {
+          this.sent.push(payload);
+        }
+
+        close() {
+          this.readyState = FakeWebSocket.CLOSED;
+          this.onclose?.();
+        }
+      }
+
+      const flushReconnectTimer = async () => {
+        const next = timerQueue.shift();
+        if (!next) {
+          throw new Error("Expected reconnect timer to be scheduled");
+        }
+        next();
+        await Promise.resolve();
+      };
+
+      window.WebSocket = FakeWebSocket;
+      window.setTimeout = ((fn) => {
+        timerQueue.push(fn);
+        return timerQueue.length;
+      });
+      window.clearTimeout = (() => {});
+
+      try {
+        const socket = new ReconnectingWebSocket("ws://fake", "term-test", {
+          onMessage: () => {},
+          onStatusChange: (status, extra) => {
+            statuses.push({
+              status,
+              attempt: extra?.attempt ?? null,
+            });
+          },
+        });
+
+        socket.baseDelay = 0;
+        socket.maxDelay = 0;
+
+        const firstTransport = instances.at(-1);
+        firstTransport.readyState = FakeWebSocket.OPEN;
+        firstTransport.onopen?.();
+        firstTransport.close();
+
+        await flushReconnectTimer();
+
+        const secondTransport = instances.at(-1);
+        secondTransport.readyState = FakeWebSocket.OPEN;
+        secondTransport.onopen?.();
+        secondTransport.close();
+
+        await flushReconnectTimer();
+
+        return statuses
+          .filter((entry) => entry.status === "reconnecting")
+          .map((entry) => entry.attempt);
+      } finally {
+        window.WebSocket = OriginalWebSocket;
+        window.setTimeout = originalSetTimeout;
+        window.clearTimeout = originalClearTimeout;
+      }
+    });
+
+    expect(reconnectAttempts).toEqual([1, 2]);
+  });
 });

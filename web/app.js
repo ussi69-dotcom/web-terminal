@@ -284,15 +284,16 @@ class ReconnectingWebSocket {
 
   connect() {
     const isReconnectTransport = this.openedOnce || this.retryCount > 0;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws = new WebSocket(this.url);
     this.ws.onopen = () => {
-      this.retryCount = 0;
       this.startHeartbeat();
       this.openedOnce = true;
       this.awaitingReconnectReady = isReconnectTransport;
       this.callbacks.onTransportOpen?.(isReconnectTransport);
       if (!isReconnectTransport) {
-        this.callbacks.onStatusChange("connected");
+        this.markConnectionReady(false);
       }
     };
     this.ws.onmessage = (e) => {
@@ -309,8 +310,7 @@ class ReconnectingWebSocket {
         if (data.type === "reconnect_lifecycle") {
           this.callbacks.onLifecycle?.(data);
           if (data.phase === "ready" && this.awaitingReconnectReady) {
-            this.awaitingReconnectReady = false;
-            this.callbacks.onStatusChange("connected", { resumed: true });
+            this.markConnectionReady(true);
           }
           return;
         }
@@ -407,7 +407,14 @@ class ReconnectingWebSocket {
   retry() {
     this.retryCount = 0;
     this.intentionallyClosed = false;
+    this.awaitingReconnectReady = false;
     this.connect();
+  }
+
+  markConnectionReady(resumed) {
+    this.retryCount = 0;
+    this.awaitingReconnectReady = false;
+    this.callbacks.onStatusChange("connected", resumed ? { resumed: true } : {});
   }
 
   startHeartbeat() {
@@ -2460,22 +2467,51 @@ class ClipboardManager {
       if (handled) return;
     }
 
+    const clipboardApi = navigator.clipboard;
+    let clipboardReadError = null;
+
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      if (await this.handleClipboardItems(clipboardItems, terminalWs)) return;
+      if (typeof clipboardApi?.read === "function") {
+        const clipboardItems = await clipboardApi.read();
+        if (await this.handleClipboardItems(clipboardItems, terminalWs)) return;
+      }
     } catch (err) {
-      // Fallback for browsers that don't support clipboard.read()
-      try {
-        const text = await navigator.clipboard.readText();
+      clipboardReadError = err;
+      console.warn("Clipboard item read failed:", err);
+    }
+
+    try {
+      if (typeof clipboardApi?.readText === "function") {
+        const text = await clipboardApi.readText();
         if (text) {
           this.handleTextPaste(text, terminalWs);
           return;
         }
-      } catch (readErr) {
-        console.error("Clipboard read failed:", readErr);
-        this.showToast("Clipboard access denied. Use paste button.", "error");
       }
+    } catch (readErr) {
+      const effectiveError = readErr || clipboardReadError;
+      if (effectiveError) {
+        console.warn("Clipboard text read failed:", effectiveError);
+      }
+      this.showClipboardUnavailableToast();
+      return;
     }
+
+    if (
+      clipboardReadError ||
+      !clipboardApi ||
+      (typeof clipboardApi.read !== "function" &&
+        typeof clipboardApi.readText !== "function")
+    ) {
+      this.showClipboardUnavailableToast();
+    }
+  }
+
+  showClipboardUnavailableToast() {
+    this.showToast(
+      "Clipboard unavailable here. Use system paste in terminal.",
+      "pending",
+    );
   }
 
   async handleClipboardItems(clipboardItems, terminalWs) {
