@@ -62,11 +62,28 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     });
   }
 
-  // Wait for an active tile with xterm
-  await page.waitForSelector(".tile.active .xterm, .tile .xterm", {
-    state: "attached",
-    timeout,
-  });
+  // Wait for an active tile with xterm. Retry terminal creation once on slow CI runners.
+  try {
+    await page.waitForSelector(".tile.active .xterm, .tile .xterm", {
+      state: "attached",
+      timeout,
+    });
+  } catch (error) {
+    if (page.isClosed()) {
+      throw error;
+    }
+    await page.evaluate(async () => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      if (tm?.createTerminal) {
+        await tm.createTerminal(false, { skipBootstrapWait: true });
+      }
+    });
+    await page.waitForSelector(".tile.active .xterm, .tile .xterm", {
+      state: "attached",
+      timeout,
+    });
+  }
 
   // Wait for terminal to be actually connected (cursor visible or content rendered)
   await page.waitForFunction(

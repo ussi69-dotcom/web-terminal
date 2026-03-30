@@ -1,7 +1,9 @@
+import path from "node:path";
 import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
-const DEFAULT_ROOT = "/home/deploy";
+const DEFAULT_ROOT = process.env.HOME || "/home/deploy";
+const DEFAULT_ROOT_LABEL = path.basename(DEFAULT_ROOT);
 
 test.describe("Mobile regressions", () => {
   test.use({
@@ -53,7 +55,7 @@ test.describe("Mobile regressions", () => {
     expect(apiData.fallback).toBe(true);
     expect(state.currentDirPath || DEFAULT_ROOT).toBe(DEFAULT_ROOT);
     expect(state.breadcrumb).toContain("home");
-    expect(state.breadcrumb).toContain("deploy");
+    expect(state.breadcrumb).toContain(DEFAULT_ROOT_LABEL);
     expect(state.hasEntries).toBe(true);
   });
 
