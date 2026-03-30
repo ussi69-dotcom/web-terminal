@@ -8,7 +8,11 @@ import {
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { createGitWorktreeDetector, getTerminalTelemetry } from "./telemetry";
+import {
+  createGitWorktreeDetector,
+  getTerminalTelemetry,
+  parseShellIntegrationChunk,
+} from "./telemetry";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -59,6 +63,9 @@ type Terminal = {
   scrollback: string[]; // ring buffer of recent terminal output chunks
   scrollbackBytes: number; // current bytes in ring buffer
   hadSocketConnection: boolean; // tracks whether a websocket was ever connected
+  running: boolean;
+  lastExitCode: number | null;
+  shellIntegrationCarry: string;
 };
 
 type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
@@ -138,6 +145,7 @@ const socketReconnectState = new WeakMap<
   { pendingReady: boolean }
 >();
 const utf8Decoder = new TextDecoder();
+let bashIntegrationRcPathPromise: Promise<string> | null = null;
 
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -149,6 +157,23 @@ function sendReconnectLifecycle(
 ) {
   if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "reconnect_lifecycle", phase, ...extra }));
+}
+
+function broadcastTerminalState(term: Terminal) {
+  const sockets = terminalSockets.get(term.id);
+  if (!sockets || sockets.size === 0) return;
+  const payload = JSON.stringify({
+    type: "terminal_state",
+    running: term.running,
+    lastExitCode: term.lastExitCode,
+  });
+  for (const ws of sockets) {
+    try {
+      ws.send(payload);
+    } catch {
+      // WebSocket closed
+    }
+  }
 }
 
 async function finalizeReconnectReady(
@@ -477,6 +502,8 @@ function serializeTerminal(term: Terminal) {
     cols: term.cols,
     rows: term.rows,
     cwd: term.cwd,
+    running: term.running,
+    lastExitCode: term.lastExitCode,
     backendMode: getBackendMode(),
     supportsLinkedView: supportsLinkedView(term),
   };
@@ -533,14 +560,94 @@ function broadcastTerminalOutput(id: string, data: string) {
   }
 }
 
+async function ensureBashIntegrationRc(): Promise<string> {
+  if (bashIntegrationRcPathPromise) return bashIntegrationRcPathPromise;
+
+  bashIntegrationRcPathPromise = (async () => {
+    const rcPath = "/tmp/deckterm-bash-integration.rc";
+    const rcContents = [
+      'if [ -f /etc/profile ]; then',
+      '  . /etc/profile',
+      'fi',
+      'if [ -f "$HOME/.bash_profile" ]; then',
+      '  . "$HOME/.bash_profile"',
+      'elif [ -f "$HOME/.bash_login" ]; then',
+      '  . "$HOME/.bash_login"',
+      'elif [ -f "$HOME/.profile" ]; then',
+      '  . "$HOME/.profile"',
+      'fi',
+      'if [ -f /etc/bash.bashrc ]; then',
+      '  . /etc/bash.bashrc',
+      'fi',
+      'if [ -f "$HOME/.bashrc" ]; then',
+      '  . "$HOME/.bashrc"',
+      'fi',
+      '__deckterm_running_start() {',
+      "  printf '\\033]9;9;deckterm;running;start\\a'",
+      '}',
+      '__deckterm_running_done() {',
+      '  local exit_code=$?',
+      '  if [ "${__deckterm_prompt_seen:-0}" -eq 0 ]; then',
+      '    __deckterm_prompt_seen=1',
+      '    return',
+      '  fi',
+      "  printf '\\033]9;9;deckterm;running;done;%s\\a' \"$exit_code\"",
+      '}',
+      'case ";${PROMPT_COMMAND};" in',
+      '  *";__deckterm_running_done;"*) ;;',
+      '  "")',
+      '    PROMPT_COMMAND="__deckterm_running_done"',
+      '    ;;',
+      '  *)',
+      '    PROMPT_COMMAND="__deckterm_running_done; ${PROMPT_COMMAND}"',
+      '    ;;',
+      'esac',
+      "PS0=$'\\033]9;9;deckterm;running;start\\a'",
+      "",
+    ].join("\n");
+    await Bun.write(rcPath, rcContents);
+    return rcPath;
+  })();
+
+  return bashIntegrationRcPathPromise;
+}
+
 function createTerminalHandle(id: string, cols: number, rows: number) {
   return new BunTerminal({
     cols,
     rows,
     data(term, data) {
       const strData = typeof data === "string" ? data : utf8Decoder.decode(data);
-      appendScrollback(id, strData);
-      broadcastTerminalOutput(id, strData);
+      const terminalState = terminals.get(id);
+      const parsed = parseShellIntegrationChunk(strData, {
+        carry: terminalState?.shellIntegrationCarry || "",
+        running: terminalState?.running || false,
+        lastExitCode:
+          typeof terminalState?.lastExitCode === "number"
+            ? terminalState.lastExitCode
+            : null,
+      });
+
+      if (terminalState) {
+        terminalState.shellIntegrationCarry = parsed.state.carry;
+        let stateChanged = false;
+        if (terminalState.running !== parsed.state.running) {
+          terminalState.running = parsed.state.running;
+          stateChanged = true;
+        }
+        if (terminalState.lastExitCode !== parsed.state.lastExitCode) {
+          terminalState.lastExitCode = parsed.state.lastExitCode;
+          stateChanged = true;
+        }
+        if (stateChanged) {
+          broadcastTerminalState(terminalState);
+        }
+      }
+
+      if (parsed.output) {
+        appendScrollback(id, parsed.output);
+        broadcastTerminalOutput(id, parsed.output);
+      }
     },
   });
 }
@@ -655,6 +762,10 @@ async function createManagedTerminal({
 }): Promise<Terminal> {
   const home = process.env.HOME || "/home/deploy";
   const shell = process.env.SHELL || "/bin/bash";
+  const isBashShell = basename(shell) === "bash";
+  const bashRcPath = isBashShell ? await ensureBashIntegrationRc() : null;
+  const shellCommand =
+    bashRcPath && isBashShell ? [shell, "--rcfile", bashRcPath, "-i"] : [shell, "-il"];
   const terminal = createTerminalHandle(id, cols, rows);
 
   const closeAndRemoveTerminal = (
@@ -687,8 +798,7 @@ async function createManagedTerminal({
           String(rows),
           "-c",
           cwd,
-          shell,
-          "-il",
+          ...shellCommand,
         ],
         {
           env: {
@@ -719,7 +829,7 @@ async function createManagedTerminal({
       },
     });
   } else {
-    proc = Bun.spawn([shell, "-il"], {
+    proc = Bun.spawn(shellCommand, {
       cwd,
       env: {
         ...process.env,
@@ -753,6 +863,9 @@ async function createManagedTerminal({
     scrollback: [],
     scrollbackBytes: 0,
     hadSocketConnection: false,
+    running: false,
+    lastExitCode: null,
+    shellIntegrationCarry: "",
   };
 
   terminals.set(id, managedTerminal);

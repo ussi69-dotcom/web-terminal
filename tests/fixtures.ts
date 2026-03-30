@@ -57,7 +57,7 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
       // @ts-ignore
       const tm = window.terminalManager;
       if (tm?.createTerminal) {
-        await tm.createTerminal();
+        await tm.createTerminal(false, { skipBootstrapWait: true });
       }
     });
   }

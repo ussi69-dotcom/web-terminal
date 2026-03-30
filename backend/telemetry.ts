@@ -5,6 +5,8 @@ const BUSY_BOOTSTRAP_WINDOW_MS = 10_000;
 const MAX_SCROLLBACK_CHUNKS = 200;
 const GIT_COMMAND_TIMEOUT_MS = 3_000;
 const WORKTREE_CACHE_TTL_MS = 5_000;
+const SHELL_MARKER_PREFIX = "\x1b]9;9;deckterm;";
+const SHELL_MARKER_SUFFIX = "\x07";
 
 const PORT_PATTERNS = [
   /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/gi,
@@ -15,6 +17,8 @@ export type BackendMode = "raw" | "tmux";
 
 export type TerminalTelemetry = {
   busy: boolean;
+  running: boolean;
+  lastExitCode: number | null;
   ports: number[];
   isWorktree: boolean;
   backendMode: BackendMode;
@@ -25,7 +29,19 @@ type TelemetryTerminal = {
   createdAt: number;
   lastActivityAt: number;
   scrollback: string[];
+  running?: boolean;
+  lastExitCode?: number | null;
 };
+
+export type ShellIntegrationParseState = {
+  carry: string;
+  running: boolean;
+  lastExitCode: number | null;
+};
+
+export type ShellIntegrationEvent =
+  | { type: "running-start" }
+  | { type: "running-done"; exitCode: number | null };
 
 type WorktreeDetector = (cwd: string) => Promise<boolean>;
 
@@ -73,10 +89,80 @@ export async function getTerminalTelemetry(
   }
 
   return {
-    busy: hasRecentActivity || hasRecentBootstrapOutput,
+    busy:
+      Boolean(terminal.running) || hasRecentActivity || hasRecentBootstrapOutput,
+    running: Boolean(terminal.running),
+    lastExitCode:
+      typeof terminal.lastExitCode === "number" ? terminal.lastExitCode : null,
     ports: extractPortsFromScrollback(terminal.scrollback),
     isWorktree,
     backendMode,
+  };
+}
+
+export function parseShellIntegrationChunk(
+  chunk: string,
+  state: ShellIntegrationParseState = {
+    carry: "",
+    running: false,
+    lastExitCode: null,
+  },
+): {
+  output: string;
+  events: ShellIntegrationEvent[];
+  state: ShellIntegrationParseState;
+} {
+  const input = `${state.carry || ""}${chunk || ""}`;
+  const events: ShellIntegrationEvent[] = [];
+  let output = "";
+  let cursor = 0;
+  let running = state.running;
+  let lastExitCode = state.lastExitCode;
+  let carry = "";
+
+  while (cursor < input.length) {
+    const prefixIndex = input.indexOf(SHELL_MARKER_PREFIX, cursor);
+    if (prefixIndex === -1) {
+      output += input.slice(cursor);
+      cursor = input.length;
+      break;
+    }
+
+    output += input.slice(cursor, prefixIndex);
+    const payloadStart = prefixIndex + SHELL_MARKER_PREFIX.length;
+    const suffixIndex = input.indexOf(SHELL_MARKER_SUFFIX, payloadStart);
+    if (suffixIndex === -1) {
+      carry = input.slice(prefixIndex);
+      cursor = input.length;
+      break;
+    }
+
+    const payload = input.slice(payloadStart, suffixIndex);
+    if (payload === "running;start") {
+      running = true;
+      lastExitCode = null;
+      events.push({ type: "running-start" });
+    } else if (payload.startsWith("running;done;")) {
+      const codeValue = Number.parseInt(payload.slice("running;done;".length), 10);
+      const exitCode = Number.isFinite(codeValue) ? codeValue : null;
+      running = false;
+      lastExitCode = exitCode;
+      events.push({ type: "running-done", exitCode });
+    } else {
+      output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+    }
+
+    cursor = suffixIndex + SHELL_MARKER_SUFFIX.length;
+  }
+
+  return {
+    output,
+    events,
+    state: {
+      carry,
+      running,
+      lastExitCode,
+    },
   };
 }
 

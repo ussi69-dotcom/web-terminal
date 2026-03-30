@@ -12,7 +12,7 @@ const PALETTE = [
 ];
 
 const SIGNAL_PRIORITIES = {
-  busy: 1,
+  running: 1,
   ports: 2,
   worktree: 3,
 };
@@ -58,13 +58,19 @@ function normalizePorts(ports) {
   )].sort((left, right) => left - right);
 }
 
-function getWorkspaceSignalDescriptors({ busy = false, ports = [], isWorktree = false } = {}) {
+function getWorkspaceSignalDescriptors({
+  running = false,
+  busy = false,
+  ports = [],
+  isWorktree = false,
+} = {}) {
+  const isRunning = Boolean(running || busy);
   const descriptors = [];
-  if (busy) {
+  if (isRunning) {
     descriptors.push({
-      key: "busy",
-      label: "Busy",
-      priority: SIGNAL_PRIORITIES.busy,
+      key: "running",
+      label: "Running",
+      priority: SIGNAL_PRIORITIES.running,
     });
   }
 
@@ -88,10 +94,18 @@ function getWorkspaceSignalDescriptors({ busy = false, ports = [], isWorktree = 
   return descriptors;
 }
 
-function getPrimaryWorkspaceSignal({ busy = false, ports = [], isWorktree = false, cwd } = {}) {
+function getPrimaryWorkspaceSignal({
+  running = false,
+  busy = false,
+  ports = [],
+  isWorktree = false,
+  cwd,
+} = {}) {
   return {
     color: hashCwdToColor(cwd),
-    primarySignal: getWorkspaceSignalDescriptors({ busy, ports, isWorktree })[0] || null,
+    primarySignal:
+      getWorkspaceSignalDescriptors({ running, busy, ports, isWorktree })[0] ||
+      null,
   };
 }
 

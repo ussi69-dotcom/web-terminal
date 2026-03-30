@@ -16,24 +16,24 @@ test("blendWorkspaceColors dedupes and caps to 3", () => {
   expect(colors).toEqual(["#111", "#222", "#333"]);
 });
 
-test("getPrimaryWorkspaceSignal prioritizes busy over passive workspace signals", () => {
+test("getPrimaryWorkspaceSignal prioritizes running over passive workspace signals", () => {
   expect(
     getPrimaryWorkspaceSignal({
-      busy: true,
+      running: true,
       ports: [4174, 3000],
       isWorktree: true,
       cwd: "/home/deploy/deckterm",
     }),
   ).toEqual({
     color: hashCwdToColor("/home/deploy/deckterm"),
-    primarySignal: { key: "busy", label: "Busy", priority: 1 },
+    primarySignal: { key: "running", label: "Running", priority: 1 },
   });
 });
 
 test("getWorkspaceSignalDescriptors produces stable worktree and port descriptors", () => {
   expect(
     getWorkspaceSignalDescriptors({
-      busy: false,
+      running: false,
       ports: [4174, 3000, 4174, 8080],
       isWorktree: true,
     }),
@@ -45,13 +45,13 @@ test("getWorkspaceSignalDescriptors produces stable worktree and port descriptor
 
 test("getPrimaryWorkspaceSignal keeps cwd color behavior deterministic", () => {
   const first = getPrimaryWorkspaceSignal({
-    busy: false,
+    running: false,
     ports: [],
     isWorktree: false,
     cwd: "/srv/worktrees/api",
   });
   const second = getPrimaryWorkspaceSignal({
-    busy: false,
+    running: false,
     ports: [],
     isWorktree: false,
     cwd: "/srv/worktrees/api",

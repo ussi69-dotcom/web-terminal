@@ -316,11 +316,11 @@ body {
   display: none;
 }
 
-.tab[data-primary-signal="busy"] {
+.tab[data-primary-signal="running"] {
   border-color: rgba(248, 81, 73, 0.35);
 }
 
-.tab[data-primary-signal="busy"] .tab-signal-badge {
+.tab[data-primary-signal="running"] .tab-signal-badge {
   background: rgba(248, 81, 73, 0.12);
   border-color: rgba(248, 81, 73, 0.35);
   color: #ffb3ad;

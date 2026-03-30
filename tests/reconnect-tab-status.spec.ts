@@ -89,7 +89,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     expect(initialTabSignals).toEqual(
       expect.objectContaining({
         primarySignal: expect.stringMatching(
-          /^(none|busy|ports|worktree)$/,
+          /^(none|running|ports|worktree)$/,
         ),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),
@@ -134,7 +134,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     expect(reconnectingTabSignals).toEqual(
       expect.objectContaining({
         primarySignal: expect.stringMatching(
-          /^(none|busy|ports|worktree)$/,
+          /^(none|running|ports|worktree)$/,
         ),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),
@@ -229,7 +229,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     expect(finalTabSignals).toEqual(
       expect.objectContaining({
         primarySignal: expect.stringMatching(
-          /^(none|busy|ports|worktree)$/,
+          /^(none|running|ports|worktree)$/,
         ),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),

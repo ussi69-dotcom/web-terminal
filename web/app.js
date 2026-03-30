@@ -122,7 +122,7 @@ const TerminalColors =
   window.TerminalColors ||
   (() => {
     const SIGNAL_PRIORITIES = {
-      busy: 1,
+      running: 1,
       ports: 2,
       worktree: 3,
     };
@@ -183,16 +183,18 @@ const TerminalColors =
     };
 
     const getWorkspaceSignalDescriptors = ({
+      running = false,
       busy = false,
       ports = [],
       isWorktree = false,
     } = {}) => {
+      const isRunning = Boolean(running || busy);
       const descriptors = [];
-      if (busy) {
+      if (isRunning) {
         descriptors.push({
-          key: "busy",
-          label: "Busy",
-          priority: SIGNAL_PRIORITIES.busy,
+          key: "running",
+          label: "Running",
+          priority: SIGNAL_PRIORITIES.running,
         });
       }
 
@@ -217,6 +219,7 @@ const TerminalColors =
     };
 
     const getPrimaryWorkspaceSignal = ({
+      running = false,
       busy = false,
       ports = [],
       isWorktree = false,
@@ -224,7 +227,8 @@ const TerminalColors =
     } = {}) => ({
       color: hashCwdToColor(cwd),
       primarySignal:
-        getWorkspaceSignalDescriptors({ busy, ports, isWorktree })[0] || null,
+        getWorkspaceSignalDescriptors({ running, busy, ports, isWorktree })[0] ||
+        null,
     });
 
     return {
@@ -308,6 +312,10 @@ class ReconnectingWebSocket {
             this.awaitingReconnectReady = false;
             this.callbacks.onStatusChange("connected", { resumed: true });
           }
+          return;
+        }
+        if (data.type === "terminal_state") {
+          this.callbacks.onTerminalState?.(data);
           return;
         }
         if (data.type === "exit") {
@@ -3739,6 +3747,7 @@ class TerminalManager {
     this.telemetryRefreshInterval = null;
     this.viewportSyncFrame = 0;
     this.viewportFocusTimer = null;
+    this.notificationsEnabled = true;
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -4031,7 +4040,11 @@ class TerminalManager {
         this.terminals.forEach((terminal, id) => {
           const next = telemetryById.get(id);
           if (!next) return;
-          terminal.busy = Boolean(next.busy);
+          this.applyTerminalRuntimeState(id, {
+            running: Boolean(next.running ?? next.busy),
+            lastExitCode:
+              typeof next.lastExitCode === "number" ? next.lastExitCode : null,
+          });
           terminal.ports = normalizeWorkspacePorts(next.ports);
           terminal.isWorktree = Boolean(next.isWorktree);
           terminal.backendMode = next.backendMode || null;
@@ -4081,15 +4094,17 @@ class TerminalManager {
     const ports = normalizeWorkspacePorts(
       terminals.flatMap((terminal) => terminal.ports || []),
     );
-    const busy = terminals.some((terminal) => Boolean(terminal.busy));
+    const running = terminals.some((terminal) =>
+      Boolean(terminal.running ?? terminal.busy),
+    );
     const isWorktree = terminals.some((terminal) => Boolean(terminal.isWorktree));
     const descriptors = TerminalColors.getWorkspaceSignalDescriptors({
-      busy,
+      running,
       ports,
       isWorktree,
     });
     const primarySignalDescriptor = TerminalColors.getPrimaryWorkspaceSignal({
-      busy,
+      running,
       ports,
       isWorktree,
       cwd,
@@ -4102,7 +4117,7 @@ class TerminalManager {
       ),
       cwd,
       label: this.formatCwdLabel(cwd),
-      busy,
+      running,
       ports,
       isWorktree,
       descriptors,
@@ -4131,7 +4146,8 @@ class TerminalManager {
     const signalBadge = tab.querySelector(".tab-signal-badge");
 
     tab.dataset.primarySignal = snapshot.primarySignal;
-    tab.dataset.busy = snapshot.busy ? "true" : "false";
+    tab.dataset.running = snapshot.running ? "true" : "false";
+    tab.dataset.busy = snapshot.running ? "true" : "false";
     tab.dataset.ports = snapshot.ports.join(",");
     tab.dataset.isWorktree = snapshot.isWorktree ? "true" : "false";
     tab.title = this.composeWorkspaceTooltip(snapshot);
@@ -4144,6 +4160,47 @@ class TerminalManager {
         "aria-hidden",
         snapshot.primarySignalLabel ? "false" : "true",
       );
+    }
+  }
+
+  applyTerminalRuntimeState(id, nextState = {}) {
+    const terminal = this.terminals.get(id);
+    if (!terminal) return;
+
+    const prevRunning = Boolean(terminal.running ?? terminal.busy);
+    const nextRunning = Boolean(nextState.running);
+    const nextExitCode =
+      typeof nextState.lastExitCode === "number" ? nextState.lastExitCode : null;
+
+    terminal.running = nextRunning;
+    terminal.busy = nextRunning;
+    terminal.lastExitCode = nextExitCode;
+
+    if (prevRunning && !nextRunning) {
+      this.maybeNotifyCommandFinished(terminal);
+    }
+
+    this.updateTabGroups();
+  }
+
+  maybeNotifyCommandFinished(terminal) {
+    if (!this.notificationsEnabled) return;
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    if (!document.hidden) return;
+
+    const label = this.formatCwdLabel(terminal.cwd || "Terminal");
+    const exitCode =
+      typeof terminal.lastExitCode === "number" ? terminal.lastExitCode : 0;
+    const body =
+      exitCode === 0
+        ? `${label}: command completed successfully`
+        : `${label}: command exited with code ${exitCode}`;
+
+    try {
+      new Notification("Command finished", { body });
+    } catch (err) {
+      console.warn("Command completion notification failed:", err);
     }
   }
 
@@ -4515,6 +4572,9 @@ class TerminalManager {
         dbg(`[reconnect] Lifecycle for ${id}: ${message.phase}`, message);
         this.handleReconnectLifecycle(id, message);
       },
+      onTerminalState: (message) => {
+        this.applyTerminalRuntimeState(id, message);
+      },
     });
 
     const inputState = {
@@ -4569,7 +4629,9 @@ class TerminalManager {
       debugOverlay,
       dimensionTimer: null,
       cwd: restoredCwd,
+      running: false,
       busy: false,
+      lastExitCode: null,
       ports: [],
       isWorktree: false,
       backendMode,
@@ -5446,6 +5508,7 @@ class TerminalManager {
           onStatusChange: (status, extra) =>
             this.handleStatusChange(id, status, extra),
           onLifecycle: (message) => this.handleReconnectLifecycle(id, message),
+          onTerminalState: (message) => this.applyTerminalRuntimeState(id, message),
         },
       );
 
@@ -5511,7 +5574,9 @@ class TerminalManager {
         debugOverlay,
         dimensionTimer: null,
         cwd: resolvedCwd,
+        running: false,
         busy: false,
+        lastExitCode: null,
         ports: [],
         isWorktree: false,
         backendMode: terminalInfo.backendMode || null,

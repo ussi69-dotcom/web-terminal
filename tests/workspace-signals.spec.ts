@@ -69,6 +69,8 @@ test.describe("Workspace telemetry contract", () => {
       id?: string;
       cwd?: string;
       busy?: boolean;
+      running?: boolean;
+      lastExitCode?: number | null;
       ports?: number[];
       isWorktree?: boolean;
       backendMode?: string;
@@ -80,6 +82,8 @@ test.describe("Workspace telemetry contract", () => {
         id: expect.any(String),
         cwd: expect.any(String),
         busy: expect.any(Boolean),
+        running: expect.any(Boolean),
+        lastExitCode: null,
         ports: expect.any(Array),
         isWorktree: expect.any(Boolean),
         backendMode: expect.stringMatching(/^(raw|tmux)$/),
@@ -138,7 +142,7 @@ test.describe("Workspace telemetry contract", () => {
       });
   });
 
-  test("active workspace tab renders busy, port, and worktree signals", async ({
+  test("active workspace tab renders running, port, and worktree signals", async ({
     page,
   }) => {
     await page.goto(BASE_URL);
@@ -179,7 +183,7 @@ test.describe("Workspace telemetry contract", () => {
     expect(workspaceContext.workspaceId).toBeTruthy();
     expect(workspaceContext.activeId).toBeTruthy();
 
-    await page.keyboard.type("printf 'listening on port 4174\\n'");
+    await page.keyboard.type("printf 'listening on port 4174\\n'; sleep 1");
     await page.keyboard.press("Enter");
 
     await expect
@@ -190,6 +194,7 @@ test.describe("Workspace telemetry contract", () => {
         const terminals = (await response.json()) as Array<{
           id?: string;
           busy?: boolean;
+          running?: boolean;
           ports?: number[];
           isWorktree?: boolean;
         }>;
@@ -197,14 +202,14 @@ test.describe("Workspace telemetry contract", () => {
 
         return {
           found: Boolean(terminal),
-          busy: Boolean(terminal?.busy),
+          running: Boolean(terminal?.running),
           ports: terminal?.ports || [],
           isWorktree: Boolean(terminal?.isWorktree),
         };
       })
       .toEqual({
         found: true,
-        busy: true,
+        running: true,
         ports: [4174],
         isWorktree: true,
       });
@@ -215,7 +220,7 @@ test.describe("Workspace telemetry contract", () => {
         return page.locator(tabSelector).evaluate((tab) => ({
           className: tab.className,
           primarySignal: tab.getAttribute("data-primary-signal"),
-          busy: tab.getAttribute("data-busy"),
+          running: tab.getAttribute("data-running"),
           ports: tab.getAttribute("data-ports"),
           isWorktree: tab.getAttribute("data-is-worktree"),
           badgeText:
@@ -224,17 +229,90 @@ test.describe("Workspace telemetry contract", () => {
         }));
       })
       .toMatchObject({
-        primarySignal: "busy",
-        busy: "true",
+        primarySignal: "running",
+        running: "true",
         ports: "4174",
         isWorktree: "true",
-        badgeText: "Busy",
+        badgeText: "Running",
       });
 
     const tooltip = await page.locator(tabSelector).getAttribute("title");
-    expect(tooltip).toContain("Busy");
+    expect(tooltip).toContain("Running");
     expect(tooltip).toContain("Ports 4174");
     expect(tooltip).toContain("Worktree");
+
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(`${BASE_URL}/api/terminals`);
+        expect(response.ok()).toBeTruthy();
+
+        const terminals = (await response.json()) as Array<{
+          cwd?: string;
+          running?: boolean;
+          lastExitCode?: number | null;
+        }>;
+        const terminal = terminals.find((item) => item.cwd === worktreeCwd);
+        return {
+          running: Boolean(terminal?.running),
+          lastExitCode:
+            typeof terminal?.lastExitCode === "number"
+              ? terminal.lastExitCode
+              : null,
+        };
+      })
+      .toEqual({
+        running: false,
+        lastExitCode: 0,
+      });
+  });
+
+  test("completion notification fires when running command finishes", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const notifications = [];
+      // @ts-ignore
+      window.__decktermNotifications = notifications;
+      class MockNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        constructor(title, options = {}) {
+          notifications.push({ title, body: options.body || "" });
+        }
+      }
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get() {
+          return true;
+        },
+      });
+      // @ts-ignore
+      window.Notification = MockNotification;
+    });
+
+    await page.goto(BASE_URL);
+    await waitForTerminal(page);
+
+    await page.keyboard.type("sleep 1");
+    await page.keyboard.press("Enter");
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          // @ts-ignore
+          return window.__decktermNotifications?.length || 0;
+        });
+      })
+      .toBeGreaterThan(0);
+
+    const notification = await page.evaluate(() => {
+      // @ts-ignore
+      return window.__decktermNotifications?.at(-1) || null;
+    });
+
+    expect(notification?.title).toContain("Command finished");
   });
 
   test("client-side cwd survives telemetry refresh without reverting", async ({
