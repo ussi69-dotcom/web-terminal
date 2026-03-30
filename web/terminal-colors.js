@@ -11,6 +11,13 @@ const PALETTE = [
   "#a371f7",
 ];
 
+const SIGNAL_PRIORITIES = {
+  agent: 1,
+  running: 2,
+  ports: 3,
+  worktree: 4,
+};
+
 function hashCwdToColor(cwd) {
   const input = cwd || "terminal";
   let hash = 2166136261;
@@ -43,20 +50,125 @@ function hexToRgba(hex, alpha = 1) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function normalizePorts(ports) {
+  if (!Array.isArray(ports)) return [];
+  return [...new Set(
+    ports
+      .map((port) => Number(port))
+      .filter((port) => Number.isInteger(port) && port > 0),
+  )].sort((left, right) => left - right);
+}
+
+function formatAgentLabel(agentName, agentState) {
+  if (!agentName || !agentState) return null;
+  const normalizedAgent =
+    String(agentName).trim().toLowerCase() === "claude" ? "Claude" :
+    String(agentName).trim().toLowerCase() === "codex" ? "Codex" :
+    null;
+  const normalizedState = String(agentState).trim().toLowerCase();
+
+  if (!normalizedAgent) return null;
+  if (normalizedState === "responding") {
+    return `${normalizedAgent} Responding`;
+  }
+  return normalizedAgent;
+}
+
+function getWorkspaceSignalDescriptors({
+  running = false,
+  busy = false,
+  agentName = null,
+  agentState = null,
+  ports = [],
+  isWorktree = false,
+} = {}) {
+  const isRunning = Boolean(running || busy);
+  const descriptors = [];
+  const agentLabel = formatAgentLabel(agentName, agentState);
+  if (agentLabel) {
+    const normalizedAgentState = String(agentState).trim().toLowerCase();
+    descriptors.push({
+      key: normalizedAgentState === "responding" ? "agent-responding" : "agent",
+      label: agentLabel,
+      priority: SIGNAL_PRIORITIES.agent,
+    });
+  }
+  if (isRunning) {
+    descriptors.push({
+      key: "running",
+      label: "Running",
+      priority: SIGNAL_PRIORITIES.running,
+    });
+  }
+
+  const normalizedPorts = normalizePorts(ports);
+  if (normalizedPorts.length > 0) {
+    descriptors.push({
+      key: `ports:${normalizedPorts.join(",")}`,
+      label: `Ports ${normalizedPorts.join(", ")}`,
+      priority: SIGNAL_PRIORITIES.ports,
+    });
+  }
+
+  if (isWorktree) {
+    descriptors.push({
+      key: "worktree",
+      label: "Worktree",
+      priority: SIGNAL_PRIORITIES.worktree,
+    });
+  }
+
+  return descriptors;
+}
+
+function getPrimaryWorkspaceSignal({
+  running = false,
+  busy = false,
+  agentName = null,
+  agentState = null,
+  ports = [],
+  isWorktree = false,
+  cwd,
+} = {}) {
+  return {
+    color: hashCwdToColor(cwd),
+    primarySignal:
+      getWorkspaceSignalDescriptors({
+        running,
+        busy,
+        agentName,
+        agentState,
+        ports,
+        isWorktree,
+      })[0] ||
+      null,
+  };
+}
+
 if (typeof window !== "undefined") {
   window.TerminalColors = {
     hashCwdToColor,
     blendWorkspaceColors,
     hexToRgba,
+    getWorkspaceSignalDescriptors,
+    getPrimaryWorkspaceSignal,
   };
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { hashCwdToColor, blendWorkspaceColors, hexToRgba };
+  module.exports = {
+    hashCwdToColor,
+    blendWorkspaceColors,
+    hexToRgba,
+    getWorkspaceSignalDescriptors,
+    getPrimaryWorkspaceSignal,
+  };
 }
 
 if (typeof exports !== "undefined") {
   exports.hashCwdToColor = hashCwdToColor;
   exports.blendWorkspaceColors = blendWorkspaceColors;
   exports.hexToRgba = hexToRgba;
+  exports.getWorkspaceSignalDescriptors = getWorkspaceSignalDescriptors;
+  exports.getPrimaryWorkspaceSignal = getPrimaryWorkspaceSignal;
 }

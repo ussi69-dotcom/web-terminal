@@ -1,4 +1,4 @@
-/* OpenCode Web Terminal - Floating Tiling Window Manager */
+/* DeckTerm - Floating Tiling Window Manager */
 /* Version 2.0 - Complete CSS rewrite for smart tiling */
 
 :root {
@@ -147,6 +147,15 @@ body {
   stroke-width: 1.5;
 }
 
+.btn-icon-tmux:not([hidden]) {
+  border-color: rgba(88, 166, 255, 0.3);
+  color: var(--accent-blue);
+}
+
+.btn-icon-tmux:not([hidden]):hover {
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
 /* =============================================================================
    TABS
    ============================================================================= */
@@ -183,6 +192,11 @@ body {
 
 .tab:hover {
   background: var(--bg-hover);
+}
+
+.tab:focus-visible {
+  outline: 2px solid rgba(88, 166, 255, 0.9);
+  outline-offset: 2px;
 }
 
 .tab.active {
@@ -279,6 +293,77 @@ body {
 
 .tab.multicolor .tab-count {
   display: inline-flex;
+}
+
+.tab-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(110, 118, 129, 0.14);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tab-signal-badge[hidden] {
+  display: none;
+}
+
+.tab[data-primary-signal="running"] {
+  border-color: rgba(248, 81, 73, 0.35);
+}
+
+.tab[data-primary-signal="running"] .tab-signal-badge {
+  background: rgba(248, 81, 73, 0.12);
+  border-color: rgba(248, 81, 73, 0.35);
+  color: #ffb3ad;
+}
+
+.tab[data-primary-signal="agent"] {
+  border-color: rgba(210, 153, 34, 0.4);
+}
+
+.tab[data-primary-signal="agent"] .tab-signal-badge {
+  background: rgba(210, 153, 34, 0.14);
+  border-color: rgba(210, 153, 34, 0.38);
+  color: #f2cf7f;
+}
+
+.tab[data-primary-signal="agent-responding"] {
+  border-color: rgba(63, 185, 80, 0.42);
+}
+
+.tab[data-primary-signal="agent-responding"] .tab-signal-badge {
+  background: rgba(63, 185, 80, 0.14);
+  border-color: rgba(63, 185, 80, 0.4);
+  color: #b7f5c0;
+}
+
+.tab[data-primary-signal="ports"] {
+  border-color: rgba(88, 166, 255, 0.35);
+}
+
+.tab[data-primary-signal="ports"] .tab-signal-badge {
+  background: rgba(88, 166, 255, 0.12);
+  border-color: rgba(88, 166, 255, 0.35);
+  color: #a9d1ff;
+}
+
+.tab[data-primary-signal="worktree"] {
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.tab[data-primary-signal="worktree"] .tab-signal-badge {
+  background: rgba(63, 185, 80, 0.12);
+  border-color: rgba(63, 185, 80, 0.35);
+  color: #9be7a9;
 }
 
 .tab-index {
@@ -637,6 +722,22 @@ body {
 .terminal-wrapper .xterm .xterm-viewport::-webkit-scrollbar-thumb:active,
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:active {
   background: #58a6ff !important;
+}
+
+body.touch-input-mode .xterm .xterm-helper-textarea {
+  color: transparent !important;
+  background: transparent !important;
+  caret-color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+body.touch-input-mode .xterm .composition-view,
+body.touch-input-mode .xterm .composition-view.active {
+  color: transparent !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  pointer-events: none;
 }
 
 /* =============================================================================
@@ -2103,7 +2204,7 @@ body.virtual-keyboard-open .extra-keys {
 }
 
 /* =============================================================================
-   APP PANELS (OpenCode, etc.)
+   APP PANELS
    ============================================================================= */
 
 .app-panel {

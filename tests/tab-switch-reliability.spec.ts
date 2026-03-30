@@ -1,4 +1,10 @@
-import { test, expect, waitForTerminal, resetAppState } from "./fixtures";
+import {
+  test,
+  expect,
+  waitForTerminal,
+  resetAppState,
+  pressDocumentShortcut,
+} from "./fixtures";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
@@ -41,6 +47,45 @@ test.describe("Tab Switching Reliability", () => {
     ).toHaveClass(/active/);
     await expect(
       page.locator(`#terminals-tabs .tab[data-workspace-id="${activeWs}"]`),
+    ).not.toHaveClass(/active/);
+  });
+
+  test("keyboard focus and browser-safe shortcut switch workspaces", async ({
+    page,
+  }) => {
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
+
+    await page.click("#new-terminal");
+    await page.waitForTimeout(800);
+
+    const activeTab = page.locator("#terminals-tabs .tab.active").first();
+    const targetTab = page.locator("#terminals-tabs .tab:not(.active)").first();
+
+    await expect(activeTab).toBeVisible();
+    await expect(targetTab).toBeVisible();
+
+    const activeWs = await activeTab.getAttribute("data-workspace-id");
+    const targetWs = await targetTab.getAttribute("data-workspace-id");
+
+    await targetTab.focus();
+    await expect(targetTab).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(
+      page.locator(`#terminals-tabs .tab[data-workspace-id="${targetWs}"]`),
+    ).toHaveClass(/active/);
+    await expect(
+      page.locator(`#terminals-tabs .tab[data-workspace-id="${activeWs}"]`),
+    ).not.toHaveClass(/active/);
+
+    await pressDocumentShortcut(page, "ArrowLeft", { alt: true, shift: true });
+
+    await expect(
+      page.locator(`#terminals-tabs .tab[data-workspace-id="${activeWs}"]`),
+    ).toHaveClass(/active/);
+    await expect(
+      page.locator(`#terminals-tabs .tab[data-workspace-id="${targetWs}"]`),
     ).not.toHaveClass(/active/);
   });
 });

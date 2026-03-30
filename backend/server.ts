@@ -8,6 +8,13 @@ import {
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  classifyAgentOutputPhase,
+  createGitWorktreeDetector,
+  getTerminalTelemetry,
+  parseShellIntegrationChunk,
+  resolveAgentOutputState,
+} from "./telemetry";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -58,6 +65,13 @@ type Terminal = {
   scrollback: string[]; // ring buffer of recent terminal output chunks
   scrollbackBytes: number; // current bytes in ring buffer
   hadSocketConnection: boolean; // tracks whether a websocket was ever connected
+  running: boolean;
+  lastExitCode: number | null;
+  agentName: "codex" | "claude" | null;
+  agentState: "thinking" | "responding" | null;
+  agentHasUserPrompt: boolean;
+  agentRespondingTimer: ReturnType<typeof setTimeout> | null;
+  shellIntegrationCarry: string;
 };
 
 type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
@@ -80,6 +94,10 @@ const TERMINAL_IDLE_TIMEOUT_MS = parseInt(
   process.env.TERMINAL_IDLE_TIMEOUT_MS || String(2 * 60 * 60 * 1000),
   10,
 ); // 2 hours default
+const AGENT_RESPONDING_IDLE_MS = parseInt(
+  process.env.AGENT_RESPONDING_IDLE_MS || "700",
+  10,
+);
 
 const CF_ACCESS_REQUIRED = process.env.CF_ACCESS_REQUIRED === "1";
 const CF_ACCESS_TEAM_NAME = process.env.CF_ACCESS_TEAM_NAME || "";
@@ -137,9 +155,24 @@ const socketReconnectState = new WeakMap<
   { pendingReady: boolean }
 >();
 const utf8Decoder = new TextDecoder();
+let bashIntegrationRcPathPromise: Promise<string> | null = null;
 
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+function hasVisibleUserInput(data: string | Uint8Array) {
+  const text = typeof data === "string" ? data : utf8Decoder.decode(data);
+  if (!text) return false;
+  const withoutEscapeSequences = text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1bP[\s\S]*?(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[@-_]/g, "");
+  return (
+    /[^\x00-\x1f\x7f]/.test(withoutEscapeSequences) ||
+    /[\r\n]/.test(withoutEscapeSequences)
+  );
+}
 
 function sendReconnectLifecycle(
   ws: ServerWebSocket<WsData>,
@@ -148,6 +181,45 @@ function sendReconnectLifecycle(
 ) {
   if (ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "reconnect_lifecycle", phase, ...extra }));
+}
+
+function broadcastTerminalState(term: Terminal) {
+  const sockets = terminalSockets.get(term.id);
+  if (!sockets || sockets.size === 0) return;
+  const payload = JSON.stringify({
+    type: "terminal_state",
+    running: term.running,
+    lastExitCode: term.lastExitCode,
+    agentName: term.agentName,
+    agentState: term.agentState,
+  });
+  for (const ws of sockets) {
+    try {
+      ws.send(payload);
+    } catch {
+      // WebSocket closed
+    }
+  }
+}
+
+function clearAgentRespondingTimer(term: Terminal) {
+  if (!term.agentRespondingTimer) return;
+  clearTimeout(term.agentRespondingTimer);
+  term.agentRespondingTimer = null;
+}
+
+function scheduleAgentThinkingFallback(term: Terminal) {
+  clearAgentRespondingTimer(term);
+  term.agentRespondingTimer = setTimeout(() => {
+    const current = terminals.get(term.id);
+    if (!current || current !== term) return;
+    term.agentRespondingTimer = null;
+    if (!term.running || !term.agentName || term.agentState !== "responding") {
+      return;
+    }
+    term.agentState = "thinking";
+    broadcastTerminalState(term);
+  }, AGENT_RESPONDING_IDLE_MS);
 }
 
 async function finalizeReconnectReady(
@@ -293,92 +365,16 @@ async function recoverTmuxSessions(): Promise<number> {
       // This handles UUIDs correctly since they use dashes, not underscores
       const id = parts.slice(2).join("_");
 
-      // Get tmux session info
-      const infoResult = Bun.spawn([
-        "tmux",
-        "display-message",
-        "-t",
-        sessionName,
-        "-p",
-        "#{pane_current_path}:#{window_width}:#{window_height}",
-      ]);
-      const infoOutput = await new Response(infoResult.stdout).text();
-      await infoResult.exited;
-
-      const [cwd = "/home/deploy", colsStr = "120", rowsStr = "30"] = infoOutput
-        .trim()
-        .split(":");
-      const cols = parseInt(colsStr, 10) || 120;
-      const rows = parseInt(rowsStr, 10) || 30;
-
-      // Create BunTerminal for I/O
-      const terminal = new BunTerminal({
-        cols,
-        rows,
-        data(term, data) {
-          const strData =
-            typeof data === "string" ? data : utf8Decoder.decode(data);
-          appendScrollback(id, strData);
-
-          const sockets = terminalSockets.get(id);
-          if (sockets && sockets.size > 0) {
-            for (const ws of sockets) {
-              try {
-                ws.send(strData);
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-        },
-      });
-
-      // Attach to existing session
-      const proc = Bun.spawn(["tmux", "attach-session", "-t", sessionName], {
-        cwd,
-        env: {
-          ...process.env,
-          TERM: "xterm-256color",
-          COLORTERM: "truecolor",
-        },
-        // @ts-expect-error - terminal option is Bun 1.3.5+ API
-        terminal,
-        onExit() {
-          terminals.delete(id);
-          terminalSockets.delete(id);
-          terminal.close();
-        },
-      });
-
-      // Hide status bar for recovered session
-      const hideStatusProc = Bun.spawn([
-        "tmux",
-        "set-option",
-        "-t",
-        sessionName,
-        "status",
-        "off",
-      ]);
-      await hideStatusProc.exited;
-
-      const now = Date.now();
-      terminals.set(id, {
+      const { cwd, cols, rows } = await getTmuxSessionInfo(sessionName);
+      await createManagedTerminal({
         id,
-        proc,
-        terminal,
         cwd,
         cols,
         rows,
-        createdAt: now,
-        lastActivityAt: now,
         ownerId,
         ownerEmail: "recovered",
         sessionName,
-        scrollback: [],
-        scrollbackBytes: 0,
-        hadSocketConnection: false,
       });
-      terminalSockets.set(id, new Set());
 
       recovered++;
       console.log(`[tmux] Recovered session: ${sessionName} -> terminal ${id}`);
@@ -415,11 +411,6 @@ async function getAllowedRealRoots(): Promise<string[]> {
   }
   allowedRealRootsCache = roots;
   return roots;
-}
-
-async function getDefaultBrowseRoot(): Promise<string> {
-  const roots = await getAllowedRealRoots();
-  return roots[0] || DEFAULT_ALLOWED_ROOT;
 }
 
 function isWithinAllowedRoots(pathValue: string, roots: string[]): boolean {
@@ -459,6 +450,15 @@ async function resolveAllowedPath(
     }
   }
 }
+
+async function getDefaultBrowseRoot(): Promise<string> {
+  const roots = await getAllowedRealRoots();
+  return roots[0] || resolve(DEFAULT_ALLOWED_ROOT || "/");
+}
+
+const detectGitWorktree = createGitWorktreeDetector({
+  resolveAllowedPath,
+});
 
 async function authenticateWebSocketRequest(req: Request): Promise<{
   ok: boolean;
@@ -532,6 +532,467 @@ function getCurrentUser(c: {
     ownerId: accessPayload?.sub || "anonymous",
     ownerEmail: accessPayload?.email || "anonymous",
   };
+}
+
+function getBackendMode(): "tmux" | "raw" {
+  return TMUX_BACKEND ? "tmux" : "raw";
+}
+
+function supportsLinkedView(term: Terminal): boolean {
+  return Boolean(TMUX_BACKEND && term.sessionName);
+}
+
+function serializeTerminal(term: Terminal) {
+  return {
+    id: term.id,
+    cols: term.cols,
+    rows: term.rows,
+    cwd: term.cwd,
+    running: term.running,
+    lastExitCode: term.lastExitCode,
+    agentName: term.agentName,
+    agentState: term.agentState,
+    backendMode: getBackendMode(),
+    supportsLinkedView: supportsLinkedView(term),
+  };
+}
+
+function getTerminalCreationError(ownerId: string) {
+  if (!rateLimitState.canCreate()) {
+    return {
+      status: 429 as const,
+      body: { error: "Rate limit exceeded. Try again later." },
+    };
+  }
+
+  const userTerminals = Array.from(terminals.values()).filter(
+    (t) => t.ownerId === ownerId,
+  );
+  if (userTerminals.length >= MAX_TERMINALS_PER_USER) {
+    return {
+      status: 429 as const,
+      body: {
+        error: `Maximum terminals per user (${MAX_TERMINALS_PER_USER}) reached.`,
+      },
+    };
+  }
+
+  if (terminals.size >= MAX_TERMINALS) {
+    return {
+      status: 429 as const,
+      body: { error: `Maximum terminals (${MAX_TERMINALS}) reached.` },
+    };
+  }
+
+  return null;
+}
+
+function getTerminalSockets(id: string): Set<WebSocket> {
+  const existing = terminalSockets.get(id);
+  if (existing) return existing;
+  const sockets = new Set<WebSocket>();
+  terminalSockets.set(id, sockets);
+  return sockets;
+}
+
+function broadcastTerminalOutput(id: string, data: string) {
+  const sockets = terminalSockets.get(id);
+  if (!sockets || sockets.size === 0) return;
+  debug(`PTY ${id} data (${data.length} bytes)`);
+  for (const ws of sockets) {
+    try {
+      ws.send(data);
+    } catch {
+      // WebSocket closed
+    }
+  }
+}
+
+async function ensureBashIntegrationRc(): Promise<string> {
+  if (bashIntegrationRcPathPromise) return bashIntegrationRcPathPromise;
+
+  bashIntegrationRcPathPromise = (async () => {
+    const rcPath = "/tmp/deckterm-bash-integration.rc";
+    const rcContents = [
+      'if [ -f /etc/profile ]; then',
+      '  . /etc/profile',
+      'fi',
+      'if [ -f "$HOME/.bash_profile" ]; then',
+      '  . "$HOME/.bash_profile"',
+      'elif [ -f "$HOME/.bash_login" ]; then',
+      '  . "$HOME/.bash_login"',
+      'elif [ -f "$HOME/.profile" ]; then',
+      '  . "$HOME/.profile"',
+      'fi',
+      'if [ -f /etc/bash.bashrc ]; then',
+      '  . /etc/bash.bashrc',
+      'fi',
+      'if [ -f "$HOME/.bashrc" ]; then',
+      '  . "$HOME/.bashrc"',
+      'fi',
+      '__deckterm_running_start() {',
+      "  printf '\\033]9;9;deckterm;running;start\\a'",
+      '}',
+      '__deckterm_emit_marker() {',
+      "  printf '\\033]9;9;deckterm;%s\\a' \"$1\"",
+      '}',
+      '__deckterm_running_done() {',
+      '  local exit_code=$?',
+      '  if [ "${__deckterm_prompt_seen:-0}" -eq 0 ]; then',
+      '    __deckterm_prompt_seen=1',
+      '    return',
+      '  fi',
+      "  printf '\\033]9;9;deckterm;running;done;%s\\a' \"$exit_code\"",
+      '}',
+      '__deckterm_run_agent() {',
+      '  local agent_name="$1"',
+      '  shift',
+      '  __deckterm_emit_marker "agent;${agent_name};start"',
+      '  command "$agent_name" "$@"',
+      '  local exit_code=$?',
+      '  __deckterm_emit_marker "agent;${agent_name};done;${exit_code}"',
+      '  return "$exit_code"',
+      '}',
+      'if command -v codex >/dev/null 2>&1; then',
+      '  codex() { __deckterm_run_agent codex "$@"; }',
+      'fi',
+      'if command -v claude >/dev/null 2>&1; then',
+      '  claude() { __deckterm_run_agent claude "$@"; }',
+      'fi',
+      'case ";${PROMPT_COMMAND};" in',
+      '  *";__deckterm_running_done;"*) ;;',
+      '  "")',
+      '    PROMPT_COMMAND="__deckterm_running_done"',
+      '    ;;',
+      '  *)',
+      '    PROMPT_COMMAND="__deckterm_running_done; ${PROMPT_COMMAND}"',
+      '    ;;',
+      'esac',
+      "PS0=$'\\033]9;9;deckterm;running;start\\a'",
+      "",
+    ].join("\n");
+    await Bun.write(rcPath, rcContents);
+    return rcPath;
+  })();
+
+  return bashIntegrationRcPathPromise;
+}
+
+function createTerminalHandle(id: string, cols: number, rows: number) {
+  return new BunTerminal({
+    cols,
+    rows,
+    data(term, data) {
+      const strData = typeof data === "string" ? data : utf8Decoder.decode(data);
+      const terminalState = terminals.get(id);
+      const parsed = parseShellIntegrationChunk(strData, {
+        carry: terminalState?.shellIntegrationCarry || "",
+        running: terminalState?.running || false,
+        lastExitCode:
+          typeof terminalState?.lastExitCode === "number"
+            ? terminalState.lastExitCode
+            : null,
+        agentName: terminalState?.agentName || null,
+        agentState: terminalState?.agentState || null,
+      });
+
+      if (terminalState) {
+        terminalState.shellIntegrationCarry = parsed.state.carry;
+        let stateChanged = false;
+        if (terminalState.running !== parsed.state.running) {
+          terminalState.running = parsed.state.running;
+          stateChanged = true;
+        }
+        if (terminalState.lastExitCode !== parsed.state.lastExitCode) {
+          terminalState.lastExitCode = parsed.state.lastExitCode;
+          stateChanged = true;
+        }
+        if (terminalState.agentName !== parsed.state.agentName) {
+          if (terminalState.agentName && terminalState.agentName !== parsed.state.agentName) {
+            clearAgentRespondingTimer(terminalState);
+          }
+          terminalState.agentName = parsed.state.agentName;
+          if (parsed.state.agentName) {
+            terminalState.agentHasUserPrompt = false;
+          }
+          stateChanged = true;
+        }
+        if (terminalState.agentState !== parsed.state.agentState) {
+          terminalState.agentState = parsed.state.agentState;
+          stateChanged = true;
+        }
+        if (parsed.output && terminalState.agentName) {
+          const classifiedState = classifyAgentOutputPhase(
+            terminalState.agentName,
+            parsed.output,
+          );
+          const nextAgentState = resolveAgentOutputState({
+            currentState: terminalState.agentState,
+            classifiedState,
+            hasUserPrompted: terminalState.agentHasUserPrompt,
+          });
+          if (nextAgentState === "responding") {
+            scheduleAgentThinkingFallback(terminalState);
+          } else if (nextAgentState === "thinking") {
+            clearAgentRespondingTimer(terminalState);
+          }
+          if (nextAgentState && terminalState.agentState !== nextAgentState) {
+            terminalState.agentState = nextAgentState;
+            stateChanged = true;
+          }
+        }
+        if (
+          !terminalState.running &&
+          (terminalState.agentName || terminalState.agentState)
+        ) {
+          clearAgentRespondingTimer(terminalState);
+          terminalState.agentName = null;
+          terminalState.agentState = null;
+          terminalState.agentHasUserPrompt = false;
+          stateChanged = true;
+        }
+        if (stateChanged) {
+          broadcastTerminalState(terminalState);
+        }
+      }
+
+      if (parsed.output) {
+        appendScrollback(id, parsed.output);
+        broadcastTerminalOutput(id, parsed.output);
+      }
+    },
+  });
+}
+
+function closeTerminalSockets(id: string, message?: string) {
+  const sockets = terminalSockets.get(id);
+  if (!sockets) return;
+  for (const ws of sockets) {
+    try {
+      if (message) ws.send(message);
+      ws.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function removeTerminalState(id: string) {
+  const terminal = terminals.get(id);
+  if (terminal) {
+    clearAgentRespondingTimer(terminal);
+  }
+  terminals.delete(id);
+  terminalSockets.delete(id);
+}
+
+function hasOtherTerminalForSession(
+  sessionName: string,
+  excludedTerminalId?: string,
+): boolean {
+  for (const term of terminals.values()) {
+    if (term.sessionName !== sessionName) continue;
+    if (excludedTerminalId && term.id === excludedTerminalId) continue;
+    return true;
+  }
+  return false;
+}
+
+async function killTmuxSessionIfLast(
+  sessionName: string | undefined,
+  excludedTerminalId?: string,
+) {
+  if (!TMUX_BACKEND || !sessionName) return false;
+  if (hasOtherTerminalForSession(sessionName, excludedTerminalId)) {
+    debug(
+      `[tmux] Preserving shared session ${sessionName} for other attached DeckTerm views`,
+    );
+    return false;
+  }
+
+  debug(`[tmux] Killing session ${sessionName}`);
+  const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName]);
+  const exitCode = await killProc.exited;
+  if (exitCode !== 0) {
+    debug(`[tmux] kill-session returned ${exitCode} for ${sessionName}`);
+    return false;
+  }
+  return true;
+}
+
+async function hideTmuxStatusBar(sessionName: string) {
+  const hideStatusProc = Bun.spawn([
+    "tmux",
+    "set-option",
+    "-t",
+    sessionName,
+    "status",
+    "off",
+  ]);
+  await hideStatusProc.exited;
+}
+
+async function getTmuxSessionInfo(sessionName: string): Promise<{
+  cwd: string;
+  cols: number;
+  rows: number;
+}> {
+  const infoResult = Bun.spawn([
+    "tmux",
+    "display-message",
+    "-t",
+    sessionName,
+    "-p",
+    "#{pane_current_path}:#{window_width}:#{window_height}",
+  ]);
+  const infoOutput = await new Response(infoResult.stdout).text();
+  await infoResult.exited;
+  const [cwd = "/home/deploy", colsStr = "120", rowsStr = "30"] = infoOutput
+    .trim()
+    .split(":");
+  return {
+    cwd,
+    cols: parseInt(colsStr, 10) || 120,
+    rows: parseInt(rowsStr, 10) || 30,
+  };
+}
+
+async function createManagedTerminal({
+  id = crypto.randomUUID(),
+  cwd,
+  cols,
+  rows,
+  ownerId,
+  ownerEmail,
+  sessionName,
+  createTmuxSession = false,
+}: {
+  id?: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  ownerId: string;
+  ownerEmail: string;
+  sessionName?: string;
+  createTmuxSession?: boolean;
+}): Promise<Terminal> {
+  const home = process.env.HOME || "/home/deploy";
+  const shell = process.env.SHELL || "/bin/bash";
+  const isBashShell = basename(shell) === "bash";
+  const bashRcPath = isBashShell ? await ensureBashIntegrationRc() : null;
+  const shellCommand =
+    bashRcPath && isBashShell ? [shell, "--rcfile", bashRcPath, "-i"] : [shell, "-il"];
+  const terminal = createTerminalHandle(id, cols, rows);
+
+  const closeAndRemoveTerminal = (
+    exitCode: number,
+    signalCode?: number | null,
+  ) => {
+    debug(
+      `Terminal ${id}${sessionName ? ` (tmux: ${sessionName})` : ""} exited: code=${exitCode}, signal=${signalCode}`,
+    );
+    closeTerminalSockets(id, JSON.stringify({ type: "exit", code: exitCode }));
+    removeTerminalState(id);
+    terminal.close();
+  };
+
+  let proc: Subprocess;
+
+  if (TMUX_BACKEND && sessionName) {
+    if (createTmuxSession) {
+      debug(`Creating tmux session: ${sessionName}`);
+      const createProc = Bun.spawn(
+        [
+          "tmux",
+          "new-session",
+          "-d",
+          "-s",
+          sessionName,
+          "-x",
+          String(cols),
+          "-y",
+          String(rows),
+          "-c",
+          cwd,
+          ...shellCommand,
+        ],
+        {
+          env: {
+            ...process.env,
+            TERM: "xterm-256color",
+            COLORTERM: "truecolor",
+          },
+        },
+      );
+      await createProc.exited;
+    }
+
+    await hideTmuxStatusBar(sessionName);
+
+    proc = Bun.spawn(["tmux", "attach-session", "-t", sessionName], {
+      cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        COLUMNS: String(cols),
+        LINES: String(rows),
+      },
+      // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
+      terminal,
+      onExit(proc, exitCode, signalCode) {
+        closeAndRemoveTerminal(exitCode, signalCode);
+      },
+    });
+  } else {
+    proc = Bun.spawn(shellCommand, {
+      cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        COLUMNS: String(cols),
+        LINES: String(rows),
+        PATH: `${home}/.opencode/bin:${process.env.PATH || "/usr/bin"}`,
+      },
+      // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
+      terminal,
+      onExit(proc, exitCode, signalCode) {
+        closeAndRemoveTerminal(exitCode, signalCode);
+      },
+    });
+  }
+
+  const now = Date.now();
+  const managedTerminal: Terminal = {
+    id,
+    proc,
+    terminal,
+    cwd,
+    cols,
+    rows,
+    createdAt: now,
+    lastActivityAt: now,
+    ownerId,
+    ownerEmail,
+    sessionName,
+    scrollback: [],
+    scrollbackBytes: 0,
+    hadSocketConnection: false,
+    running: false,
+    lastExitCode: null,
+    agentName: null,
+    agentState: null,
+    agentHasUserPrompt: false,
+    agentRespondingTimer: null,
+    shellIntegrationCarry: "",
+  };
+
+  terminals.set(id, managedTerminal);
+  getTerminalSockets(id);
+  debug(`Terminal ${id} created with PID ${proc.pid}`);
+
+  return managedTerminal;
 }
 
 export function createWebApp() {
@@ -727,31 +1188,9 @@ export function createWebApp() {
   // Create new terminal running shell
   app.post("/api/terminals", async (c) => {
     const { ownerId, ownerEmail } = getCurrentUser(c);
-
-    // Rate limiting check
-    if (!rateLimitState.canCreate()) {
-      return c.json({ error: "Rate limit exceeded. Try again later." }, 429);
-    }
-
-    // Per-user terminal limit check
-    const userTerminals = Array.from(terminals.values()).filter(
-      (t) => t.ownerId === ownerId,
-    );
-    if (userTerminals.length >= MAX_TERMINALS_PER_USER) {
-      return c.json(
-        {
-          error: `Maximum terminals per user (${MAX_TERMINALS_PER_USER}) reached.`,
-        },
-        429,
-      );
-    }
-
-    // Max terminals check
-    if (terminals.size >= MAX_TERMINALS) {
-      return c.json(
-        { error: `Maximum terminals (${MAX_TERMINALS}) reached.` },
-        429,
-      );
+    const creationError = getTerminalCreationError(ownerId);
+    if (creationError) {
+      return c.json(creationError.body, creationError.status);
     }
 
     rateLimitState.record();
@@ -772,34 +1211,6 @@ export function createWebApp() {
     const cols = body.cols || 120;
     const rows = body.rows || 30;
 
-    const home = process.env.HOME || "/home/deploy";
-    const shell = process.env.SHELL || "/bin/bash";
-
-    // Use Bun's native Terminal API for proper PTY support
-    // This enables SIGWINCH (resize) and full terminal emulation
-    const terminal = new BunTerminal({
-      cols,
-      rows,
-      data(term, data) {
-        const strData =
-          typeof data === "string" ? data : utf8Decoder.decode(data);
-        appendScrollback(id, strData);
-
-        // Broadcast terminal output to all connected WebSockets
-        const sockets = terminalSockets.get(id);
-        if (sockets && sockets.size > 0) {
-          debug(`PTY ${id} data (${strData.length} bytes)`);
-          for (const ws of sockets) {
-            try {
-              ws.send(strData);
-            } catch {
-              // WebSocket closed
-            }
-          }
-        }
-      },
-    });
-
     // tmux session name for persistence (sanitize ownerId for tmux)
     // Use full UUID in session name for reliable recovery
     const safeOwnerId = ownerId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
@@ -807,154 +1218,77 @@ export function createWebApp() {
       ? `deckterm_${safeOwnerId}_${id}`
       : undefined;
 
-    let proc: Subprocess;
-
-    if (TMUX_BACKEND && sessionName) {
-      // tmux backend: create detached session, then attach for I/O
-      debug(`Creating tmux session: ${sessionName}`);
-
-      // Create detached tmux session with shell
-      const createProc = Bun.spawn(
-        [
-          "tmux",
-          "new-session",
-          "-d", // detached
-          "-s",
-          sessionName, // session name
-          "-x",
-          String(cols),
-          "-y",
-          String(rows),
-          "-c",
-          cwd, // start directory
-          shell,
-          "-il", // command
-        ],
-        {
-          env: {
-            ...process.env,
-            TERM: "xterm-256color",
-            COLORTERM: "truecolor",
-          },
-        },
-      );
-      await createProc.exited;
-
-      // Hide tmux status bar for cleaner terminal display
-      const hideStatusProc = Bun.spawn([
-        "tmux",
-        "set-option",
-        "-t",
-        sessionName,
-        "status",
-        "off",
-      ]);
-      await hideStatusProc.exited;
-      debug(`Tmux status bar hidden for session: ${sessionName}`);
-
-      // Attach to the session via PTY for I/O streaming
-      proc = Bun.spawn(["tmux", "attach-session", "-t", sessionName], {
-        cwd,
-        env: {
-          ...process.env,
-          TERM: "xterm-256color",
-          COLORTERM: "truecolor",
-          COLUMNS: String(cols),
-          LINES: String(rows),
-        },
-        // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
-        terminal,
-        onExit(proc, exitCode, signalCode) {
-          debug(
-            `Terminal ${id} (tmux: ${sessionName}) exited: code=${exitCode}, signal=${signalCode}`,
-          );
-          const sockets = terminalSockets.get(id);
-          if (sockets) {
-            for (const ws of sockets) {
-              try {
-                ws.send(JSON.stringify({ type: "exit", code: exitCode }));
-                ws.close();
-              } catch {
-                // ignore
-              }
-            }
-          }
-          terminals.delete(id);
-          terminalSockets.delete(id);
-          terminal.close();
-          // Note: tmux session stays alive for reconnection
-        },
-      });
-    } else {
-      // Raw PTY backend (original behavior)
-      proc = Bun.spawn([shell, "-il"], {
-        cwd,
-        env: {
-          ...process.env,
-          TERM: "xterm-256color",
-          COLORTERM: "truecolor",
-          COLUMNS: String(cols),
-          LINES: String(rows),
-          PATH: `${home}/.opencode/bin:${process.env.PATH || "/usr/bin"}`,
-        },
-        // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
-        terminal,
-        onExit(proc, exitCode, signalCode) {
-          debug(
-            `Terminal ${id} exited: code=${exitCode}, signal=${signalCode}`,
-          );
-          const sockets = terminalSockets.get(id);
-          if (sockets) {
-            for (const ws of sockets) {
-              try {
-                ws.send(JSON.stringify({ type: "exit", code: exitCode }));
-                ws.close();
-              } catch {
-                // ignore
-              }
-            }
-          }
-          terminals.delete(id);
-          terminalSockets.delete(id);
-          terminal.close();
-        },
-      });
-    }
-
-    const now = Date.now();
-    terminals.set(id, {
+    const terminal = await createManagedTerminal({
       id,
-      proc,
-      terminal,
       cwd,
       cols,
       rows,
-      createdAt: now,
-      lastActivityAt: now,
       ownerId,
       ownerEmail,
       sessionName,
-      scrollback: [],
-      scrollbackBytes: 0,
-      hadSocketConnection: false,
+      createTmuxSession: Boolean(sessionName),
     });
-    terminalSockets.set(id, new Set());
 
-    debug(`Terminal ${id} created with PID ${proc.pid}`);
+    return c.json(serializeTerminal(terminal));
+  });
 
-    return c.json({ id, cols, rows, cwd });
+  app.post("/api/terminals/:id/linked-view", async (c) => {
+    const { ownerId, ownerEmail } = getCurrentUser(c);
+    const sourceId = c.req.param("id");
+    const sourceTerm = terminals.get(sourceId);
+
+    if (!sourceTerm) {
+      return c.json({ error: "Terminal not found" }, 404);
+    }
+    if (sourceTerm.ownerId !== ownerId) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    if (!TMUX_BACKEND) {
+      return c.json({ error: "Linked view requires tmux backend" }, 400);
+    }
+    if (!sourceTerm.sessionName) {
+      return c.json({ error: "Linked view unavailable for this terminal" }, 409);
+    }
+
+    const creationError = getTerminalCreationError(ownerId);
+    if (creationError) {
+      return c.json(creationError.body, creationError.status);
+    }
+
+    rateLimitState.record();
+
+    const tmuxInfo = await getTmuxSessionInfo(sourceTerm.sessionName).catch(
+      () => null,
+    );
+    const terminal = await createManagedTerminal({
+      cwd: tmuxInfo?.cwd || sourceTerm.cwd,
+      cols: tmuxInfo?.cols || sourceTerm.cols,
+      rows: tmuxInfo?.rows || sourceTerm.rows,
+      ownerId,
+      ownerEmail,
+      sessionName: sourceTerm.sessionName,
+    });
+
+    return c.json(serializeTerminal(terminal));
   });
 
   // List terminals
-  app.get("/api/terminals", (c) => {
+  app.get("/api/terminals", async (c) => {
     const { ownerId } = getCurrentUser(c);
-    const list = Array.from(terminals.values())
-      .filter((t) => t.ownerId === ownerId)
-      .map((t) => ({
-        id: t.id,
-        cwd: t.cwd,
-        createdAt: t.createdAt,
-      }));
+    const backendMode = getBackendMode();
+    const list = await Promise.all(
+      Array.from(terminals.values())
+        .filter((t) => t.ownerId === ownerId)
+        .map(async (t) => ({
+          id: t.id,
+          cwd: t.cwd,
+          createdAt: t.createdAt,
+          ...serializeTerminal(t),
+          ...(await getTerminalTelemetry(t, backendMode, {
+            detectWorktree: detectGitWorktree,
+          })),
+        })),
+    );
     return c.json(list);
   });
 
@@ -970,28 +1304,12 @@ export function createWebApp() {
       return c.json({ error: "Forbidden" }, 403);
     }
 
-    // Kill tmux session if using tmux backend
-    if (TMUX_BACKEND && term.sessionName) {
-      debug(`Killing tmux session: ${term.sessionName}`);
-      const killProc = Bun.spawn([
-        "tmux",
-        "kill-session",
-        "-t",
-        term.sessionName,
-      ]);
-      await killProc.exited;
-    }
+    closeTerminalSockets(id);
+    removeTerminalState(id);
+    await killTmuxSessionIfLast(term.sessionName);
 
     term.proc.kill();
     term.terminal.close();
-    terminals.delete(id);
-    const sockets = terminalSockets.get(id);
-    if (sockets) {
-      for (const ws of sockets) {
-        ws.close();
-      }
-    }
-    terminalSockets.delete(id);
     return c.json({ ok: true });
   });
 
@@ -1091,15 +1409,12 @@ export function createWebApp() {
 
     try {
       return c.json(await readDirectory(path));
-    } catch {
-      if (path !== fallbackPath) {
+    } catch (err: unknown) {
+      const error = err as { code?: string };
+      if (error.code === "ENOENT" && path !== fallbackPath) {
         path = fallbackPath;
         fellBack = true;
-        try {
-          return c.json(await readDirectory(path));
-        } catch {
-          // Fall through to the generic error below.
-        }
+        return c.json(await readDirectory(path));
       }
       return c.json({ error: "Cannot read directory" }, 400);
     }
@@ -1712,9 +2027,6 @@ export function createWebApp() {
     "image/jpeg",
     "image/gif",
     "image/webp",
-    "image/avif",
-    "image/heic",
-    "image/heif",
   ];
 
   app.post("/api/clipboard/image", async (c) => {
@@ -1756,12 +2068,6 @@ export function createWebApp() {
           extension = "gif";
         } else if (file.type.includes("webp")) {
           extension = "webp";
-        } else if (file.type.includes("avif")) {
-          extension = "avif";
-        } else if (file.type.includes("heic")) {
-          extension = "heic";
-        } else if (file.type.includes("heif")) {
-          extension = "heif";
         }
       } else {
         // Raw image data in body
@@ -1783,12 +2089,6 @@ export function createWebApp() {
           extension = "gif";
         } else if (contentType.includes("webp")) {
           extension = "webp";
-        } else if (contentType.includes("avif")) {
-          extension = "avif";
-        } else if (contentType.includes("heic")) {
-          extension = "heic";
-        } else if (contentType.includes("heif")) {
-          extension = "heif";
         }
       }
 
@@ -2065,6 +2365,14 @@ export async function startWebServer(host: string, port: number) {
               if (parsed.type === "input") {
                 debug(`Input ${terminalId}`);
                 term.lastActivityAt = Date.now();
+                if (term.agentName && hasVisibleUserInput(parsed.data)) {
+                  term.agentHasUserPrompt = true;
+                  clearAgentRespondingTimer(term);
+                  if (term.agentState !== "thinking") {
+                    term.agentState = "thinking";
+                    broadcastTerminalState(term);
+                  }
+                }
                 try {
                   term.terminal.write(parsed.data);
                 } catch (err) {
@@ -2125,7 +2433,7 @@ export async function startWebServer(host: string, port: number) {
     },
   });
 
-  console.log(`🚀 OpenCode Web Terminal running at http://${host}:${port}`);
+  console.log(`🚀 DeckTerm running at http://${host}:${port}`);
 
   const cleanupIdleTerminals = async () => {
     const now = Date.now();
@@ -2147,18 +2455,12 @@ export async function startWebServer(host: string, port: number) {
           }
         }
 
-        // Kill tmux session if using tmux backend (prevents orphaned sessions)
-        if (TMUX_BACKEND && term.sessionName) {
-          try {
-            debug(`[cleanup] Killing tmux session: ${term.sessionName}`);
-            const killProc = Bun.spawn([
-              "tmux",
-              "kill-session",
-              "-t",
-              term.sessionName,
-            ]);
-            await killProc.exited;
-          } catch (err) {
+        closeTerminalSockets(id);
+        removeTerminalState(id);
+        try {
+          await killTmuxSessionIfLast(term.sessionName);
+        } catch (err) {
+          if (term.sessionName) {
             debug(`[cleanup] tmux kill-session error for ${id}:`, err);
           }
         }
@@ -2169,8 +2471,6 @@ export async function startWebServer(host: string, port: number) {
         } catch (err) {
           debug(`Cleanup error for ${id}:`, err);
         }
-        terminals.delete(id);
-        terminalSockets.delete(id);
       }
     }
   };

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
-    <title>OpenCode Web Terminal</title>
+    <title>DeckTerm</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23238636'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='white'>❯</text></svg>" />
     <!-- Nerd Font for terminal icons (Claude Code statusline, etc.) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
@@ -37,7 +37,12 @@
             <span class="btn-label">New</span>
           </button>
 
-          <div id="terminals-tabs" class="tabs"></div>
+          <div
+            id="terminals-tabs"
+            class="tabs"
+            role="tablist"
+            aria-label="Workspace tabs"
+          ></div>
 
           <span id="connection-status" class="status-dot" title="Connected">●</span>
         </div>
@@ -51,16 +56,23 @@
             </button>
           </div>
 
+          <button
+            id="linked-view-btn"
+            class="btn-icon btn-icon-tmux"
+            data-action="linked-view"
+            title="Open linked view for this tmux session"
+            hidden
+            disabled
+          >
+            <i data-lucide="copy-plus"></i>
+          </button>
+
           <button id="file-manager-btn" class="btn-icon" data-action="file-manager" title="File Manager">
             <i data-lucide="folder-open"></i>
           </button>
 
           <button id="clipboard-btn" class="btn-icon" data-action="clipboard" title="Clipboard History">
             <i data-lucide="clipboard"></i>
-          </button>
-
-          <button id="opencode-btn" class="btn-icon" data-action="opencode" title="OpenCode">
-            <i data-lucide="code"></i>
           </button>
 
           <button id="git-btn" class="btn-icon" data-action="git" title="Git">
@@ -178,17 +190,6 @@
       </button>
     </div>
 
-    <!-- OpenCode Panel -->
-    <div id="opencode-panel" class="app-panel hidden">
-      <div class="app-panel-header">
-        <span>OpenCode</span>
-        <span id="opencode-status" class="app-status">checking...</span>
-        <button id="opencode-popout" class="btn-icon" title="Open in new window">⧉</button>
-        <button class="app-panel-close">&times;</button>
-      </div>
-      <iframe id="opencode-iframe" src="" frameborder="0"></iframe>
-    </div>
-
     <!-- Directory Picker Modal -->
     <div id="dir-modal" class="modal hidden">
       <div class="modal-content">
@@ -272,6 +273,7 @@
                 <tr><td><kbd>Ctrl</kbd> + <kbd>N</kbd></td><td>New workspace tab</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>W</kbd></td><td>Close current workspace</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>Tab</kbd></td><td>Next tab</td></tr>
+                <tr><td><kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>←</kbd>/<kbd>→</kbd></td><td>Previous/next tab</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>1-9</kbd></td><td>Switch to tab number</td></tr>
                 <tr><td>Drag tab → tab</td><td>Merge workspaces</td></tr>
               </table>

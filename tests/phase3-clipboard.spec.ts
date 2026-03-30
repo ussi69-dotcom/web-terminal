@@ -238,7 +238,9 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
       textarea.dispatchEvent(pasteEvent);
     });
 
-    await page.waitForFunction(() => (window.__pasteUploadCalls || []).length === 1);
+    await page.waitForFunction(
+      () => (window.__pasteUploadCalls || []).length === 1,
+    );
 
     const result = await page.evaluate(() => ({
       uploadCalls: window.__pasteUploadCalls || [],
@@ -253,5 +255,43 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
         payload.includes("/tmp/deckterm-clipboard/pasted.png "),
       ),
     ).toBe(true);
+  });
+
+  test("pasteClipboard degrades gracefully when async clipboard is unavailable", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const tm = window.terminalManager;
+      const cm = tm.clipboardManager;
+      const active = tm.terminals.get(tm.activeId);
+      const originalShowToast = cm.showToast.bind(cm);
+
+      const toasts = [];
+      cm.showToast = (message, type, data) => {
+        toasts.push({ message, type, data: data ?? null });
+        return originalShowToast(message, type, data);
+      };
+
+      navigator.clipboard.read = async () => {
+        throw new DOMException("Clipboard unavailable", "NotAllowedError");
+      };
+      navigator.clipboard.readText = async () => {
+        throw new DOMException("Clipboard unavailable", "NotAllowedError");
+      };
+
+      try {
+        await cm.handlePaste(active.ws);
+      } finally {
+        cm.showToast = originalShowToast;
+      }
+
+      return toasts.at(-1) || null;
+    });
+
+    expect(result).toEqual({
+      message: "Clipboard unavailable here. Use system paste in terminal.",
+      type: "pending",
+      data: null,
+    });
   });
 });

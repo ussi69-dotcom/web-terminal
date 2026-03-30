@@ -1,11 +1,43 @@
 import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+import { mkdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
+const SERVER_LOCK_DIR = path.join(os.tmpdir(), "deckterm-e2e-server.lock");
+
+async function acquireServerLock(timeoutMs = 30000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await mkdir(SERVER_LOCK_DIR);
+      return;
+    } catch (error: any) {
+      if (error?.code !== "EEXIST") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  throw new Error(`Timed out acquiring server lock: ${SERVER_LOCK_DIR}`);
+}
+
+async function releaseServerLock() {
+  await rm(SERVER_LOCK_DIR, { recursive: true, force: true });
+}
 
 test.describe("Terminal Tab Status on Reconnection", () => {
+  test.beforeEach(async () => {
+    await acquireServerLock();
+  });
+
+  test.afterEach(async () => {
+    await releaseServerLock();
+  });
+
   test("should update tab class from reconnecting to connected", async ({
     page,
   }) => {
+    test.setTimeout(60000);
+
     // Collect console messages
     const consoleLogs: string[] = [];
     page.on("console", (msg) => {
@@ -44,6 +76,27 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     console.log(`Initial tab classes: ${initialTabClass}`);
     expect(initialTabClass).not.toContain("reconnecting");
 
+    const initialTabSignals = await page.evaluate((id) => {
+      const tab = document.querySelector(`[data-id="${id}"]`);
+      if (!tab) return null;
+      return {
+        primarySignal: tab.getAttribute("data-primary-signal"),
+        busy: tab.getAttribute("data-busy"),
+        ports: tab.getAttribute("data-ports"),
+        isWorktree: tab.getAttribute("data-is-worktree"),
+      };
+    }, terminalId);
+    expect(initialTabSignals).toEqual(
+      expect.objectContaining({
+        primarySignal: expect.stringMatching(
+          /^(none|running|ports|worktree)$/,
+        ),
+        busy: expect.stringMatching(/^(true|false)$/),
+        ports: expect.any(String),
+        isWorktree: expect.stringMatching(/^(true|false)$/),
+      }),
+    );
+
     // Step 3: Force WebSocket disconnect
     console.log("Forcing WebSocket disconnect...");
     await page.evaluate(() => {
@@ -67,21 +120,69 @@ test.describe("Terminal Tab Status on Reconnection", () => {
       return tab ? tab.className : "TAB_NOT_FOUND";
     }, terminalId);
     console.log(`Tab classes during reconnect: ${reconnectingTabClass}`);
-    expect(reconnectingTabClass).toContain("reconnecting");
+
+    const reconnectingTabSignals = await page.evaluate((id) => {
+      const tab = document.querySelector(`[data-id="${id}"]`);
+      if (!tab) return null;
+      return {
+        primarySignal: tab.getAttribute("data-primary-signal"),
+        busy: tab.getAttribute("data-busy"),
+        ports: tab.getAttribute("data-ports"),
+        isWorktree: tab.getAttribute("data-is-worktree"),
+      };
+    }, terminalId);
+    expect(reconnectingTabSignals).toEqual(
+      expect.objectContaining({
+        primarySignal: expect.stringMatching(
+          /^(none|running|ports|worktree)$/,
+        ),
+        busy: expect.stringMatching(/^(true|false)$/),
+        ports: expect.any(String),
+        isWorktree: expect.stringMatching(/^(true|false)$/),
+      }),
+    );
 
     await page.screenshot({
       path: "test-results/tab-02-during-reconnect.png",
       fullPage: true,
     });
 
-    // Wait for reconnection to complete
-    await page.waitForTimeout(3000);
+    const reconnectMarker = `after-reconnect-${Date.now()}`;
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((id) => {
+            const tab = document.querySelector(`[data-id="${id}"]`);
+            // @ts-ignore
+            const tm = window.terminalManager;
+            const active = tm?.terminals?.get(tm.activeId);
+            const overlay = document.querySelector(".terminal-overlay");
+            return {
+              isReconnecting: tab ? tab.classList.contains("reconnecting") : true,
+              overlayHidden: overlay
+                ? overlay.classList.contains("hidden")
+                : false,
+              socketReady: active?.ws?.ws?.readyState === WebSocket.OPEN,
+            };
+          }, terminalId),
+        { timeout: 35000 },
+      )
+      .toMatchObject({
+        isReconnecting: false,
+        overlayHidden: true,
+        socketReady: true,
+      });
 
-    // Check tab state after reconnection
-    const finalTabClass = await page.evaluate((id) => {
+    const finalTabState = await page.evaluate((id) => {
       const tab = document.querySelector(`[data-id="${id}"]`);
-      return tab ? tab.className : "TAB_NOT_FOUND";
+      const overlay = document.querySelector(".terminal-overlay");
+      return {
+        tabClass: tab ? tab.className : "TAB_NOT_FOUND",
+        overlayHidden: overlay ? overlay.classList.contains("hidden") : false,
+        overlayClasses: overlay ? overlay.className : "OVERLAY_NOT_FOUND",
+      };
     }, terminalId);
+    const finalTabClass = finalTabState.tabClass;
     console.log(`Tab classes after reconnect: ${finalTabClass}`);
 
     await page.screenshot({
@@ -99,44 +200,158 @@ test.describe("Terminal Tab Status on Reconnection", () => {
         classes: overlay.className,
       };
     });
-    console.log(`Overlay state: ${JSON.stringify(overlayState)}`);
+    console.log(
+      `Overlay state: ${JSON.stringify({
+        ...overlayState,
+        polled: finalTabState,
+      })}`,
+    );
 
     // Print all collected console logs
     console.log("\n=== Console logs (filtered [reconnect]) ===");
     consoleLogs.forEach((log) => console.log(log));
     console.log("===========================================\n");
 
-    // Step 4: Type something to verify terminal is working
-    await page.evaluate(() => {
+    // Tab should settle out of reconnecting while keeping the new attrs intact.
+    expect(finalTabClass).not.toContain("reconnecting");
+    expect(overlayState.hidden).toBe(true);
+
+    const finalTabSignals = await page.evaluate((id) => {
+      const tab = document.querySelector(`[data-id="${id}"]`);
+      if (!tab) return null;
+      return {
+        primarySignal: tab.getAttribute("data-primary-signal"),
+        busy: tab.getAttribute("data-busy"),
+        ports: tab.getAttribute("data-ports"),
+        isWorktree: tab.getAttribute("data-is-worktree"),
+      };
+    }, terminalId);
+    expect(finalTabSignals).toEqual(
+      expect.objectContaining({
+        primarySignal: expect.stringMatching(
+          /^(none|running|ports|worktree)$/,
+        ),
+        busy: expect.stringMatching(/^(true|false)$/),
+        ports: expect.any(String),
+        isWorktree: expect.stringMatching(/^(true|false)$/),
+      }),
+    );
+
+    await page.evaluate((marker) => {
       // @ts-ignore
       const tm = window.terminalManager;
       const active = tm?.terminals?.get(tm.activeId);
       active?.ws?.send(
-        JSON.stringify({ type: "input", data: "echo after-reconnect\r" }),
+        JSON.stringify({ type: "input", data: `echo ${marker}\r` }),
       );
+    }, reconnectMarker);
+
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator(".tile.active .xterm-rows")
+            .first()
+            .textContent(),
+        { timeout: 10000 },
+      )
+      .toContain(reconnectMarker);
+  });
+
+  test("should keep increasing reconnect attempts until ready is received", async ({
+    page,
+  }) => {
+    await resetAppState(page, APP_URL);
+
+    const reconnectAttempts = await page.evaluate(async () => {
+      const OriginalWebSocket = window.WebSocket;
+      const originalClearTimeout = window.clearTimeout.bind(window);
+      const originalSetTimeout = window.setTimeout.bind(window);
+      const timerQueue = [];
+      const statuses = [];
+      const instances = [];
+
+      class FakeWebSocket {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSING = 2;
+        static CLOSED = 3;
+
+        constructor(url) {
+          this.url = url;
+          this.readyState = FakeWebSocket.CONNECTING;
+          this.sent = [];
+          this.onopen = null;
+          this.onmessage = null;
+          this.onclose = null;
+          this.onerror = null;
+          instances.push(this);
+        }
+
+        send(payload) {
+          this.sent.push(payload);
+        }
+
+        close() {
+          this.readyState = FakeWebSocket.CLOSED;
+          this.onclose?.();
+        }
+      }
+
+      const flushReconnectTimer = async () => {
+        const next = timerQueue.shift();
+        if (!next) {
+          throw new Error("Expected reconnect timer to be scheduled");
+        }
+        next();
+        await Promise.resolve();
+      };
+
+      window.WebSocket = FakeWebSocket;
+      window.setTimeout = ((fn) => {
+        timerQueue.push(fn);
+        return timerQueue.length;
+      });
+      window.clearTimeout = (() => {});
+
+      try {
+        const socket = new ReconnectingWebSocket("ws://fake", "term-test", {
+          onMessage: () => {},
+          onStatusChange: (status, extra) => {
+            statuses.push({
+              status,
+              attempt: extra?.attempt ?? null,
+            });
+          },
+        });
+
+        socket.baseDelay = 0;
+        socket.maxDelay = 0;
+
+        const firstTransport = instances.at(-1);
+        firstTransport.readyState = FakeWebSocket.OPEN;
+        firstTransport.onopen?.();
+        firstTransport.close();
+
+        await flushReconnectTimer();
+
+        const secondTransport = instances.at(-1);
+        secondTransport.readyState = FakeWebSocket.OPEN;
+        secondTransport.onopen?.();
+        secondTransport.close();
+
+        await flushReconnectTimer();
+
+        return statuses
+          .filter((entry) => entry.status === "reconnecting")
+          .map((entry) => entry.attempt);
+      } finally {
+        window.WebSocket = OriginalWebSocket;
+        window.setTimeout = originalSetTimeout;
+        window.clearTimeout = originalClearTimeout;
+      }
     });
-    await page.waitForFunction(
-      () =>
-        document
-          .querySelector(".tile.active .xterm-rows")
-          ?.textContent?.includes("after-reconnect"),
-      { timeout: 5000 },
-    );
 
-    await page.screenshot({
-      path: "test-results/tab-04-final.png",
-      fullPage: true,
-    });
-
-    // Verify final state
-    const finalContent = await page
-      .locator(".tile.active .xterm-rows")
-      .first()
-      .textContent();
-    expect(finalContent).toContain("after-reconnect");
-
-    // Tab should NOT have reconnecting class after successful reconnection
-    expect(finalTabClass).not.toContain("reconnecting");
-    expect(overlayState.hidden).toBe(true);
+    expect(reconnectAttempts).toEqual([1, 2]);
   });
 });

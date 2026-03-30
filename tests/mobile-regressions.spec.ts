@@ -1,7 +1,9 @@
+import path from "node:path";
 import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
-const DEFAULT_ROOT = "/home/deploy";
+const DEFAULT_ROOT = process.env.HOME || "/home/deploy";
+const DEFAULT_ROOT_LABEL = path.basename(DEFAULT_ROOT);
 
 test.describe("Mobile regressions", () => {
   test.use({
@@ -53,8 +55,91 @@ test.describe("Mobile regressions", () => {
     expect(apiData.fallback).toBe(true);
     expect(state.currentDirPath || DEFAULT_ROOT).toBe(DEFAULT_ROOT);
     expect(state.breadcrumb).toContain("home");
-    expect(state.breadcrumb).toContain("deploy");
+    expect(state.breadcrumb).toContain(DEFAULT_ROOT_LABEL);
     expect(state.hasEntries).toBe(true);
+  });
+
+  test("touch input helpers stay visually hidden at the cursor", async ({
+    page,
+  }) => {
+    await page.keyboard.type("abc");
+
+    const visuals = await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      const textarea = active?.element?.querySelector(".xterm-helper-textarea");
+      const composition = active?.element?.querySelector(".composition-view");
+      const textareaStyle = textarea ? getComputedStyle(textarea) : null;
+      const compositionStyle = composition
+        ? getComputedStyle(composition)
+        : null;
+
+      return {
+        textarea: {
+          opacity: textareaStyle?.opacity || "",
+          color: textareaStyle?.color || "",
+          backgroundColor: textareaStyle?.backgroundColor || "",
+          caretColor: textareaStyle?.caretColor || "",
+          webkitTextFillColor: textareaStyle?.webkitTextFillColor || "",
+        },
+        composition: {
+          color: compositionStyle?.color || "",
+          backgroundColor: compositionStyle?.backgroundColor || "",
+          opacity: compositionStyle?.opacity || "",
+        },
+      };
+    });
+
+    expect(visuals.textarea.opacity).toBe("0");
+    expect(visuals.textarea.color).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.caretColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.textarea.webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.color).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(visuals.composition.opacity).toBe("0");
+  });
+
+  test("touch beforeinput commits text without mutating helper textarea", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      const textarea = active?.element?.querySelector(".xterm-helper-textarea");
+      if (!active || !textarea) {
+        return { error: "missing-terminal" };
+      }
+
+      const sent = [];
+      const originalSend = active.ws.send.bind(active.ws);
+      active.ws.send = (payload) => {
+        sent.push(JSON.parse(payload));
+        return originalSend(payload);
+      };
+
+      textarea.value = "";
+      const event = new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: "x",
+      });
+      textarea.dispatchEvent(event);
+
+      active.ws.send = originalSend;
+
+      return {
+        defaultPrevented: event.defaultPrevented,
+        textareaValue: textarea.value,
+        lastSent: sent.at(-1) || null,
+      };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.textareaValue).toBe("");
+    expect(result.lastSent).toEqual({ type: "input", data: "x" });
   });
 
   test("reselecting the active mobile terminal restores prompt visibility", async ({
@@ -74,9 +159,7 @@ test.describe("Mobile regressions", () => {
       const tm = window.terminalManager;
       const active = tm?.terminals?.get(tm.activeId);
       const viewport = active?.element?.querySelector(".xterm-viewport");
-      return (
-        !!viewport && viewport.scrollHeight > viewport.clientHeight + 10
-      );
+      return !!viewport && viewport.scrollHeight > viewport.clientHeight + 10;
     });
 
     const before = await page.evaluate(() => {

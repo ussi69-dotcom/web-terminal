@@ -1,4 +1,4 @@
-// OpenCode Web Terminal - Floating Tiling Window Manager
+// DeckTerm - Floating Tiling Window Manager
 // Version 2.0 - Complete rewrite with smart tiling, groups, and mobile support
 
 // =============================================================================
@@ -121,6 +121,12 @@ const dbg = (...args) => {
 const TerminalColors =
   window.TerminalColors ||
   (() => {
+    const SIGNAL_PRIORITIES = {
+      agent: 1,
+      running: 2,
+      ports: 3,
+      worktree: 4,
+    };
     const palette = [
       "#58a6ff",
       "#3fb950",
@@ -166,12 +172,132 @@ const TerminalColors =
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     };
 
-    return { hashCwdToColor, blendWorkspaceColors, hexToRgba };
+    const normalizePorts = (ports) => {
+      if (!Array.isArray(ports)) return [];
+      return [
+        ...new Set(
+          ports
+            .map((port) => Number(port))
+            .filter((port) => Number.isInteger(port) && port > 0),
+        ),
+      ].sort((left, right) => left - right);
+    };
+
+    const formatAgentLabel = (agentName, agentState) => {
+      if (!agentName || !agentState) return null;
+      const normalizedAgent =
+        String(agentName).trim().toLowerCase() === "claude"
+          ? "Claude"
+          : String(agentName).trim().toLowerCase() === "codex"
+            ? "Codex"
+            : null;
+      const normalizedState = String(agentState).trim().toLowerCase();
+      if (!normalizedAgent) return null;
+      if (normalizedState === "responding") {
+        return `${normalizedAgent} Responding`;
+      }
+      return normalizedAgent;
+    };
+
+    const getWorkspaceSignalDescriptors = ({
+      running = false,
+      busy = false,
+      agentName = null,
+      agentState = null,
+      ports = [],
+      isWorktree = false,
+    } = {}) => {
+      const isRunning = Boolean(running || busy);
+      const descriptors = [];
+      const agentLabel = formatAgentLabel(agentName, agentState);
+      if (agentLabel) {
+        const normalizedAgentState = String(agentState).trim().toLowerCase();
+        descriptors.push({
+          key:
+            normalizedAgentState === "responding"
+              ? "agent-responding"
+              : "agent",
+          label: agentLabel,
+          priority: SIGNAL_PRIORITIES.agent,
+        });
+      }
+      if (isRunning) {
+        descriptors.push({
+          key: "running",
+          label: "Running",
+          priority: SIGNAL_PRIORITIES.running,
+        });
+      }
+
+      const normalizedPorts = normalizePorts(ports);
+      if (normalizedPorts.length > 0) {
+        descriptors.push({
+          key: `ports:${normalizedPorts.join(",")}`,
+          label: `Ports ${normalizedPorts.join(", ")}`,
+          priority: SIGNAL_PRIORITIES.ports,
+        });
+      }
+
+      if (isWorktree) {
+        descriptors.push({
+          key: "worktree",
+          label: "Worktree",
+          priority: SIGNAL_PRIORITIES.worktree,
+        });
+      }
+
+      return descriptors;
+    };
+
+    const getPrimaryWorkspaceSignal = ({
+      running = false,
+      busy = false,
+      agentName = null,
+      agentState = null,
+      ports = [],
+      isWorktree = false,
+      cwd,
+    } = {}) => ({
+      color: hashCwdToColor(cwd),
+      primarySignal:
+        getWorkspaceSignalDescriptors({
+          running,
+          busy,
+          agentName,
+          agentState,
+          ports,
+          isWorktree,
+        })[0] ||
+        null,
+    });
+
+    return {
+      hashCwdToColor,
+      blendWorkspaceColors,
+      hexToRgba,
+      normalizePorts,
+      getWorkspaceSignalDescriptors,
+      getPrimaryWorkspaceSignal,
+    };
   })();
 
 if (!window.TerminalColors) {
   window.TerminalColors = TerminalColors;
 }
+
+const normalizeWorkspacePorts = (ports) => {
+  if (typeof TerminalColors.normalizePorts === "function") {
+    return TerminalColors.normalizePorts(ports);
+  }
+  if (!Array.isArray(ports)) return [];
+  return [
+    ...new Set(
+      ports
+        .map((port) => Number(port))
+        .filter((port) => Number.isInteger(port) && port > 0),
+    ),
+  ].sort((left, right) => left - right);
+};
 
 // =============================================================================
 // RECONNECTING WEBSOCKET
@@ -198,15 +324,16 @@ class ReconnectingWebSocket {
 
   connect() {
     const isReconnectTransport = this.openedOnce || this.retryCount > 0;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws = new WebSocket(this.url);
     this.ws.onopen = () => {
-      this.retryCount = 0;
       this.startHeartbeat();
       this.openedOnce = true;
       this.awaitingReconnectReady = isReconnectTransport;
       this.callbacks.onTransportOpen?.(isReconnectTransport);
       if (!isReconnectTransport) {
-        this.callbacks.onStatusChange("connected");
+        this.markConnectionReady(false);
       }
     };
     this.ws.onmessage = (e) => {
@@ -223,9 +350,12 @@ class ReconnectingWebSocket {
         if (data.type === "reconnect_lifecycle") {
           this.callbacks.onLifecycle?.(data);
           if (data.phase === "ready" && this.awaitingReconnectReady) {
-            this.awaitingReconnectReady = false;
-            this.callbacks.onStatusChange("connected", { resumed: true });
+            this.markConnectionReady(true);
           }
+          return;
+        }
+        if (data.type === "terminal_state") {
+          this.callbacks.onTerminalState?.(data);
           return;
         }
         if (data.type === "exit") {
@@ -317,7 +447,14 @@ class ReconnectingWebSocket {
   retry() {
     this.retryCount = 0;
     this.intentionallyClosed = false;
+    this.awaitingReconnectReady = false;
     this.connect();
+  }
+
+  markConnectionReady(resumed) {
+    this.retryCount = 0;
+    this.awaitingReconnectReady = false;
+    this.callbacks.onStatusChange("connected", resumed ? { resumed: true } : {});
   }
 
   startHeartbeat() {
@@ -722,6 +859,10 @@ class PlatformDetector {
 }
 
 const platformDetector = new PlatformDetector();
+
+function syncInteractionModeClasses() {
+  document.body.classList.toggle("touch-input-mode", platformDetector.hasTouch);
+}
 
 // =============================================================================
 // TILE MANAGER - Smart tiling window manager
@@ -1713,11 +1854,13 @@ class ExtraKeysManager {
   }
 
   refocusTerminal() {
+    const active = this.tm.terminals.get(this.tm.activeId);
     dbg("[ExtraKeys] refocusTerminal, activeId:", this.tm.activeId);
-    this.tm.focusTerminal(this.tm.activeId, {
-      syncSize: false,
-      scrollToPrompt: platformDetector.hasTouch,
-    });
+    if (active?.terminal) {
+      // MUST use terminal.focus() so xterm.js processes input correctly
+      active.terminal.focus();
+      dbg("[ExtraKeys] terminal.focus() called");
+    }
   }
 
   loadVisibilityState() {
@@ -2364,22 +2507,51 @@ class ClipboardManager {
       if (handled) return;
     }
 
+    const clipboardApi = navigator.clipboard;
+    let clipboardReadError = null;
+
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      if (await this.handleClipboardItems(clipboardItems, terminalWs)) return;
+      if (typeof clipboardApi?.read === "function") {
+        const clipboardItems = await clipboardApi.read();
+        if (await this.handleClipboardItems(clipboardItems, terminalWs)) return;
+      }
     } catch (err) {
-      // Fallback for browsers that don't support clipboard.read()
-      try {
-        const text = await navigator.clipboard.readText();
+      clipboardReadError = err;
+      console.warn("Clipboard item read failed:", err);
+    }
+
+    try {
+      if (typeof clipboardApi?.readText === "function") {
+        const text = await clipboardApi.readText();
         if (text) {
           this.handleTextPaste(text, terminalWs);
           return;
         }
-      } catch (readErr) {
-        console.error("Clipboard read failed:", readErr);
-        this.showToast("Clipboard access denied. Use paste button.", "error");
       }
+    } catch (readErr) {
+      const effectiveError = readErr || clipboardReadError;
+      if (effectiveError) {
+        console.warn("Clipboard text read failed:", effectiveError);
+      }
+      this.showClipboardUnavailableToast();
+      return;
     }
+
+    if (
+      clipboardReadError ||
+      !clipboardApi ||
+      (typeof clipboardApi.read !== "function" &&
+        typeof clipboardApi.readText !== "function")
+    ) {
+      this.showClipboardUnavailableToast();
+    }
+  }
+
+  showClipboardUnavailableToast() {
+    this.showToast(
+      "Clipboard unavailable here. Use system paste in terminal.",
+      "pending",
+    );
   }
 
   async handleClipboardItems(clipboardItems, terminalWs) {
@@ -2524,152 +2696,6 @@ class ClipboardManager {
     if (diff < 60000) return "just now";
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     return new Date(timestamp).toLocaleTimeString();
-  }
-}
-
-// =============================================================================
-// OPENCODE MANAGER - OpenCode panel integration
-// =============================================================================
-
-class OpenCodeManager {
-  constructor() {
-    this.panel = document.getElementById("opencode-panel");
-    this.iframe = document.getElementById("opencode-iframe");
-    this.status = document.getElementById("opencode-status");
-    this.init();
-  }
-
-  init() {
-    this.opencodeUrl = null;
-    this.serverStatus = "unknown";
-
-    document
-      .querySelector('[data-action="opencode"]')
-      ?.addEventListener("click", () => this.toggle());
-    this.panel
-      ?.querySelector(".app-panel-close")
-      ?.addEventListener("click", () => this.hide());
-    document
-      .getElementById("opencode-popout")
-      ?.addEventListener("click", () => this.openInNewWindow());
-    this.checkHealth();
-    setInterval(() => this.checkHealth(), 30000);
-  }
-
-  async checkHealth() {
-    try {
-      const res = await fetch("/api/apps/opencode/health");
-      const data = await res.json();
-      this.opencodeUrl = data.url || null;
-      this.serverStatus = data.status;
-
-      if (!this.opencodeUrl) {
-        this.status.textContent = "not configured";
-        this.status.className = "app-status offline";
-      } else if (data.status === "running") {
-        this.status.textContent = "running";
-        this.status.className = "app-status online";
-      } else {
-        this.status.textContent = "offline";
-        this.status.className = "app-status offline";
-      }
-    } catch {
-      this.status.textContent = "error";
-      this.status.className = "app-status offline";
-    }
-  }
-
-  show() {
-    if (!this.opencodeUrl) {
-      this.showSetupMessage();
-      return;
-    }
-    if (this.serverStatus !== "running") {
-      this.showOfflineMessage();
-      return;
-    }
-    this.panel?.classList.remove("hidden");
-    if (this.iframe && !this.iframe.src) {
-      this.iframe.src = "/apps/opencode/";
-    }
-  }
-
-  showSetupMessage() {
-    this.panel?.classList.remove("hidden");
-    if (this.iframe) {
-      this.iframe.srcdoc = `
-        <html>
-        <head><style>
-          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
-          h2 { color: #58a6ff; }
-          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
-          ol { line-height: 2; }
-        </style></head>
-        <body>
-          <h2>OpenCode Not Configured</h2>
-          <p>To enable OpenCode integration:</p>
-          <ol>
-            <li>Run <code>opencode web --port 4096</code> on your server</li>
-            <li>Expose port 4096 via Cloudflare Tunnel (e.g., opencode.yourdomain.com)</li>
-            <li>Set <code>OPENCODE_URL=https://opencode.yourdomain.com</code> in .env</li>
-            <li>Restart DeckTerm</li>
-          </ol>
-        </body>
-        </html>`;
-    }
-  }
-
-  showOfflineMessage() {
-    this.panel?.classList.remove("hidden");
-    if (this.iframe) {
-      this.iframe.srcdoc = `
-        <html>
-        <head><style>
-          body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
-          h2 { color: #f85149; }
-          code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
-        </style></head>
-        <body>
-          <h2>OpenCode Server Offline</h2>
-          <p>The OpenCode server is not responding.</p>
-          <p>Start it with: <code>opencode web --port 4096</code></p>
-          <p>Or run in tmux: <code>tmux new -d -s opencode "opencode web --port 4096"</code></p>
-        </body>
-        </html>`;
-    }
-  }
-
-  hide() {
-    this.panel?.classList.add("hidden");
-  }
-
-  openInNewWindow() {
-    if (this.opencodeUrl) {
-      window.open(this.opencodeUrl, "opencode", "width=1200,height=800");
-    } else {
-      alert("OpenCode not configured. Set OPENCODE_URL in .env");
-    }
-  }
-
-  toggle() {
-    if (this.panel?.classList.contains("hidden")) {
-      this.show();
-    } else {
-      this.hide();
-    }
-  }
-
-  notifyResize() {
-    if (
-      this.iframe?.contentWindow &&
-      !this.panel?.classList.contains("hidden")
-    ) {
-      try {
-        this.iframe.contentWindow.postMessage({ type: "resize" }, "*");
-      } catch (e) {
-        console.warn("[OpenCode] Failed to send resize message:", e);
-      }
-    }
   }
 }
 
@@ -3646,8 +3672,12 @@ class TerminalManager {
     this.debugMode = false;
     this.bootstrapPromise = null;
     this.bootstrapPending = false;
+    this.telemetryRefreshTimer = null;
+    this.telemetryRefreshPromise = null;
+    this.telemetryRefreshInterval = null;
     this.viewportSyncFrame = 0;
     this.viewportFocusTimer = null;
+    this.notificationsEnabled = true;
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3691,6 +3721,7 @@ class TerminalManager {
     // Toolbar action buttons
     this.setupToolbarActions();
     this.updateWrapButton();
+    this.updateLinkedViewButton();
 
     // Fullscreen
     document
@@ -3730,11 +3761,9 @@ class TerminalManager {
           active.fitAddon.fit();
           this.syncTerminalSize(this.activeId);
         }
-        window.openCodeManager?.notifyResize();
       }, 150);
     });
 
-    // Virtual keyboard detection
     this.setupViewportResizeHandling();
 
     // Initialize sub-managers
@@ -3743,6 +3772,7 @@ class TerminalManager {
 
     // Mobile swipe support
     this.setupMobileSwipe();
+    this.startTelemetryRefreshLoop();
 
     // Check for existing terminals
     this.startBootstrap();
@@ -3797,12 +3827,54 @@ class TerminalManager {
     }
   }
 
+  setupToolbarActions() {
+    // Handle all buttons with data-action attribute (visible toolbar buttons)
+    document.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.action;
+        if (action === "linked-view") this.createLinkedView();
+        if (action === "file-manager") this.fileManager.open();
+        else if (action === "clipboard") this.clipboardManager.togglePanel();
+        else if (action === "copy") this.copySelection();
+        else if (action === "paste") this.pasteClipboard();
+        else if (action === "font-decrease") this.changeFontSize(-1);
+        else if (action === "font-increase") this.changeFontSize(1);
+        else if (action === "fullscreen") this.toggleFullscreen();
+        else if (action === "wrap-lines") this.toggleWrapLines();
+      });
+    });
+  }
+
   getTerminalTextarea(terminalState) {
     return terminalState?.element?.querySelector(".xterm-helper-textarea");
   }
 
   getTerminalViewport(terminalState) {
     return terminalState?.element?.querySelector(".xterm-viewport");
+  }
+
+  scheduleTerminalMetricStabilization(id) {
+    const rerender = () => {
+      const t = this.terminals.get(id);
+      if (!t?.fitAddon || !t?.terminal) return;
+
+      try {
+        t.fitAddon.fit();
+        t.terminal.refresh(0, Math.max(0, t.terminal.rows - 1));
+        this.syncTerminalSize(id);
+      } catch (err) {
+        console.warn(`[terminal] metric stabilization failed for ${id}:`, err);
+      }
+    };
+
+    requestAnimationFrame(rerender);
+    setTimeout(() => requestAnimationFrame(rerender), 150);
+
+    if (document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => requestAnimationFrame(rerender))
+        .catch(() => {});
+    }
   }
 
   focusTerminal(
@@ -3832,7 +3904,6 @@ class TerminalManager {
     };
 
     syncPromptVisibility();
-
     requestAnimationFrame(() => {
       syncPromptVisibility();
     });
@@ -3847,23 +3918,6 @@ class TerminalManager {
     }
   }
 
-  setupToolbarActions() {
-    // Handle all buttons with data-action attribute (visible toolbar buttons)
-    document.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const action = btn.dataset.action;
-        if (action === "file-manager") this.fileManager.open();
-        else if (action === "clipboard") this.clipboardManager.togglePanel();
-        else if (action === "copy") this.copySelection();
-        else if (action === "paste") this.pasteClipboard();
-        else if (action === "font-decrease") this.changeFontSize(-1);
-        else if (action === "font-increase") this.changeFontSize(1);
-        else if (action === "fullscreen") this.toggleFullscreen();
-        else if (action === "wrap-lines") this.toggleWrapLines();
-      });
-    });
-  }
-
   formatCwdLabel(cwd) {
     if (!cwd) return "Terminal";
     const cleaned = cwd.replace(/\/+$/, "");
@@ -3873,16 +3927,308 @@ class TerminalManager {
     return last || "/";
   }
 
+  getActiveTerminal() {
+    if (!this.activeId) return null;
+    return this.terminals.get(this.activeId) || null;
+  }
+
+  canCreateLinkedView(terminal = this.getActiveTerminal()) {
+    return Boolean(
+      terminal &&
+        terminal.backendMode === "tmux" &&
+        terminal.supportsLinkedView,
+    );
+  }
+
+  updateLinkedViewButton() {
+    const button = document.getElementById("linked-view-btn");
+    if (!button) return;
+    const isAvailable = this.canCreateLinkedView();
+    button.hidden = !isAvailable;
+    button.disabled = !isAvailable;
+    button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+  }
+
   updateWorkspaceLabel(workspaceId, cwd) {
     if (!workspaceId) return;
-    const label = this.formatCwdLabel(cwd);
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
       if (tab.dataset.workspaceId === workspaceId) {
-        const labelEl = tab.querySelector(".tab-label");
-        if (labelEl) labelEl.textContent = label;
-        if (cwd) tab.title = cwd;
+        this.renderWorkspaceTab(tab, cwd);
       }
     });
+  }
+
+  startTelemetryRefreshLoop() {
+    this.queueTelemetryRefresh(0);
+    if (this.telemetryRefreshInterval) {
+      clearInterval(this.telemetryRefreshInterval);
+    }
+    this.telemetryRefreshInterval = setInterval(
+      () => this.queueTelemetryRefresh(0),
+      5000,
+    );
+  }
+
+  queueTelemetryRefresh(delay = 150) {
+    if (this.telemetryRefreshTimer) clearTimeout(this.telemetryRefreshTimer);
+    this.telemetryRefreshTimer = setTimeout(() => {
+      this.telemetryRefreshTimer = null;
+      void this.refreshTerminalTelemetry();
+    }, delay);
+  }
+
+  async refreshTerminalTelemetry() {
+    if (this.telemetryRefreshPromise) return this.telemetryRefreshPromise;
+    this.telemetryRefreshPromise = (async () => {
+      try {
+        const response = await fetch("/api/terminals");
+        if (!response.ok) return;
+        const serverTerminals = await response.json();
+        const telemetryById = new Map(
+          serverTerminals
+            .filter((terminal) => terminal?.id)
+            .map((terminal) => [terminal.id, terminal]),
+        );
+
+        this.terminals.forEach((terminal, id) => {
+          const next = telemetryById.get(id);
+          if (!next) return;
+          this.applyTerminalRuntimeState(id, {
+            running: Boolean(next.running ?? next.busy),
+            lastExitCode:
+              typeof next.lastExitCode === "number" ? next.lastExitCode : null,
+            agentName: next.agentName || null,
+            agentState: next.agentState || null,
+          });
+          terminal.ports = normalizeWorkspacePorts(next.ports);
+          terminal.isWorktree = Boolean(next.isWorktree);
+          terminal.backendMode = next.backendMode || null;
+          terminal.supportsLinkedView = Boolean(next.supportsLinkedView);
+          const hasClientCwd =
+            typeof terminal.cwd === "string" && terminal.cwd.trim().length > 0;
+          if (!hasClientCwd && typeof next.cwd === "string" && next.cwd) {
+            terminal.cwd = next.cwd;
+            this.sessionRegistry.update(id, { cwd: next.cwd });
+          }
+        });
+
+        this.updateTabGroups();
+        this.updateLinkedViewButton();
+      } catch (err) {
+        dbg("telemetry refresh failed", err);
+      } finally {
+        this.telemetryRefreshPromise = null;
+      }
+    })();
+    return this.telemetryRefreshPromise;
+  }
+
+  getWorkspaceTerminals(workspaceId) {
+    if (!workspaceId) return [];
+    const terminals = [];
+    this.terminals.forEach((terminal, id) => {
+      if (terminal.workspaceId === workspaceId) {
+        terminals.push({ id, ...terminal });
+      }
+    });
+    return terminals;
+  }
+
+  getWorkspaceSnapshot(workspaceId, preferredCwd = null) {
+    const terminals = this.getWorkspaceTerminals(workspaceId);
+    const activeTerminalId = this.resolveWorkspaceTerminalId(workspaceId);
+    const activeTerminal = activeTerminalId
+      ? this.terminals.get(activeTerminalId)
+      : null;
+    const fallbackTerminal = terminals[0] || null;
+    const cwd =
+      preferredCwd ||
+      activeTerminal?.cwd ||
+      fallbackTerminal?.cwd ||
+      "";
+    const ports = normalizeWorkspacePorts(
+      terminals.flatMap((terminal) => terminal.ports || []),
+    );
+    const running = terminals.some((terminal) =>
+      Boolean(terminal.running ?? terminal.busy),
+    );
+    const agentTerminal =
+      activeTerminal?.agentState
+        ? activeTerminal
+        : terminals.find((terminal) => terminal.agentState) || null;
+    const agentName = agentTerminal?.agentName || null;
+    const agentState = agentTerminal?.agentState || null;
+    const isWorktree = terminals.some((terminal) => Boolean(terminal.isWorktree));
+    const descriptors = TerminalColors.getWorkspaceSignalDescriptors({
+      running,
+      agentName,
+      agentState,
+      ports,
+      isWorktree,
+    });
+    const primarySignalDescriptor = TerminalColors.getPrimaryWorkspaceSignal({
+      running,
+      agentName,
+      agentState,
+      ports,
+      isWorktree,
+      cwd,
+    }).primarySignal;
+
+    return {
+      count: terminals.length,
+      colors: terminals.map((terminal) =>
+        TerminalColors.hashCwdToColor(terminal.cwd || cwd || "terminal"),
+      ),
+      cwd,
+      label: this.formatCwdLabel(cwd),
+      running,
+      agentName,
+      agentState,
+      ports,
+      isWorktree,
+      descriptors,
+      primarySignal:
+        primarySignalDescriptor?.key?.startsWith("ports:")
+          ? "ports"
+          : primarySignalDescriptor?.key || "none",
+      primarySignalLabel: primarySignalDescriptor?.label || "",
+    };
+  }
+
+  composeWorkspaceTooltip(snapshot) {
+    const lines = [snapshot.cwd || "Terminal"];
+    lines.push(
+      `Workspace: ${snapshot.count} terminal${snapshot.count === 1 ? "" : "s"}`,
+    );
+    if (snapshot.descriptors.length > 0) {
+      lines.push(`Signals: ${snapshot.descriptors.map((d) => d.label).join(" • ")}`);
+    } else {
+      lines.push("Signals: none");
+    }
+    return lines.join("\n");
+  }
+
+  applyWorkspaceSignals(tab, snapshot) {
+    const signalBadge = tab.querySelector(".tab-signal-badge");
+
+    tab.dataset.primarySignal = snapshot.primarySignal;
+    tab.dataset.running = snapshot.running ? "true" : "false";
+    tab.dataset.busy = snapshot.running ? "true" : "false";
+    tab.dataset.agentName = snapshot.agentName || "";
+    tab.dataset.agentState = snapshot.agentState || "none";
+    tab.dataset.ports = snapshot.ports.join(",");
+    tab.dataset.isWorktree = snapshot.isWorktree ? "true" : "false";
+    tab.title = this.composeWorkspaceTooltip(snapshot);
+
+    if (signalBadge) {
+      signalBadge.textContent = snapshot.primarySignalLabel;
+      signalBadge.dataset.signal = snapshot.primarySignal;
+      signalBadge.hidden = !snapshot.primarySignalLabel;
+      signalBadge.setAttribute(
+        "aria-hidden",
+        snapshot.primarySignalLabel ? "false" : "true",
+      );
+    }
+  }
+
+  applyTerminalRuntimeState(id, nextState = {}) {
+    const terminal = this.terminals.get(id);
+    if (!terminal) return;
+
+    const prevRunning = Boolean(terminal.running ?? terminal.busy);
+    const nextRunning = Boolean(nextState.running);
+    const nextExitCode =
+      typeof nextState.lastExitCode === "number" ? nextState.lastExitCode : null;
+    const nextAgentName =
+      typeof nextState.agentName === "string" && nextState.agentName
+        ? nextState.agentName
+        : null;
+    const nextAgentState =
+      typeof nextState.agentState === "string" && nextState.agentState
+        ? nextState.agentState
+        : null;
+
+    terminal.running = nextRunning;
+    terminal.busy = nextRunning;
+    terminal.lastExitCode = nextExitCode;
+    terminal.agentName = nextRunning ? nextAgentName : null;
+    terminal.agentState = nextRunning ? nextAgentState : null;
+
+    if (prevRunning && !nextRunning) {
+      this.maybeNotifyCommandFinished(terminal);
+    }
+
+    this.updateTabGroups();
+  }
+
+  maybeNotifyCommandFinished(terminal) {
+    if (!this.notificationsEnabled) return;
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    if (!document.hidden) return;
+
+    const label = this.formatCwdLabel(terminal.cwd || "Terminal");
+    const exitCode =
+      typeof terminal.lastExitCode === "number" ? terminal.lastExitCode : 0;
+    const body =
+      exitCode === 0
+        ? `${label}: command completed successfully`
+        : `${label}: command exited with code ${exitCode}`;
+
+    try {
+      new Notification("Command finished", { body });
+    } catch (err) {
+      console.warn("Command completion notification failed:", err);
+    }
+  }
+
+  renderWorkspaceTab(tab, preferredCwd = null) {
+    const dot = tab.querySelector(".tab-dot");
+    const countBadge = tab.querySelector(".tab-count");
+    const labelEl = tab.querySelector(".tab-label");
+    const snapshot = this.getWorkspaceSnapshot(
+      tab.dataset.workspaceId,
+      preferredCwd,
+    );
+    const blended = TerminalColors.blendWorkspaceColors(snapshot.colors);
+
+    if (labelEl) labelEl.textContent = snapshot.label;
+
+    if (snapshot.count > 1) {
+      tab.classList.add("multicolor");
+      tab.classList.remove("grouped");
+      const color1 = blended[0] || "#58a6ff";
+      const color2 = blended[1] || color1;
+      const color3 = blended[2] || color2;
+      tab.style.setProperty("--color-1", TerminalColors.hexToRgba(color1, 0.2));
+      tab.style.setProperty("--color-2", TerminalColors.hexToRgba(color2, 0.2));
+      tab.style.setProperty("--color-3", TerminalColors.hexToRgba(color3, 0.2));
+      tab.style.setProperty("--color-1-solid", color1);
+      tab.style.setProperty("--color-2-solid", color2);
+      tab.style.setProperty("--color-3-solid", color3);
+      tab.style.setProperty(
+        "--tab-border",
+        TerminalColors.hexToRgba(color1, 0.35),
+      );
+      if (countBadge) countBadge.textContent = snapshot.count;
+      if (dot) dot.style.removeProperty("background-color");
+    } else {
+      tab.classList.remove("multicolor", "grouped");
+      const singleColor = blended[0] || "#58a6ff";
+      if (dot) dot.style.backgroundColor = singleColor;
+      tab.style.setProperty("--color-1-solid", singleColor);
+      tab.style.removeProperty("--color-1");
+      tab.style.removeProperty("--color-2");
+      tab.style.removeProperty("--color-3");
+      tab.style.removeProperty("--color-2-solid");
+      tab.style.removeProperty("--color-3-solid");
+      tab.style.removeProperty("--tab-border");
+      tab.style.removeProperty("--group-color");
+      if (countBadge) countBadge.textContent = "";
+    }
+
+    this.applyWorkspaceSignals(tab, snapshot);
   }
 
   parseOsc7Cwd(data) {
@@ -4001,6 +4347,14 @@ class TerminalManager {
         e.preventDefault();
         this.switchToNext(e.shiftKey ? -1 : 1);
       }
+      if (e.altKey && e.shiftKey && e.key === "ArrowRight") {
+        e.preventDefault();
+        this.switchToNext(1);
+      }
+      if (e.altKey && e.shiftKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        this.switchToNext(-1);
+      }
       if (e.ctrlKey && e.key === "f") {
         e.preventDefault();
         this.toggleSearch();
@@ -4084,7 +4438,10 @@ class TerminalManager {
         // Reconnect terminals, using saved session data where available
         for (const t of serverTerminals) {
           const savedSession = this.sessionRegistry.get(t.id);
-          await this.reconnectToTerminal(t.id, t.cwd, savedSession);
+          await this.reconnectToTerminal(t.id, t.cwd, savedSession, {
+            backendMode: t.backendMode || null,
+            supportsLinkedView: Boolean(t.supportsLinkedView),
+          });
         }
         return;
       }
@@ -4094,10 +4451,20 @@ class TerminalManager {
     await this.createTerminal(false, { skipBootstrapWait: true });
   }
 
-  async reconnectToTerminal(id, cwd, savedSession = null) {
+  async reconnectToTerminal(id, cwd, savedSession = null, options = {}) {
+    const {
+      showReconnectBanner = true,
+      isReconnection = true,
+      backendMode = null,
+      supportsLinkedView = false,
+    } = options;
     // Use saved workspace info if available, otherwise create new
     let workspaceId;
     let tabNum;
+    const restoredCwd =
+      typeof savedSession?.cwd === "string" && savedSession.cwd
+        ? savedSession.cwd
+        : cwd;
 
     if (savedSession?.workspaceId) {
       // Restore from saved session
@@ -4157,7 +4524,9 @@ class TerminalManager {
     fitAddon.fit();
 
     dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
-    terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
+    if (showReconnectBanner) {
+      terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
+    }
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}`;
@@ -4172,6 +4541,7 @@ class TerminalManager {
           );
         }
         terminal.write(data);
+        this.queueTelemetryRefresh();
       },
       onStatusChange: (status, extra) => {
         dbg(`[reconnect] Status change for ${id}: ${status}`, extra);
@@ -4180,6 +4550,9 @@ class TerminalManager {
       onLifecycle: (message) => {
         dbg(`[reconnect] Lifecycle for ${id}: ${message.phase}`, message);
         this.handleReconnectLifecycle(id, message);
+      },
+      onTerminalState: (message) => {
+        this.applyTerminalRuntimeState(id, message);
       },
     });
 
@@ -4234,7 +4607,16 @@ class TerminalManager {
       sizeWarning,
       debugOverlay,
       dimensionTimer: null,
-      cwd,
+      cwd: restoredCwd,
+      running: false,
+      busy: false,
+      lastExitCode: null,
+      agentName: null,
+      agentState: null,
+      ports: [],
+      isWorktree: false,
+      backendMode,
+      supportsLinkedView,
       tabNum,
       workspaceId,
       resizeObserver: null,
@@ -4249,7 +4631,7 @@ class TerminalManager {
       pasteFallbackCleanup,
       inputState,
       hasConnected: false, // Track if WebSocket has ever successfully connected
-      isReconnection: true, // Mark this as a reconnection scenario
+      isReconnection,
       awaitingReconnectReady: false,
     });
 
@@ -4258,11 +4640,13 @@ class TerminalManager {
     );
 
     // Register with session registry for future reconnection
-    this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
+    this.sessionRegistry.register(id, { workspaceId, cwd: restoredCwd, tabNum });
 
-    this.addTab(id, cwd, tabNum, workspaceId);
+    this.addTab(id, restoredCwd, tabNum, workspaceId);
+    this.queueTelemetryRefresh(0);
     this.switchTo(id);
     this.attachResizeObserver(id);
+    this.scheduleTerminalMetricStabilization(id);
 
     setTimeout(() => {
       fitAddon.fit();
@@ -4391,6 +4775,38 @@ class TerminalManager {
     let lastCompositionCommitAt = 0;
     let lastCompositionCommitData = "";
 
+    const sendCommittedData = (source, inputType, data, e) => {
+      if (!data) {
+        return false;
+      }
+
+      // Mark that fallback is handling this input BEFORE sending
+      // This prevents onData from double-processing the same input
+      if (inputState) {
+        inputState.lastFallbackAt = performance.now();
+        inputState.lastFallbackData = data;
+      }
+
+      const finalData = this.applyExtraKeyModifiers(data);
+      ws.send(JSON.stringify({ type: "input", data: finalData }));
+
+      if (DEBUG) {
+        dbg("[ExtraKeys] mobile input fallback:", {
+          source,
+          inputType,
+          composed: e?.composed,
+          data,
+          finalData,
+        });
+      }
+
+      textarea.value = "";
+      lastValue = "";
+      lastCompositionCommitAt = performance.now();
+      lastCompositionCommitData = data;
+      return true;
+    };
+
     const commitTextareaValue = (source, e) => {
       // Debug: direct DOM update
       const dbg = document.getElementById("modifier-debug");
@@ -4423,30 +4839,7 @@ class TerminalManager {
         return;
       }
 
-      // Mark that fallback is handling this input BEFORE sending
-      // This prevents onData from double-processing the same input
-      if (inputState) {
-        inputState.lastFallbackAt = performance.now();
-        inputState.lastFallbackData = data;
-      }
-
-      const finalData = this.applyExtraKeyModifiers(data);
-      ws.send(JSON.stringify({ type: "input", data: finalData }));
-
-      if (DEBUG) {
-        dbg("[ExtraKeys] mobile input fallback:", {
-          source,
-          inputType,
-          composed: e?.composed,
-          data,
-          finalData,
-        });
-      }
-
-      textarea.value = "";
-      lastValue = "";
-      lastCompositionCommitAt = performance.now();
-      lastCompositionCommitData = data;
+      sendCommittedData(source, inputType, data, e);
     };
     const handler = (e) => {
       if (DEBUG) {
@@ -4513,6 +4906,23 @@ class TerminalManager {
           value: textarea.value,
         });
       }
+
+      if (!platformDetector.hasTouch || !e || e.isComposing) {
+        return;
+      }
+
+      const inputType = e.inputType || "";
+      if (inputType !== "insertText" && inputType !== "insertReplacementText") {
+        return;
+      }
+
+      const data = typeof e.data === "string" ? e.data : "";
+      if (!data) {
+        return;
+      }
+
+      e.preventDefault();
+      sendCommittedData("beforeinput", inputType, data, e);
     };
 
     const compositionStartHandler = compositionHandler("start");
@@ -5008,7 +5418,9 @@ class TerminalManager {
 
       if (!res.ok) throw new Error("Failed to create terminal");
 
-      const { id } = await res.json();
+      const terminalInfo = await res.json();
+      const { id } = terminalInfo;
+      const resolvedCwd = terminalInfo.cwd || cwd;
 
       // Determine workspace ID
       let workspaceId;
@@ -5071,10 +5483,14 @@ class TerminalManager {
         `${protocol}//${location.host}/ws/terminals/${id}`,
         id,
         {
-          onMessage: (data) => terminal.write(data),
+          onMessage: (data) => {
+            terminal.write(data);
+            this.queueTelemetryRefresh();
+          },
           onStatusChange: (status, extra) =>
             this.handleStatusChange(id, status, extra),
           onLifecycle: (message) => this.handleReconnectLifecycle(id, message),
+          onTerminalState: (message) => this.applyTerminalRuntimeState(id, message),
         },
       );
 
@@ -5139,7 +5555,16 @@ class TerminalManager {
         sizeWarning,
         debugOverlay,
         dimensionTimer: null,
-        cwd,
+        cwd: resolvedCwd,
+        running: false,
+        busy: false,
+        lastExitCode: null,
+        agentName: null,
+        agentState: null,
+        ports: [],
+        isWorktree: false,
+        backendMode: terminalInfo.backendMode || null,
+        supportsLinkedView: Boolean(terminalInfo.supportsLinkedView),
         tabNum,
         workspaceId,
         resizeObserver: null,
@@ -5157,17 +5582,19 @@ class TerminalManager {
       });
 
       // Register with session registry for reconnection persistence
-      this.sessionRegistry.register(id, { workspaceId, cwd, tabNum });
+      this.sessionRegistry.register(id, { workspaceId, cwd: resolvedCwd, tabNum });
 
       // Only add tab for new workspaces, not splits
       if (!split) {
-        this.addTab(id, cwd, tabNum, workspaceId);
+        this.addTab(id, resolvedCwd, tabNum, workspaceId);
       } else {
         // Update tab badge count for split workspaces
         this.updateTabGroups();
       }
+      this.queueTelemetryRefresh(0);
       this.switchTo(id);
       this.attachResizeObserver(id);
+      this.scheduleTerminalMetricStabilization(id);
 
       // Disable mobile keyboard autocorrect etc.
       setTimeout(() => this.disableMobileKeyboardFeatures(element), 100);
@@ -5177,12 +5604,42 @@ class TerminalManager {
     }
   }
 
+  async createLinkedView() {
+    if (!this.activeId) return;
+    const active = this.getActiveTerminal();
+    if (!this.canCreateLinkedView(active)) return;
+
+    try {
+      const res = await fetch(
+        `/api/terminals/${encodeURIComponent(this.activeId)}/linked-view`,
+        { method: "POST" },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || "Failed to create linked view");
+      }
+
+      await this.reconnectToTerminal(payload.id, payload.cwd, null, {
+        showReconnectBanner: false,
+        isReconnection: false,
+        backendMode: payload.backendMode || null,
+        supportsLinkedView: Boolean(payload.supportsLinkedView),
+      });
+    } catch (err) {
+      console.error("Failed to create linked view:", err);
+      alert(`Failed to create linked view: ${err.message}`);
+    }
+  }
+
   addTab(id, cwd, tabNum, workspaceId) {
     const tab = document.createElement("div");
     tab.className = "tab";
     tab.dataset.id = id;
     tab.dataset.workspaceId = workspaceId;
     tab.dataset.index = tabNum % 9 || 9;
+    tab.tabIndex = 0;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", "false");
 
     const label = this.formatCwdLabel(cwd);
     tab.innerHTML = `
@@ -5190,9 +5647,9 @@ class TerminalManager {
       <span class="tab-index">${tabNum}</span>
       <span class="tab-label">${label}</span>
       <span class="tab-count"></span>
+      <span class="tab-signal-badge" hidden aria-hidden="true"></span>
       <button class="tab-close" title="Close (Ctrl+W)">&times;</button>
     `;
-    if (cwd) tab.title = cwd;
 
     tab.querySelector(".tab-close").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -5203,6 +5660,23 @@ class TerminalManager {
       if (e.target.closest(".tab-close")) return;
       const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
       if (targetId) this.switchTo(targetId);
+    });
+    tab.addEventListener("keydown", (e) => {
+      if (e.target.closest(".tab-close")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        const targetId = this.resolveWorkspaceTerminalId(workspaceId, id);
+        if (targetId) this.switchTo(targetId);
+      }
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const tabs = Array.from(this.tabs.querySelectorAll(".tab"));
+        const currentIndex = tabs.indexOf(tab);
+        if (currentIndex === -1 || tabs.length <= 1) return;
+        const direction = e.key === "ArrowRight" ? 1 : -1;
+        const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+        tabs[nextIndex]?.focus();
+      }
     });
 
     // Drag and drop for merging workspaces
@@ -5252,74 +5726,8 @@ class TerminalManager {
   }
 
   updateTabGroups() {
-    // Count terminals per workspace
-    const workspaceCounts = new Map();
-    const workspaceColors = new Map();
-    this.terminals.forEach((t) => {
-      if (t.workspaceId) {
-        const count = workspaceCounts.get(t.workspaceId) || 0;
-        workspaceCounts.set(t.workspaceId, count + 1);
-        const cwdColor = TerminalColors.hashCwdToColor(t.cwd || "terminal");
-        const colors = workspaceColors.get(t.workspaceId) || [];
-        colors.push(cwdColor);
-        workspaceColors.set(t.workspaceId, colors);
-      }
-    });
-
-    // Update tab colors based on terminal count
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
-      const workspaceId = tab.dataset.workspaceId;
-      const dot = tab.querySelector(".tab-dot");
-      const countBadge = tab.querySelector(".tab-count");
-      const count = workspaceCounts.get(workspaceId) || 0;
-      const blended = TerminalColors.blendWorkspaceColors(
-        workspaceColors.get(workspaceId) || [],
-      );
-
-      if (count > 1) {
-        // Multicolor workspace tab (multiple terminals)
-        tab.classList.add("multicolor");
-        tab.classList.remove("grouped");
-        const color1 = blended[0] || "#58a6ff";
-        const color2 = blended[1] || color1;
-        const color3 = blended[2] || color2;
-        tab.style.setProperty(
-          "--color-1",
-          TerminalColors.hexToRgba(color1, 0.2),
-        );
-        tab.style.setProperty(
-          "--color-2",
-          TerminalColors.hexToRgba(color2, 0.2),
-        );
-        tab.style.setProperty(
-          "--color-3",
-          TerminalColors.hexToRgba(color3, 0.2),
-        );
-        tab.style.setProperty("--color-1-solid", color1);
-        tab.style.setProperty("--color-2-solid", color2);
-        tab.style.setProperty("--color-3-solid", color3);
-        tab.style.setProperty(
-          "--tab-border",
-          TerminalColors.hexToRgba(color1, 0.35),
-        );
-
-        if (countBadge) countBadge.textContent = count;
-        if (dot) dot.style.removeProperty("background-color");
-      } else {
-        // Single terminal workspace
-        tab.classList.remove("multicolor", "grouped");
-        const singleColor = blended[0] || "#58a6ff";
-        if (dot) dot.style.backgroundColor = singleColor;
-        tab.style.setProperty("--color-1-solid", singleColor);
-        tab.style.removeProperty("--color-1");
-        tab.style.removeProperty("--color-2");
-        tab.style.removeProperty("--color-3");
-        tab.style.removeProperty("--color-2-solid");
-        tab.style.removeProperty("--color-3-solid");
-        tab.style.removeProperty("--tab-border");
-        tab.style.removeProperty("--group-color");
-        if (countBadge) countBadge.textContent = "";
-      }
+      this.renderWorkspaceTab(tab);
     });
   }
 
@@ -5444,10 +5852,9 @@ class TerminalManager {
     // Highlight tab by workspaceId (works for multi-terminal workspaces)
     const activeWorkspaceId = t?.workspaceId;
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
-      tab.classList.toggle(
-        "active",
-        tab.dataset.workspaceId === activeWorkspaceId,
-      );
+      const isActive = tab.dataset.workspaceId === activeWorkspaceId;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
     });
 
     const active = this.terminals.get(id);
@@ -5460,6 +5867,7 @@ class TerminalManager {
         active.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected",
       );
     }
+    this.updateLinkedViewButton();
   }
 
   switchToIndex(index) {
@@ -5529,6 +5937,7 @@ class TerminalManager {
         this.updateConnectionStatus("disconnected");
       }
     }
+    this.updateLinkedViewButton();
   }
 
   sendResize(id, colsOverride = null, rowsOverride = null, options = {}) {
@@ -5600,6 +6009,7 @@ class TerminalManager {
           syncSize: true,
           scrollToPrompt: isKeyboardOpen || platformDetector.hasTouch,
         });
+        this.disableMobileKeyboardFeatures(active.element);
       }, isKeyboardOpen ? 50 : 0);
     }
   }
@@ -5743,6 +6153,9 @@ function initLucideIcons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  syncInteractionModeClasses();
+  platformDetector.onChange(() => syncInteractionModeClasses());
+
   document
     .getElementById("debug-panel-close")
     ?.addEventListener("click", () => {
@@ -5763,6 +6176,7 @@ document.addEventListener("DOMContentLoaded", () => {
           menu: "≡",
           folder: "📁",
           "folder-open": "📂",
+          "copy-plus": "⧉+",
           "more-horizontal": "⋯",
           "chevron-up": "↑",
           "chevron-down": "↓",
@@ -5793,6 +6207,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.terminalManager = new TerminalManager();
   window.statsManager = new StatsManager();
-  window.openCodeManager = new OpenCodeManager();
   window.gitManager = new GitManager();
 });
