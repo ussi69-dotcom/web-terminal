@@ -30,7 +30,7 @@ test("getPrimaryWorkspaceSignal prioritizes running over passive workspace signa
   });
 });
 
-test("getPrimaryWorkspaceSignal prioritizes agent thinking over generic running", () => {
+test("getPrimaryWorkspaceSignal prioritizes agent label over generic running", () => {
   expect(
     getPrimaryWorkspaceSignal({
       running: true,
@@ -41,8 +41,8 @@ test("getPrimaryWorkspaceSignal prioritizes agent thinking over generic running"
   ).toEqual({
     color: hashCwdToColor("/home/deploy/deckterm"),
     primarySignal: {
-      key: "agent-thinking",
-      label: "Codex Thinking",
+      key: "agent",
+      label: "Codex",
       priority: 1,
     },
   });

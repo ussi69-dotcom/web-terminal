@@ -65,13 +65,13 @@ function formatAgentLabel(agentName, agentState) {
     String(agentName).trim().toLowerCase() === "claude" ? "Claude" :
     String(agentName).trim().toLowerCase() === "codex" ? "Codex" :
     null;
-  const normalizedState =
-    String(agentState).trim().toLowerCase() === "responding" ? "Responding" :
-    String(agentState).trim().toLowerCase() === "thinking" ? "Thinking" :
-    null;
+  const normalizedState = String(agentState).trim().toLowerCase();
 
-  if (!normalizedAgent || !normalizedState) return null;
-  return `${normalizedAgent} ${normalizedState}`;
+  if (!normalizedAgent) return null;
+  if (normalizedState === "responding") {
+    return `${normalizedAgent} Responding`;
+  }
+  return normalizedAgent;
 }
 
 function getWorkspaceSignalDescriptors({
@@ -86,8 +86,9 @@ function getWorkspaceSignalDescriptors({
   const descriptors = [];
   const agentLabel = formatAgentLabel(agentName, agentState);
   if (agentLabel) {
+    const normalizedAgentState = String(agentState).trim().toLowerCase();
     descriptors.push({
-      key: `agent-${String(agentState).trim().toLowerCase()}`,
+      key: normalizedAgentState === "responding" ? "agent-responding" : "agent",
       label: agentLabel,
       priority: SIGNAL_PRIORITIES.agent,
     });

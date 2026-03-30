@@ -326,11 +326,11 @@ body {
   color: #ffb3ad;
 }
 
-.tab[data-primary-signal="agent-thinking"] {
+.tab[data-primary-signal="agent"] {
   border-color: rgba(210, 153, 34, 0.4);
 }
 
-.tab[data-primary-signal="agent-thinking"] .tab-signal-badge {
+.tab[data-primary-signal="agent"] .tab-signal-badge {
   background: rgba(210, 153, 34, 0.14);
   border-color: rgba(210, 153, 34, 0.38);
   color: #f2cf7f;

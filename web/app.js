@@ -191,14 +191,12 @@ const TerminalColors =
           : String(agentName).trim().toLowerCase() === "codex"
             ? "Codex"
             : null;
-      const normalizedState =
-        String(agentState).trim().toLowerCase() === "responding"
-          ? "Responding"
-          : String(agentState).trim().toLowerCase() === "thinking"
-            ? "Thinking"
-            : null;
-      if (!normalizedAgent || !normalizedState) return null;
-      return `${normalizedAgent} ${normalizedState}`;
+      const normalizedState = String(agentState).trim().toLowerCase();
+      if (!normalizedAgent) return null;
+      if (normalizedState === "responding") {
+        return `${normalizedAgent} Responding`;
+      }
+      return normalizedAgent;
     };
 
     const getWorkspaceSignalDescriptors = ({
@@ -213,8 +211,12 @@ const TerminalColors =
       const descriptors = [];
       const agentLabel = formatAgentLabel(agentName, agentState);
       if (agentLabel) {
+        const normalizedAgentState = String(agentState).trim().toLowerCase();
         descriptors.push({
-          key: `agent-${String(agentState).trim().toLowerCase()}`,
+          key:
+            normalizedAgentState === "responding"
+              ? "agent-responding"
+              : "agent",
           label: agentLabel,
           priority: SIGNAL_PRIORITIES.agent,
         });

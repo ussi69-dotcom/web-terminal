@@ -366,8 +366,8 @@ test.describe("Workspace telemetry contract", () => {
         }));
       })
       .toEqual({
-        primarySignal: "agent-thinking",
-        badgeText: "Codex Thinking",
+        primarySignal: "agent",
+        badgeText: "Codex",
       });
 
     await page.waitForTimeout(500);
@@ -381,8 +381,8 @@ test.describe("Workspace telemetry contract", () => {
         }));
       })
       .toEqual({
-        primarySignal: "agent-thinking",
-        badgeText: "Codex Thinking",
+        primarySignal: "agent",
+        badgeText: "Codex",
       });
 
     await page.evaluate(() => {
@@ -431,8 +431,8 @@ test.describe("Workspace telemetry contract", () => {
         }));
       })
       .toEqual({
-        primarySignal: "agent-thinking",
-        badgeText: "Codex Thinking",
+        primarySignal: "agent",
+        badgeText: "Codex",
       });
   });
 
