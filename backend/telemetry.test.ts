@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   classifyAgentOutputPhase,
   parseShellIntegrationChunk,
+  resolveAgentOutputState,
   type ShellIntegrationParseState,
 } from "./telemetry";
 
@@ -105,4 +106,24 @@ test("classifyAgentOutputPhase treats visible agent text as responding", () => {
   const phase = classifyAgentOutputPhase("codex", "Hello from agent");
 
   expect(phase).toBe("responding");
+});
+
+test("resolveAgentOutputState ignores startup codex text before user prompt", () => {
+  const nextState = resolveAgentOutputState({
+    currentState: "thinking",
+    classifiedState: "responding",
+    hasUserPrompted: false,
+  });
+
+  expect(nextState).toBe("thinking");
+});
+
+test("resolveAgentOutputState keeps responding sticky during a response", () => {
+  const nextState = resolveAgentOutputState({
+    currentState: "responding",
+    classifiedState: "thinking",
+    hasUserPrompted: true,
+  });
+
+  expect(nextState).toBe("responding");
 });

@@ -338,8 +338,10 @@ test.describe("Workspace telemetry contract", () => {
     const thinkingCommand =
       "printf '\\033]9;9;deckterm;agent;codex;start\\a'; " +
       "sleep 0.5; " +
+      "printf 'OpenAI Codex'; " +
+      "sleep 0.5; " +
       "printf '\\033]0;⠋ deckterm_dev\\a'; " +
-      "sleep 1.5; " +
+      "IFS= read -r _; " +
       "printf 'Hello from agent'; " +
       "sleep 0.5; " +
       "printf '\\033]0;⠙ deckterm_dev\\a'; " +
@@ -367,6 +369,28 @@ test.describe("Workspace telemetry contract", () => {
         primarySignal: "agent-thinking",
         badgeText: "Codex Thinking",
       });
+
+    await page.waitForTimeout(500);
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent-thinking",
+        badgeText: "Codex Thinking",
+      });
+
+    await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(JSON.stringify({ type: "input", data: "go\r" }));
+    });
 
     await expect
       .poll(async () => {

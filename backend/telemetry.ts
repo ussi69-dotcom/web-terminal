@@ -130,6 +130,28 @@ export function classifyAgentOutputPhase(
   return "responding";
 }
 
+export function resolveAgentOutputState({
+  currentState,
+  classifiedState,
+  hasUserPrompted,
+}: {
+  currentState: AgentState | null;
+  classifiedState: AgentState | null;
+  hasUserPrompted: boolean;
+}): AgentState | null {
+  if (!classifiedState) return currentState;
+
+  if (classifiedState === "responding" && !hasUserPrompted) {
+    return currentState;
+  }
+
+  if (currentState === "responding" && classifiedState === "thinking") {
+    return currentState;
+  }
+
+  return classifiedState;
+}
+
 export async function getTerminalTelemetry(
   terminal: TelemetryTerminal,
   backendMode: BackendMode,
