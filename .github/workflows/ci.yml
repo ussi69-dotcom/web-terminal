@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - "feature/**"
+      - "fix/**"
+      - "chore/**"
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run unit tests
+        run: bun run test:unit
+
+  smoke-e2e:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Start DeckTerm
+        run: |
+          nohup env PORT=4174 bun run start >/tmp/deckterm-ci.log 2>&1 &
+          echo $! >/tmp/deckterm-ci.pid
+
+      - name: Wait for health check
+        run: ./scripts/wait_for_health.sh http://127.0.0.1:4174/api/health 45
+
+      - name: Run smoke E2E suite
+        run: bun run test:e2e:smoke
+
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/deckterm-ci.log
+            tests/test-results
+            tests/playwright-report
+
+      - name: Stop DeckTerm
+        if: always()
+        run: |
+          if [ -f /tmp/deckterm-ci.pid ]; then
+            kill "$(cat /tmp/deckterm-ci.pid)" || true
+          fi

@@ -1,0 +1,169 @@
+name: Deploy Main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to package and deploy"
+        required: false
+        default: main
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-package:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run unit tests
+        run: bun run test:unit
+
+      - name: Start DeckTerm
+        run: |
+          nohup env PORT=4174 bun run start >/tmp/deckterm-deploy.log 2>&1 &
+          echo $! >/tmp/deckterm-deploy.pid
+
+      - name: Wait for health check
+        run: ./scripts/wait_for_health.sh http://127.0.0.1:4174/api/health 45
+
+      - name: Run smoke E2E suite
+        run: bun run test:e2e:smoke
+
+      - name: Capture release metadata
+        id: release
+        run: echo "release_id=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Create release archive
+        run: git archive --format=tar.gz --output "deckterm-${{ steps.release.outputs.release_id }}.tgz" HEAD
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deckterm-release-${{ steps.release.outputs.release_id }}
+          path: deckterm-${{ steps.release.outputs.release_id }}.tgz
+          if-no-files-found: error
+
+      - name: Upload deploy diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-check-artifacts-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/deckterm-deploy.log
+            tests/test-results
+            tests/playwright-report
+
+      - name: Stop DeckTerm
+        if: always()
+        run: |
+          if [ -f /tmp/deckterm-deploy.pid ]; then
+            kill "$(cat /tmp/deckterm-deploy.pid)" || true
+          fi
+
+  deploy:
+    needs: verify-and-package
+    if: ${{ vars.ENABLE_PROD_DEPLOY == '1' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deckterm-release-${{ needs.verify-and-package.outputs.release_id }}
+
+      - name: Configure SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_HOST"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy release over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/home/deploy/apps/deckterm' }}
+          PROD_PORT: ${{ vars.PROD_PORT || '4173' }}
+          PROD_CANDIDATE_PORT: ${{ vars.PROD_CANDIDATE_PORT || '4273' }}
+          PROD_SERVICE: ${{ vars.PROD_SERVICE || 'deckterm-prod.service' }}
+          RELEASE_ID: ${{ needs.verify-and-package.outputs.release_id }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          archive="deckterm-${RELEASE_ID}.tgz"
+          remote_archive="/tmp/${archive}"
+          remote_source="${DEPLOY_ROOT}/incoming/${RELEASE_ID}"
+          scp -P "$DEPLOY_PORT" "$archive" "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_archive}"
+          ssh -p "$DEPLOY_PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" <<EOF
+          set -euo pipefail
+          rm -rf "${remote_source}"
+          mkdir -p "${remote_source}"
+          tar -xzf "${remote_archive}" -C "${remote_source}"
+          cd "${remote_source}"
+          DEPLOY_ROOT="${DEPLOY_ROOT}/prod" \
+          TARGET_PORT="${PROD_PORT}" \
+          CANDIDATE_PORT="${PROD_CANDIDATE_PORT}" \
+          SYSTEMD_SERVICE="${PROD_SERVICE}" \
+          SHARED_ENV="${DEPLOY_ROOT}/shared/prod.env" \
+          bash ./scripts/deploy_release.sh "${RELEASE_ID}"
+          rm -f "${remote_archive}"
+          EOF
+
+  deploy-disabled:
+    needs: verify-and-package
+    if: ${{ vars.ENABLE_PROD_DEPLOY != '1' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Report deploy skip
+        run: |
+          echo "Production deploy is currently disabled."
+          echo "Set repository variable ENABLE_PROD_DEPLOY=1 and configure deploy secrets to turn it on."
