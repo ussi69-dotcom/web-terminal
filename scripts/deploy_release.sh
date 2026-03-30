@@ -20,10 +20,22 @@ health_path=${HEALTH_PATH:-/api/health}
 keep_releases=${KEEP_RELEASES:-5}
 systemd_service=${SYSTEMD_SERVICE:-}
 xdg_runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
+bun_bin=${BUN_BIN:-$(command -v bun || true)}
 release_dir="${releases_dir}/${release_id}"
 candidate_log=""
 candidate_pid=""
 current_target=""
+
+if [[ -z "$bun_bin" ]] && [[ -x /home/deploy/.bun/bin/bun ]]; then
+  bun_bin=/home/deploy/.bun/bin/bun
+fi
+
+if [[ -z "$bun_bin" ]]; then
+  echo "bun binary not found" >&2
+  exit 1
+fi
+
+export PATH="$(dirname "$bun_bin"):$PATH"
 
 cleanup_candidate() {
   if [[ -n "$candidate_pid" ]] && kill -0 "$candidate_pid" 2>/dev/null; then
@@ -69,13 +81,13 @@ fi
 
 (
   cd "$release_dir"
-  bun install --frozen-lockfile
+  "$bun_bin" install --frozen-lockfile
 )
 
 candidate_log=$(mktemp)
 (
   cd "$release_dir"
-  PORT="$candidate_port" HOST="127.0.0.1" bun run start >"$candidate_log" 2>&1
+  PORT="$candidate_port" HOST="127.0.0.1" "$bun_bin" run start >"$candidate_log" 2>&1
 ) &
 candidate_pid=$!
 
