@@ -1,30 +1,48 @@
 # DeckTerm
 
-A web-based terminal emulator with full PTY support, floating/tiling window manager, and mobile-friendly UI.
+DeckTerm is a browser-based terminal workspace for long-running remote development sessions.
 
-![Bun](https://img.shields.io/badge/Bun-1.3.5+-black?logo=bun)
-![Hono](https://img.shields.io/badge/Hono-4.x-orange)
-![xterm.js](https://img.shields.io/badge/xterm.js-5.x-green)
-![License](https://img.shields.io/badge/License-MIT-blue)
+It combines persistent tmux-backed shells, workspace tabs, split tiles, mobile-first controls, file and git tooling, and agent-aware status signals into one interface. The product direction is inspired by Ghostty's calm terminal UX, Termux-style mobile ergonomics, VS Code-style workspace affordances, and the practical needs of Codex and Claude-driven server workflows.
 
-## Features
+## What It Does
 
-- **Full PTY Support** - Native terminal emulation with resize, colors, and cursor positioning
-- **Tiling Window Manager** - Drag, resize, snap, and tile multiple terminal windows
-- **Multi-Terminal** - Up to 10 concurrent terminal sessions per user
-- **Auto-Reconnect** - WebSocket reconnection with exponential backoff
-- **Reconnect Scrollback Replay** - Previous terminal output is replayed after reconnect
-- **Mobile Support** - Touch-friendly extra keys bar (ESC, TAB, CTRL, ALT, SHIFT, arrows, F1-F12)
-- **File Manager** - Browse, upload, download, and manage files
-- **Server Stats** - Real-time CPU, RAM, and disk usage monitoring
-- **OSC52 Clipboard** - Copy from TUI tools (vim, tmux, OpenCode) with history panel
-- **OpenCode Integration** - Embedded AI coding assistant via reverse proxy
-- **Git Panel** - Quick commits from mobile with VS Code-like UI
-- **Cloudflare Access Auth** - Secure multi-user access with JWT authentication
+- Persistent tmux-backed terminal sessions that survive browser reconnects and service restarts
+- Workspace tabs with split terminals, drag-to-merge behavior, linked views, and cwd-based color signals
+- Mobile-friendly terminal controls with extra keys, viewport-aware focus recovery, and image/text clipboard handling
+- Built-in file manager for browse, upload, download, mkdir, rename, and delete inside allowed roots
+- Built-in git panel and git APIs for status, diff, stage, unstage, commit, branch, checkout, log, and show
+- Agent-aware workspace badges such as `Codex` and `Codex Responding`
+- Release-based production deployment from `main` with CI verification and atomic rollout
 
-## Requirements
+## Product Snapshot
 
-- **Bun 1.3.5+** (required for native PTY API)
+DeckTerm today is optimized for one practical job: keep remote coding sessions usable from desktop and mobile without losing context.
+
+Current product pillars:
+
+1. Session continuity
+2. Workspace management
+3. Mobile usability
+4. File and git operations close to the terminal
+5. Safe promotion from `dev` to `main`
+
+For the full current-state description, see [docs/product-guide.md](/home/deploy/deckterm_dev/docs/product-guide.md).
+For rollout and CI/CD details, see [deploy/README.md](/home/deploy/deckterm_dev/deploy/README.md) and [docs/operations-guide.md](/home/deploy/deckterm_dev/docs/operations-guide.md).
+
+## Runtime Model
+
+Two separate environments are used on the server:
+
+| Port | Role | Source | Service |
+| --- | --- | --- | --- |
+| `4174` | Development | [`/home/deploy/deckterm_dev`](/home/deploy/deckterm_dev) | `deckterm-dev.service` |
+| `4173` | Production | release symlink under `/home/deploy/apps/deckterm/prod/current` | `deckterm.service` |
+
+Important:
+
+- Development work happens in [`/home/deploy/deckterm_dev`](/home/deploy/deckterm_dev) on branch `dev`
+- Production no longer runs directly from a live git checkout
+- `main` deploys through GitHub Actions into release directories
 
 ## Quick Start
 
@@ -35,209 +53,116 @@ bun install
 bun run dev
 ```
 
-Open http://localhost:4173 in your browser.
+By default the backend starts on `4174` unless `PORT` overrides it.
 
-## Security
+## Core Features
 
-**⚠️ IMPORTANT: DO NOT expose DeckTerm directly to the public internet!**
+### Terminal and workspace UX
 
-DeckTerm is designed to run behind **Cloudflare Tunnel** with **Cloudflare Access** for authentication. Direct exposure creates serious security risks.
+- Up to 10 concurrent terminals by default
+- New workspace tabs and split terminals inside a workspace
+- Drag one workspace tab onto another to merge them
+- Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
+- Linked view for tmux-backed sessions
 
-### Required Environment Variables
+### Mobile workflow
 
-| Variable              | Description                               | Required                |
-| --------------------- | ----------------------------------------- | ----------------------- |
-| `CF_ACCESS_REQUIRED`  | Set to `1` to enforce JWT validation      | Yes (production)        |
-| `CF_ACCESS_TEAM_NAME` | Your Cloudflare Access team name          | Yes (when auth enabled) |
-| `CF_ACCESS_AUD`       | Application AUD tag from Access dashboard | Yes (when auth enabled) |
-| `TRUSTED_ORIGINS`     | Comma-separated list of allowed origins   | Recommended             |
+- Extra keys bar with modifiers, arrows, navigation keys, and F-keys
+- Focus recovery when switching back to the active terminal
+- Clipboard image upload and touch paste fallback
+- Layout fixes for narrow screens, virtual keyboards, and viewport shifts
 
-### Deployment Checklist
+### Clipboard and files
 
-- [ ] Set up Cloudflare Tunnel pointing to DeckTerm
-- [ ] Create Cloudflare Access application
-- [ ] Configure email OTP authentication
-- [ ] Set required environment variables in `.env`
-- [ ] Test authentication from a new device
-- [ ] Verify terminal ownership isolation (users can't see each other's terminals)
+- OSC52 clipboard capture
+- Clipboard history panel
+- Large-paste warning flow
+- File browser and file manager under allowed filesystem roots
 
-### OpenCode Integration (Optional)
+### Git workflow
 
-To enable the embedded AI coding assistant:
+- Git status, diff, stage, unstage, commit, branch listing, checkout, log, and show
+- Git panel intended for lightweight terminal-adjacent operations, including mobile use
 
-1. **Start OpenCode server:**
+### Agent-aware signals
 
-   ```bash
-   # Run in tmux for persistence
-   tmux new -d -s opencode "opencode web --port 4096"
-   ```
+- Workspace tabs detect running processes
+- Codex and Claude sessions can surface `Codex` / `Codex Responding` style labels
+- Port and worktree hints are also surfaced in workspace metadata
 
-2. **Expose via Cloudflare Tunnel:**
+## Security and Access
 
-   ```bash
-   # Add to your tunnel config (e.g., ~/.cloudflared/config.yml)
-   # - hostname: opencode.yourdomain.com
-   #   service: http://localhost:4096
-   ```
+DeckTerm supports Cloudflare Access JWT validation and trusted origins. Production should be treated as a protected internal tool, not a public terminal exposed directly to the internet.
 
-3. **Configure DeckTerm:**
+Relevant variables include:
 
-   ```bash
-   # Add to .env
-   OPENCODE_URL=https://opencode.yourdomain.com
-   ```
-
-4. **Restart DeckTerm** - The OpenCode button will now open the embedded panel.
-
-If `OPENCODE_URL` is not set, clicking the OpenCode button shows setup instructions.
+- `CF_ACCESS_REQUIRED`
+- `CF_ACCESS_TEAM_NAME`
+- `CF_ACCESS_AUD`
+- `TRUSTED_ORIGINS`
+- `ALLOWED_FILE_ROOTS`
 
 ## Configuration
 
-| Variable                     | Default                    | Description                                |
-| ---------------------------- | -------------------------- | ------------------------------------------ |
-| `PORT`                       | 4173                       | Server port                                |
-| `HOST`                       | 0.0.0.0                    | Bind address                               |
-| `OPENCODE_WEB_DEBUG`         | 0                          | Enable debug logging (1=enabled)           |
-| `OPENCODE_WEB_MAX_TERMINALS` | 10                         | Max concurrent terminals (global limit)    |
-| `MAX_TERMINALS_PER_USER`     | 10                         | Max terminals per user                     |
-| `TERMINAL_IDLE_TIMEOUT_MS`   | 7200000 (2 hours)          | Auto-close terminals after idle time (ms)  |
-| `SCROLLBACK_MAX_LINES`       | 2000                       | Max buffered output chunks for reconnect replay |
-| `SCROLLBACK_MAX_BYTES`       | 1048576 (1MB)              | Max buffered output size for reconnect replay |
-| `ALLOWED_FILE_ROOTS`         | `$HOME`                    | Comma-separated roots allowed for file and git APIs |
-| `CF_ACCESS_REQUIRED`         | 0                          | Require Cloudflare Access JWT (1=enabled)  |
-| `CF_ACCESS_TEAM_NAME`        | -                          | Cloudflare Access team name                |
-| `CF_ACCESS_AUD`              | -                          | Cloudflare Access application AUD tag      |
-| `TRUSTED_ORIGINS`            | (empty = `*` without credentials) | Comma-separated allowed origins for credentialed CORS |
-| `OPENCODE_UPSTREAM`          | http://127.0.0.1:4096      | OpenCode backend URL (for health checks)   |
-| `OPENCODE_URL`               | (empty = disabled)         | OpenCode frontend URL (Cloudflare-exposed) |
+Common runtime variables:
 
-## Keyboard Shortcuts
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `4174` | HTTP server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `OPENCODE_WEB_DEBUG` | `0` | Debug logging |
+| `OPENCODE_WEB_MAX_TERMINALS` | `10` | Global terminal cap |
+| `MAX_TERMINALS_PER_USER` | `10` | Per-user cap |
+| `TERMINAL_IDLE_TIMEOUT_MS` | `7200000` | Idle terminal cleanup |
+| `SCROLLBACK_MAX_LINES` | `2000` | Reconnect replay line budget |
+| `SCROLLBACK_MAX_BYTES` | `1048576` | Reconnect replay byte budget |
+| `AGENT_RESPONDING_IDLE_MS` | `700` | Response-to-idle decay for agent badges |
+| `ALLOWED_FILE_ROOTS` | `$HOME` | Allowed browse/upload/git roots |
+| `TMUX_BACKEND` | `1` in deployed environments | Persistent tmux sessions |
 
-| Shortcut          | Action                  |
-| ----------------- | ----------------------- |
-| `Ctrl+N`          | New terminal            |
-| `Ctrl+W`          | Close terminal          |
-| `Ctrl+Tab`        | Switch to next tab      |
-| `Ctrl+1-9`        | Switch to tab by number |
-| `Ctrl+Shift+D`    | Split workspace         |
-| `Ctrl+G`          | Group terminals         |
-| `Ctrl+F`          | Search in terminal      |
-| `Ctrl++`/`Ctrl+-` | Adjust font size        |
-| `F11`             | Toggle fullscreen       |
+Legacy compatibility note:
 
-## Mobile Extra Keys
+- The backend still contains OpenCode proxy routes, but OpenCode is no longer part of the active DeckTerm UI and is not documented as a primary workflow.
 
-Bottom bar provides touch access to special keys:
+## Development Workflow
 
-- **Row 1:** ESC, TAB, CTRL, ALT, SHIFT, arrows, HOME, END, INS, DEL
-- **Row 2:** F1-F12, PgUp, PgDn (toggle with ⋯)
+Branch model:
 
-## API
+- `feature/*` for scoped work
+- `dev` as integration branch
+- `main` as production branch
 
-### Terminals
+Promotion model:
 
-```bash
-POST /api/terminals              # Create terminal
-GET /api/terminals               # List terminals
-DELETE /api/terminals/:id        # Delete terminal
-POST /api/terminals/:id/resize   # Resize terminal
-WS /ws/terminals/:id             # WebSocket connection
-```
-
-### Files
-
-```bash
-GET /api/browse?path=            # Browse directory
-GET /api/files/download?path=    # Download file
-POST /api/files/upload?path=     # Upload file
-POST /api/files/mkdir?path=      # Create directory
-DELETE /api/files?path=          # Delete file/directory
-POST /api/files/rename           # Rename file
-```
-
-### Health
-
-```bash
-GET /api/health                  # Server status
-GET /api/stats                   # CPU/RAM/Disk usage
-```
-
-### OpenCode Integration
-
-```bash
-GET /api/apps/opencode/health    # OpenCode server status
-ALL /apps/opencode/*             # Reverse proxy to OpenCode
-WS /apps/opencode/ws             # WebSocket proxy for OpenCode
-```
-
-### Git Operations
-
-```bash
-GET /api/git/status?cwd=...      # Git status
-GET /api/git/diff?cwd=...&path=... # Working tree diff
-GET /api/git/diff?cwd=...&path=...&staged=1 # Staged diff
-GET /api/git/diff?cwd=...&commit=HEAD~1 # Commit diff
-POST /api/git/stage              # Stage files
-POST /api/git/unstage            # Unstage files
-POST /api/git/commit             # Create commit
-GET /api/git/branches?cwd=...    # List branches
-```
-
-## Project Structure
-
-```
-deckterm/
-├── backend/
-│   ├── index.ts        # Entry point
-│   └── server.ts       # Hono server + PTY
-├── web/
-│   ├── app.js          # Frontend app (~3200 lines)
-│   ├── index.html      # UI shell
-│   ├── styles.css      # GitHub dark theme
-│   ├── terminal-colors.js  # Workspace color hashing
-│   ├── terminal-colors.test.js  # Unit tests
-│   └── vendor/         # xterm.js libs
-├── .env
-└── package.json
-```
+1. Build on `feature/*` or directly on `dev`
+2. Validate on `4174`
+3. Promote to `main`
+4. Let `Deploy Main` verify, package, and atomically deploy production
 
 ## Testing
 
 ```bash
-# Unit tests
 bun run test:unit
-
-# E2E tests (always against dev on 4174 unless PW_BASE_URL is set)
+bun run test:e2e:smoke
+bun run test:e2e:workspace
 bun run test:e2e
-
-# Full test pass
-bun run test:all
 ```
 
-### Test Coverage
+Project rule: browser tests target the dev environment on `4174`.
 
-| Module             | Tests | Status     |
-| ------------------ | ----- | ---------- |
-| terminal-colors.js | 2     | ✅ Passing |
+## Docs
 
-### Browser Compatibility
-
-The `terminal-colors.js` module uses CommonJS-style exports for browser compatibility:
-
-```javascript
-// Works in both Node.js/Bun and browser <script> tags
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = { hashCwdToColor, blendWorkspaceColors, hexToRgba };
-}
-```
-
-**Note:** ESM `export {}` syntax breaks in browser `<script>` tags. Always use the CommonJS pattern above for browser-loaded modules.
+- Product guide: [docs/product-guide.md](/home/deploy/deckterm_dev/docs/product-guide.md)
+- Operations and CI/CD: [docs/operations-guide.md](/home/deploy/deckterm_dev/docs/operations-guide.md)
+- Deploy layout and rollback: [deploy/README.md](/home/deploy/deckterm_dev/deploy/README.md)
 
 ## Tech Stack
 
-- **Runtime**: [Bun](https://bun.sh/) with native PTY
-- **Backend**: [Hono](https://hono.dev/)
-- **Frontend**: Vanilla JS + [xterm.js](https://xtermjs.org/)
+- Runtime: Bun
+- Backend: Hono + Bun WebSocket + Bun.Terminal
+- Frontend: Vanilla JS + xterm.js
+- Persistence: tmux
+- Auth: optional Cloudflare Access JWT validation
 
 ## License
 
