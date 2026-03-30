@@ -8,6 +8,7 @@ previous_link=${PREVIOUS_LINK:-"${deploy_root}/previous"}
 target_port=${TARGET_PORT:-4173}
 health_path=${HEALTH_PATH:-/api/health}
 systemd_service=${SYSTEMD_SERVICE:-}
+xdg_runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
 
 if [[ $# -gt 1 ]]; then
   echo "Usage: $0 [release-id]" >&2
@@ -28,7 +29,7 @@ fi
 ln -sfn "$rollback_target" "$current_link"
 
 if [[ -n "$systemd_service" ]]; then
-  systemctl restart "$systemd_service"
+  XDG_RUNTIME_DIR="$xdg_runtime_dir" systemctl --user restart "$systemd_service"
 fi
 
 "$(dirname "$0")/wait_for_health.sh" "http://127.0.0.1:${target_port}${health_path}" 45

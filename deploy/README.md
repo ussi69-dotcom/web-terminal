@@ -38,7 +38,7 @@ Repository variables:
 - `DEPLOY_ROOT` default `/home/deploy/apps/deckterm`
 - `PROD_PORT` default `4173`
 - `PROD_CANDIDATE_PORT` default `4273`
-- `PROD_SERVICE` default `deckterm-prod.service`
+- `PROD_SERVICE` default `deckterm.service`
 
 Recommended branch protections:
 
@@ -66,6 +66,6 @@ On the server, point `current` back to a previous release and restart the servic
 
 ```bash
 DEPLOY_ROOT=/home/deploy/apps/deckterm/prod \
-SYSTEMD_SERVICE=deckterm-prod.service \
+SYSTEMD_SERVICE=deckterm.service \
 bash scripts/rollback_release.sh
 ```

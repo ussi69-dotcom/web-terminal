@@ -133,7 +133,7 @@ jobs:
           DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/home/deploy/apps/deckterm' }}
           PROD_PORT: ${{ vars.PROD_PORT || '4173' }}
           PROD_CANDIDATE_PORT: ${{ vars.PROD_CANDIDATE_PORT || '4273' }}
-          PROD_SERVICE: ${{ vars.PROD_SERVICE || 'deckterm-prod.service' }}
+          PROD_SERVICE: ${{ vars.PROD_SERVICE || 'deckterm.service' }}
           RELEASE_ID: ${{ needs.verify-and-package.outputs.release_id }}
         run: |
           test -n "$DEPLOY_HOST"

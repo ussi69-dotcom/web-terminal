@@ -18,10 +18,19 @@ test("deploy workflow stays gated behind explicit production enable flag", () =>
 
   expect(deployWorkflow).toContain("ENABLE_PROD_DEPLOY");
   expect(deployWorkflow).toContain("Production deploy is currently disabled.");
+  expect(deployWorkflow).toContain("deckterm.service");
 });
 
 test("dependabot targets the dev integration branch", () => {
   const dependabotConfig = readText("../.github/dependabot.yml");
 
   expect(dependabotConfig).toContain('target-branch: "dev"');
+});
+
+test("deploy scripts target user-level systemd services", () => {
+  const deployScript = readText("../scripts/deploy_release.sh");
+  const rollbackScript = readText("../scripts/rollback_release.sh");
+
+  expect(deployScript).toContain("systemctl --user restart");
+  expect(rollbackScript).toContain("systemctl --user restart");
 });

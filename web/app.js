@@ -3853,6 +3853,30 @@ class TerminalManager {
     return terminalState?.element?.querySelector(".xterm-viewport");
   }
 
+  scheduleTerminalMetricStabilization(id) {
+    const rerender = () => {
+      const t = this.terminals.get(id);
+      if (!t?.fitAddon || !t?.terminal) return;
+
+      try {
+        t.fitAddon.fit();
+        t.terminal.refresh(0, Math.max(0, t.terminal.rows - 1));
+        this.syncTerminalSize(id);
+      } catch (err) {
+        console.warn(`[terminal] metric stabilization failed for ${id}:`, err);
+      }
+    };
+
+    requestAnimationFrame(rerender);
+    setTimeout(() => requestAnimationFrame(rerender), 150);
+
+    if (document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => requestAnimationFrame(rerender))
+        .catch(() => {});
+    }
+  }
+
   focusTerminal(
     id,
     { syncSize = false, scrollToPrompt = false, ensureVisible = true } = {},
@@ -4622,6 +4646,7 @@ class TerminalManager {
     this.queueTelemetryRefresh(0);
     this.switchTo(id);
     this.attachResizeObserver(id);
+    this.scheduleTerminalMetricStabilization(id);
 
     setTimeout(() => {
       fitAddon.fit();
@@ -5569,6 +5594,7 @@ class TerminalManager {
       this.queueTelemetryRefresh(0);
       this.switchTo(id);
       this.attachResizeObserver(id);
+      this.scheduleTerminalMetricStabilization(id);
 
       // Disable mobile keyboard autocorrect etc.
       setTimeout(() => this.disableMobileKeyboardFeatures(element), 100);

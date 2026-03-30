@@ -19,6 +19,7 @@ candidate_port=${CANDIDATE_PORT:-4273}
 health_path=${HEALTH_PATH:-/api/health}
 keep_releases=${KEEP_RELEASES:-5}
 systemd_service=${SYSTEMD_SERVICE:-}
+xdg_runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
 release_dir="${releases_dir}/${release_id}"
 candidate_log=""
 candidate_pid=""
@@ -35,7 +36,7 @@ rollback_live() {
   if [[ -n "$current_target" ]]; then
     ln -sfn "$current_target" "$current_link"
     if [[ -n "$systemd_service" ]]; then
-      systemctl restart "$systemd_service"
+      XDG_RUNTIME_DIR="$xdg_runtime_dir" systemctl --user restart "$systemd_service"
     fi
   fi
 }
@@ -93,7 +94,7 @@ fi
 ln -sfn "$release_dir" "$current_link"
 
 if [[ -n "$systemd_service" ]]; then
-  systemctl restart "$systemd_service"
+  XDG_RUNTIME_DIR="$xdg_runtime_dir" systemctl --user restart "$systemd_service"
 fi
 
 if ! "$source_dir/scripts/wait_for_health.sh" "http://127.0.0.1:${target_port}${health_path}" 45; then
