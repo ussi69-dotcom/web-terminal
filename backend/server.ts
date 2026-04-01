@@ -394,7 +394,6 @@ async function recoverTmuxSessions(): Promise<number> {
         processTree,
         capture: paneCapture,
       });
-
       await createManagedTerminal({
         id,
         cwd,
