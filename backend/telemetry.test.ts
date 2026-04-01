@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   classifyAgentOutputPhase,
+  inferRecoveredTmuxRuntimeState,
+  inferPolledTmuxAgentState,
   parseShellIntegrationChunk,
   resolveAgentOutputState,
   type ShellIntegrationParseState,
@@ -126,4 +128,69 @@ test("resolveAgentOutputState keeps responding sticky during a response", () => 
   });
 
   expect(nextState).toBe("responding");
+});
+
+test("inferRecoveredTmuxRuntimeState restores active codex session after restart", () => {
+  const state = inferRecoveredTmuxRuntimeState({
+    paneCurrentCommand: "node",
+    processTree: [
+      "/bin/bash --rcfile /tmp/deckterm-bash-integration.rc -i",
+      "node /home/deploy/.bun/bin/codex --dangerously-bypass-approvals-and-sandbox",
+      "/home/deploy/.bun/install/global/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex --dangerously-bypass-approvals-and-sandbox",
+    ],
+    capture: "› user prompt\n\nHello from agent",
+  });
+
+  expect(state).toEqual({
+    running: true,
+    agentName: "codex",
+    agentState: "responding",
+  });
+});
+
+test("inferRecoveredTmuxRuntimeState keeps claude in thinking when pane shows working", () => {
+  const state = inferRecoveredTmuxRuntimeState({
+    paneCurrentCommand: "node",
+    processTree: [
+      "/bin/bash --rcfile /tmp/deckterm-bash-integration.rc -i",
+      "node /usr/local/bin/claude",
+      "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude",
+    ],
+    capture: "Working...\nRunning stop hooks",
+  });
+
+  expect(state).toEqual({
+    running: true,
+    agentName: "claude",
+    agentState: "thinking",
+  });
+});
+
+test("inferPolledTmuxAgentState keeps idle codex session in thinking when capture is unchanged", () => {
+  const capture =
+    "› previous prompt\n\n" +
+    "• Older response text\n\n" +
+    "› Summarize recent commits\n\n" +
+    "gpt-5.4 high · ~/deckterm_dev · dev";
+
+  const state = inferPolledTmuxAgentState({
+    agentName: "codex",
+    previousCapture: capture,
+    capture,
+  });
+
+  expect(state).toBe("thinking");
+});
+
+test("inferPolledTmuxAgentState marks codex responding only when new output appears", () => {
+  const previousCapture = "› previous prompt\n";
+  const capture = `${previousCapture}\nHello from agent`;
+
+  const state = inferPolledTmuxAgentState({
+    agentName: "codex",
+    previousCapture,
+    capture,
+  });
+
+  expect(state).toBe("responding");
 });

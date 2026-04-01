@@ -95,6 +95,19 @@ const KEY_SEQUENCES = {
   F12: "\x1b[24~",
 };
 
+const TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono", "Symbols Nerd Font", "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace';
+const TERMINAL_LINE_HEIGHT = 1.2;
+const TERMINAL_PADDING_X = 16;
+const TERMINAL_PADDING_Y = 16;
+const FONT_METRIC_WAIT_MS = 350;
+const DESKTOP_MAX_TERMINAL_COLS = 240;
+const DESKTOP_MAX_TERMINAL_ROWS = 60;
+const APP_DEFAULT_TERMINAL_COLS =
+  window.TerminalSizing?.DEFAULT_TERMINAL_COLS || 120;
+const APP_DEFAULT_TERMINAL_ROWS =
+  window.TerminalSizing?.DEFAULT_TERMINAL_ROWS || 30;
+
 const TILE_CONFIG = {
   MIN_WIDTH: 250,
   MIN_HEIGHT: 180,
@@ -3678,6 +3691,7 @@ class TerminalManager {
     this.viewportSyncFrame = 0;
     this.viewportFocusTimer = null;
     this.notificationsEnabled = true;
+    this.clientInstanceId = this.getOrCreateClientInstanceId();
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3691,6 +3705,19 @@ class TerminalManager {
     this.clipboardManager = new ClipboardManager();
 
     this.init();
+  }
+
+  getOrCreateClientInstanceId() {
+    try {
+      const key = "deckterm-client-instance-id";
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const next = crypto.randomUUID();
+      sessionStorage.setItem(key, next);
+      return next;
+    } catch {
+      return `deckterm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
   }
 
   init() {
@@ -3758,7 +3785,7 @@ class TerminalManager {
           });
         }
         if (active) {
-          active.fitAddon.fit();
+          this.fitTerminalState(active);
           this.syncTerminalSize(this.activeId);
         }
       }, 150);
@@ -3772,6 +3799,7 @@ class TerminalManager {
 
     // Mobile swipe support
     this.setupMobileSwipe();
+    this.setupTerminalRenderRecovery();
     this.startTelemetryRefreshLoop();
 
     // Check for existing terminals
@@ -3801,6 +3829,131 @@ class TerminalManager {
     await (this.bootstrapPromise || Promise.resolve());
   }
 
+  async waitForFontMetrics() {
+    if (!document.fonts?.ready) return;
+    await Promise.race([
+      document.fonts.ready.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, FONT_METRIC_WAIT_MS)),
+    ]);
+  }
+
+  getActiveRenderCellSize() {
+    const active = this.getActiveTerminal();
+    const dims = active?.terminal?._core?._renderService?.dimensions;
+    const cellWidth = dims?.css?.cell?.width;
+    const cellHeight = dims?.css?.cell?.height;
+
+    if (cellWidth > 0 && cellHeight > 0) {
+      return { cellWidth, cellHeight };
+    }
+
+    return null;
+  }
+
+  measureTerminalCellSize() {
+    const liveMetrics = this.getActiveRenderCellSize();
+    if (liveMetrics) return liveMetrics;
+
+    const probe = document.createElement("span");
+    probe.textContent = "MMMMMMMMMM";
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    probe.style.top = "-9999px";
+    probe.style.visibility = "hidden";
+    probe.style.whiteSpace = "pre";
+    probe.style.fontFamily = TERMINAL_FONT_FAMILY;
+    probe.style.fontSize = `${this.fontSize}px`;
+    probe.style.lineHeight = String(TERMINAL_LINE_HEIGHT);
+    document.body.appendChild(probe);
+
+    try {
+      const rect = probe.getBoundingClientRect();
+      const cellWidth = rect.width / probe.textContent.length;
+      const cellHeight = rect.height;
+
+      if (cellWidth > 0 && cellHeight > 0) {
+        return { cellWidth, cellHeight };
+      }
+    } finally {
+      probe.remove();
+    }
+
+    return null;
+  }
+
+  estimateInitialTerminalSize(split = false) {
+    const active = this.getActiveTerminal();
+    const predictedPixels =
+      window.TerminalSizing?.predictInitialTilePixels?.({
+        containerWidth: this.container?.clientWidth || window.innerWidth,
+        containerHeight: this.container?.clientHeight || window.innerHeight,
+        split,
+        activeTileWidth: active?.element?.clientWidth || 0,
+        activeTileHeight: active?.element?.clientHeight || 0,
+      }) || {
+        width: this.container?.clientWidth || window.innerWidth,
+        height: this.container?.clientHeight || window.innerHeight,
+      };
+    const cellMetrics = this.measureTerminalCellSize();
+    const estimated =
+      window.TerminalSizing?.estimateTerminalGrid?.({
+        width: predictedPixels.width,
+        height: predictedPixels.height,
+        cellWidth: cellMetrics?.cellWidth || 0,
+        cellHeight: cellMetrics?.cellHeight || 0,
+        horizontalPadding: TERMINAL_PADDING_X,
+        verticalPadding: TERMINAL_PADDING_Y,
+        fallbackCols: APP_DEFAULT_TERMINAL_COLS,
+        fallbackRows: APP_DEFAULT_TERMINAL_ROWS,
+      }) || {
+        cols: APP_DEFAULT_TERMINAL_COLS,
+        rows: APP_DEFAULT_TERMINAL_ROWS,
+      };
+
+    return this.normalizeTerminalGrid(estimated);
+  }
+
+  normalizeTerminalGrid({ cols, rows }) {
+    return (
+      window.TerminalSizing?.normalizeTerminalGrid?.({
+        cols,
+        rows,
+        maxCols: platformDetector.isMobile
+          ? Number.POSITIVE_INFINITY
+          : DESKTOP_MAX_TERMINAL_COLS,
+        maxRows: platformDetector.isMobile
+          ? Number.POSITIVE_INFINITY
+          : DESKTOP_MAX_TERMINAL_ROWS,
+      }) || { cols, rows }
+    );
+  }
+
+  normalizeTerminalGeometry(terminalState) {
+    const terminal = terminalState?.terminal;
+    if (!terminal) return null;
+
+    const normalized = this.normalizeTerminalGrid({
+      cols: terminal.cols,
+      rows: terminal.rows,
+    });
+
+    if (normalized.cols !== terminal.cols || normalized.rows !== terminal.rows) {
+      terminal.resize(normalized.cols, normalized.rows);
+    }
+
+    return normalized;
+  }
+
+  fitTerminalState(terminalState) {
+    if (!terminalState?.fitAddon || !terminalState?.terminal) return null;
+    terminalState.fitAddon.fit();
+    return this.normalizeTerminalGeometry(terminalState);
+  }
+
+  fitTerminal(id) {
+    return this.fitTerminalState(this.terminals.get(id));
+  }
+
   setBootstrapPending(isPending) {
     this.bootstrapPending = isPending;
     document.body.dataset.bootstrapState = isPending ? "pending" : "ready";
@@ -3825,6 +3978,24 @@ class TerminalManager {
     if ("onscrollend" in viewport) {
       viewport.addEventListener("scrollend", scheduleViewportSync);
     }
+  }
+
+  setupTerminalRenderRecovery() {
+    const recover = () => {
+      if (!this.activeId) return;
+      requestAnimationFrame(() => {
+        this.performReconnectLayoutSync(this.activeId, {
+          forceResize: true,
+          scrollToPrompt: platformDetector.hasTouch,
+        });
+      });
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) recover();
+    });
+    window.addEventListener("pageshow", recover);
+    window.addEventListener("focus", recover);
   }
 
   setupToolbarActions() {
@@ -3859,7 +4030,7 @@ class TerminalManager {
       if (!t?.fitAddon || !t?.terminal) return;
 
       try {
-        t.fitAddon.fit();
+        this.fitTerminalState(t);
         t.terminal.refresh(0, Math.max(0, t.terminal.rows - 1));
         this.syncTerminalSize(id);
       } catch (err) {
@@ -3913,7 +4084,7 @@ class TerminalManager {
     }
 
     if (syncSize) {
-      terminalState.fitAddon?.fit();
+      this.fitTerminalState(terminalState);
       this.syncTerminalSize(id);
     }
   }
@@ -4278,7 +4449,7 @@ class TerminalManager {
     }
     if (this.activeId) {
       const active = this.terminals.get(this.activeId);
-      active?.fitAddon?.fit();
+      if (active) this.fitTerminalState(active);
       this.syncTerminalSize(this.activeId);
     }
   }
@@ -4422,9 +4593,38 @@ class TerminalManager {
     );
   }
 
+  shouldBootstrapLinkedView(terminalInfo) {
+    return Boolean(
+      window.BootstrapRouting?.shouldBootstrapLinkedView?.({
+        supportsLinkedView: Boolean(terminalInfo?.supportsLinkedView),
+        hasForeignConnection: Boolean(terminalInfo?.hasForeignConnection),
+      }),
+    );
+  }
+
+  async bootstrapLinkedView(sourceTerminal) {
+    const res = await fetch(
+      `/api/terminals/${encodeURIComponent(sourceTerminal.id)}/linked-view`,
+      { method: "POST" },
+    );
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || "Failed to create linked view");
+    }
+
+    await this.reconnectToTerminal(payload.id, payload.cwd, null, {
+      showReconnectBanner: false,
+      isReconnection: false,
+      backendMode: payload.backendMode || null,
+      supportsLinkedView: Boolean(payload.supportsLinkedView),
+    });
+  }
+
   async checkExistingTerminals() {
     try {
-      const res = await fetch("/api/terminals");
+      const res = await fetch("/api/terminals", {
+        headers: { "X-DeckTerm-Client-Id": this.clientInstanceId },
+      });
       const serverTerminals = await res.json();
 
       if (serverTerminals.length > 0) {
@@ -4435,13 +4635,37 @@ class TerminalManager {
         // Clean up stale sessions from registry
         this.sessionRegistry.cleanup(serverTerminals.map((t) => t.id));
 
-        // Reconnect terminals, using saved session data where available
-        for (const t of serverTerminals) {
-          const savedSession = this.sessionRegistry.get(t.id);
-          await this.reconnectToTerminal(t.id, t.cwd, savedSession, {
-            backendMode: t.backendMode || null,
-            supportsLinkedView: Boolean(t.supportsLinkedView),
-          });
+        const savedSessionsById = Object.fromEntries(
+          serverTerminals
+            .map((t) => [t.id, this.sessionRegistry.get(t.id)])
+            .filter(([, savedSession]) => Boolean(savedSession)),
+        );
+        const bootstrapActions =
+          window.BootstrapRouting?.planBootstrapTerminals?.({
+            serverTerminals,
+            savedSessionsById,
+          }) || [];
+
+        for (const action of bootstrapActions) {
+          const terminalInfo = serverTerminals.find(
+            (terminal) => terminal.id === action.terminalId,
+          );
+          if (!terminalInfo) continue;
+
+          if (action.type === "linked-view") {
+            await this.bootstrapLinkedView(terminalInfo);
+            continue;
+          }
+
+          await this.reconnectToTerminal(
+            terminalInfo.id,
+            terminalInfo.cwd,
+            action.savedSession,
+            {
+              backendMode: terminalInfo.backendMode || null,
+              supportsLinkedView: Boolean(terminalInfo.supportsLinkedView),
+            },
+          );
         }
         return;
       }
@@ -4522,6 +4746,7 @@ class TerminalManager {
 
     const fitAddon = terminal._fitAddon;
     fitAddon.fit();
+    this.normalizeTerminalGeometry({ terminal });
 
     dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
     if (showReconnectBanner) {
@@ -4529,7 +4754,7 @@ class TerminalManager {
     }
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}`;
+    const wsUrl = `${protocol}//${location.host}/ws/terminals/${id}?clientId=${encodeURIComponent(this.clientInstanceId)}`;
     dbg(`[reconnect] WebSocket URL: ${wsUrl}`);
 
     const ws = new ReconnectingWebSocket(wsUrl, id, {
@@ -4649,7 +4874,7 @@ class TerminalManager {
     this.scheduleTerminalMetricStabilization(id);
 
     setTimeout(() => {
-      fitAddon.fit();
+      this.fitTerminal(id);
       this.syncTerminalSize(id);
       this.disableMobileKeyboardFeatures(element);
     }, 200);
@@ -5009,10 +5234,9 @@ class TerminalManager {
         brightCyan: "#56d4dd",
         brightWhite: "#f0f6fc",
       },
-      fontFamily:
-        '"JetBrains Mono", "Symbols Nerd Font", "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: this.fontSize,
-      lineHeight: 1.2,
+      lineHeight: TERMINAL_LINE_HEIGHT,
       scrollback: 10000,
       cursorBlink: true,
       allowProposedApi: true,
@@ -5212,7 +5436,7 @@ class TerminalManager {
 
     requestAnimationFrame(() => {
       try {
-        t.fitAddon.fit();
+        this.fitTerminalState(t);
         this.sendResize(id, t.terminal.cols, t.terminal.rows, {
           force: forceResize,
         });
@@ -5366,7 +5590,7 @@ class TerminalManager {
       t.fitFrame = requestAnimationFrame(() => {
         t.fitFrame = 0;
         try {
-          t.fitAddon.fit();
+          this.fitTerminalState(t);
 
           // Check terminal size - be lenient on mobile
           const cols = t.terminal.cols;
@@ -5406,14 +5630,16 @@ class TerminalManager {
     if (!skipBootstrapWait) {
       await this.waitForBootstrap();
     }
+    await this.waitForFontMetrics();
 
     const cwd = this.directoryInput?.value.trim() || undefined;
+    const { cols, rows } = this.estimateInitialTerminalSize(split);
 
     try {
       const res = await fetch("/api/terminals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, cols: 120, rows: 30 }),
+        body: JSON.stringify({ cwd, cols, rows }),
       });
 
       if (!res.ok) throw new Error("Failed to create terminal");
@@ -5477,10 +5703,11 @@ class TerminalManager {
 
       const fitAddon = terminal._fitAddon;
       fitAddon.fit();
+      this.normalizeTerminalGeometry({ terminal });
 
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new ReconnectingWebSocket(
-        `${protocol}//${location.host}/ws/terminals/${id}`,
+        `${protocol}//${location.host}/ws/terminals/${id}?clientId=${encodeURIComponent(this.clientInstanceId)}`,
         id,
         {
           onMessage: (data) => {
@@ -5967,7 +6194,7 @@ class TerminalManager {
     for (const [, t] of this.terminals) {
       t.terminal.options.fontSize = this.fontSize;
       t.preferredCols = 0;
-      t.fitAddon.fit();
+      this.fitTerminalState(t);
     }
     if (this.activeId) this.syncTerminalSize(this.activeId);
   }
@@ -6043,7 +6270,7 @@ class TerminalManager {
     const active = this.terminals.get(this.activeId);
     if (active)
       setTimeout(() => {
-        active.fitAddon.fit();
+        this.fitTerminalState(active);
         this.syncTerminalSize(this.activeId);
       }, 100);
   }
