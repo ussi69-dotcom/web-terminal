@@ -12,6 +12,8 @@ import {
   classifyAgentOutputPhase,
   createGitWorktreeDetector,
   getTerminalTelemetry,
+  inferPolledTmuxAgentState,
+  inferRecoveredTmuxRuntimeState,
   parseShellIntegrationChunk,
   resolveAgentOutputState,
 } from "./telemetry";
@@ -72,9 +74,15 @@ type Terminal = {
   agentHasUserPrompt: boolean;
   agentRespondingTimer: ReturnType<typeof setTimeout> | null;
   shellIntegrationCarry: string;
+  lastTmuxCapture: string;
 };
 
-type TerminalWsData = { type: "terminal"; terminalId: string; ownerId: string };
+type TerminalWsData = {
+  type: "terminal";
+  terminalId: string;
+  ownerId: string;
+  clientId: string | null;
+};
 type OpenCodeWsData = { type: "opencode_proxy"; upstream: WebSocket };
 type WsData = TerminalWsData | OpenCodeWsData;
 
@@ -149,7 +157,7 @@ const HOP_BY_HOP_HEADERS = [
 
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
-const terminalSockets = new Map<string, Set<WebSocket>>();
+const terminalSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 const socketReconnectState = new WeakMap<
   ServerWebSocket<WsData>,
   { pendingReady: boolean }
@@ -228,6 +236,17 @@ async function finalizeReconnectReady(
   term: Terminal,
 ) {
   if (TMUX_BACKEND) {
+    if (term.sessionName) {
+      try {
+        await syncTmuxSessionSize(term.sessionName, term.cols, term.rows);
+        await sendTmuxPaneCapture(ws, term.sessionName, terminalId, {
+          waitMs: 120,
+          reason: "refresh",
+        });
+      } catch (err) {
+        debug(`[reconnect] tmux refresh capture failed for ${terminalId}`, err);
+      }
+    }
     sendReconnectLifecycle(ws, "ready");
     return;
   }
@@ -365,7 +384,16 @@ async function recoverTmuxSessions(): Promise<number> {
       // This handles UUIDs correctly since they use dashes, not underscores
       const id = parts.slice(2).join("_");
 
-      const { cwd, cols, rows } = await getTmuxSessionInfo(sessionName);
+      const { cwd, cols, rows, panePid, paneCurrentCommand } =
+        await getTmuxSessionInfo(sessionName);
+      const paneCapture = await captureTmuxPane(sessionName);
+      const processTree =
+        panePid > 0 ? await getProcessTreeArgs(panePid) : [];
+      const recoveredRuntimeState = inferRecoveredTmuxRuntimeState({
+        paneCurrentCommand,
+        processTree,
+        capture: paneCapture,
+      });
       await createManagedTerminal({
         id,
         cwd,
@@ -374,6 +402,8 @@ async function recoverTmuxSessions(): Promise<number> {
         ownerId,
         ownerEmail: "recovered",
         sessionName,
+        initialRuntimeState: recoveredRuntimeState,
+        initialScrollback: paneCapture,
       });
 
       recovered++;
@@ -538,11 +568,39 @@ function getBackendMode(): "tmux" | "raw" {
   return TMUX_BACKEND ? "tmux" : "raw";
 }
 
+function getTerminalSocketStats(term: Terminal, requestingClientId?: string | null) {
+  const sockets = terminalSockets.get(term.id);
+  let activeConnectionCount = 0;
+  let hasForeignConnection = false;
+
+  if (sockets) {
+    for (const socket of sockets) {
+      if (socket.readyState !== 1) continue;
+      activeConnectionCount++;
+      const socketClientId =
+        socket.data.type === "terminal" ? socket.data.clientId : null;
+      if (
+        socketClientId &&
+        requestingClientId &&
+        socketClientId === requestingClientId
+      ) {
+        continue;
+      }
+      if (activeConnectionCount > 0) {
+        hasForeignConnection = true;
+      }
+    }
+  }
+
+  return { activeConnectionCount, hasForeignConnection };
+}
+
 function supportsLinkedView(term: Terminal): boolean {
   return Boolean(TMUX_BACKEND && term.sessionName);
 }
 
-function serializeTerminal(term: Terminal) {
+function serializeTerminal(term: Terminal, requestingClientId?: string | null) {
+  const socketStats = getTerminalSocketStats(term, requestingClientId);
   return {
     id: term.id,
     cols: term.cols,
@@ -554,6 +612,9 @@ function serializeTerminal(term: Terminal) {
     agentState: term.agentState,
     backendMode: getBackendMode(),
     supportsLinkedView: supportsLinkedView(term),
+    sharedSessionKey: term.sessionName || null,
+    activeConnectionCount: socketStats.activeConnectionCount,
+    hasForeignConnection: socketStats.hasForeignConnection,
   };
 }
 
@@ -587,10 +648,10 @@ function getTerminalCreationError(ownerId: string) {
   return null;
 }
 
-function getTerminalSockets(id: string): Set<WebSocket> {
+function getTerminalSockets(id: string): Set<ServerWebSocket<WsData>> {
   const existing = terminalSockets.get(id);
   if (existing) return existing;
-  const sockets = new Set<WebSocket>();
+  const sockets = new Set<ServerWebSocket<WsData>>();
   terminalSockets.set(id, sockets);
   return sockets;
 }
@@ -836,6 +897,8 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
   cwd: string;
   cols: number;
   rows: number;
+  panePid: number;
+  paneCurrentCommand: string;
 }> {
   const infoResult = Bun.spawn([
     "tmux",
@@ -843,18 +906,228 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
     "-t",
     sessionName,
     "-p",
-    "#{pane_current_path}:#{window_width}:#{window_height}",
+    "#{pane_current_path}\t#{window_width}\t#{window_height}\t#{pane_pid}\t#{pane_current_command}",
   ]);
   const infoOutput = await new Response(infoResult.stdout).text();
   await infoResult.exited;
-  const [cwd = "/home/deploy", colsStr = "120", rowsStr = "30"] = infoOutput
+  const [
+    cwd = "/home/deploy",
+    colsStr = "120",
+    rowsStr = "30",
+    panePidStr = "0",
+    paneCurrentCommand = "",
+  ] = infoOutput
     .trim()
-    .split(":");
+    .split("\t");
   return {
     cwd,
     cols: parseInt(colsStr, 10) || 120,
     rows: parseInt(rowsStr, 10) || 30,
+    panePid: parseInt(panePidStr, 10) || 0,
+    paneCurrentCommand,
   };
+}
+
+async function captureTmuxPane(sessionName: string): Promise<string> {
+  const captureProc = Bun.spawn(
+    [
+      "tmux",
+      "capture-pane",
+      "-ep",
+      "-S",
+      "-2000",
+      "-t",
+      sessionName,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const output = await new Response(captureProc.stdout).text();
+  await captureProc.exited;
+  return output;
+}
+
+async function getTmuxClientTty(sessionName: string): Promise<string | null> {
+  const clientProc = Bun.spawn(
+    ["tmux", "list-clients", "-F", "#{client_tty}\t#{session_name}"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const output = await new Response(clientProc.stdout).text();
+  await clientProc.exited;
+
+  for (const line of output.split("\n")) {
+    const [tty = "", currentSession = ""] = line.trim().split("\t");
+    if (tty && currentSession === sessionName) {
+      return tty;
+    }
+  }
+
+  return null;
+}
+
+async function syncTmuxSessionSize(
+  sessionName: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  const resizeWindowProc = Bun.spawn([
+    "tmux",
+    "resize-window",
+    "-t",
+    sessionName,
+    "-x",
+    String(cols),
+    "-y",
+    String(rows),
+  ]);
+  await resizeWindowProc.exited;
+
+  const resizePaneProc = Bun.spawn([
+    "tmux",
+    "resize-pane",
+    "-t",
+    sessionName,
+    "-x",
+    String(cols),
+    "-y",
+    String(rows),
+  ]);
+  await resizePaneProc.exited;
+
+  const clientTty = await getTmuxClientTty(sessionName);
+  if (!clientTty) return;
+
+  const ttyResizeProc = Bun.spawn([
+    "stty",
+    "-F",
+    clientTty,
+    "rows",
+    String(rows),
+    "cols",
+    String(cols),
+  ]);
+  await ttyResizeProc.exited;
+}
+
+async function sendTmuxPaneCapture(
+  ws: ServerWebSocket<WsData>,
+  sessionName: string,
+  terminalId: string,
+  {
+    clearFirst = true,
+    waitMs = 0,
+    reason = "capture",
+  }: {
+    clearFirst?: boolean;
+    waitMs?: number;
+    reason?: string;
+  } = {},
+): Promise<boolean> {
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+  if (ws.readyState !== 1) return false;
+
+  const output = await captureTmuxPane(sessionName);
+  if (!output || ws.readyState !== 1) return false;
+
+  ws.send(`${clearFirst ? "\x1b[2J\x1b[H" : ""}${output}`);
+  debug(
+    `[reconnect] Sent ${output.length} bytes from tmux ${reason} for ${terminalId}`,
+  );
+  return true;
+}
+
+async function getProcessTreeArgs(rootPid: number): Promise<string[]> {
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return [];
+
+  const proc = Bun.spawn(["ps", "-eo", "pid=,ppid=,args="], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
+
+  const childrenByParent = new Map<number, number[]>();
+  const argsByPid = new Map<number, string>();
+
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1] || "", 10);
+    const ppid = Number.parseInt(match[2] || "", 10);
+    const args = (match[3] || "").trim();
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !args) continue;
+    argsByPid.set(pid, args);
+    const siblings = childrenByParent.get(ppid) || [];
+    siblings.push(pid);
+    childrenByParent.set(ppid, siblings);
+  }
+
+  const processTree: string[] = [];
+  const stack = [rootPid];
+  const visited = new Set<number>();
+
+  while (stack.length > 0) {
+    const pid = stack.pop();
+    if (!pid || visited.has(pid)) continue;
+    visited.add(pid);
+    const args = argsByPid.get(pid);
+    if (args) processTree.push(args);
+    const children = childrenByParent.get(pid) || [];
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index]);
+    }
+  }
+
+  return processTree;
+}
+
+async function syncTmuxRuntimeState(term: Terminal): Promise<void> {
+  if (!TMUX_BACKEND || !term.sessionName) return;
+
+  const {
+    cwd,
+    panePid,
+    paneCurrentCommand,
+  } = await getTmuxSessionInfo(term.sessionName);
+  if (cwd) {
+    term.cwd = cwd;
+  }
+
+  const [capture, processTree] = await Promise.all([
+    captureTmuxPane(term.sessionName).catch(() => ""),
+    panePid > 0 ? getProcessTreeArgs(panePid).catch(() => []) : Promise.resolve([]),
+  ]);
+  const nextRuntimeState = inferRecoveredTmuxRuntimeState({
+    paneCurrentCommand,
+    processTree,
+    capture,
+  });
+
+  if (
+    term.agentName &&
+    term.agentName !== nextRuntimeState.agentName
+  ) {
+    clearAgentRespondingTimer(term);
+  }
+
+  term.running = nextRuntimeState.running;
+  term.agentName = nextRuntimeState.agentName;
+  term.agentState = nextRuntimeState.agentName
+    ? inferPolledTmuxAgentState({
+        agentName: nextRuntimeState.agentName,
+        previousCapture: term.lastTmuxCapture,
+        capture,
+      })
+    : nextRuntimeState.agentState;
+  term.agentHasUserPrompt = Boolean(nextRuntimeState.agentName);
+  term.lastTmuxCapture = capture;
+
+  if (term.agentState === "responding") {
+    scheduleAgentThinkingFallback(term);
+  } else {
+    clearAgentRespondingTimer(term);
+  }
 }
 
 async function createManagedTerminal({
@@ -866,6 +1139,8 @@ async function createManagedTerminal({
   ownerEmail,
   sessionName,
   createTmuxSession = false,
+  initialRuntimeState,
+  initialScrollback = "",
 }: {
   id?: string;
   cwd: string;
@@ -875,6 +1150,12 @@ async function createManagedTerminal({
   ownerEmail: string;
   sessionName?: string;
   createTmuxSession?: boolean;
+  initialRuntimeState?: {
+    running: boolean;
+    agentName: "codex" | "claude" | null;
+    agentState: "thinking" | "responding" | null;
+  };
+  initialScrollback?: string;
 }): Promise<Terminal> {
   const home = process.env.HOME || "/home/deploy";
   const shell = process.env.SHELL || "/bin/bash";
@@ -979,17 +1260,24 @@ async function createManagedTerminal({
     scrollback: [],
     scrollbackBytes: 0,
     hadSocketConnection: false,
-    running: false,
+    running: initialRuntimeState?.running || false,
     lastExitCode: null,
-    agentName: null,
-    agentState: null,
-    agentHasUserPrompt: false,
+    agentName: initialRuntimeState?.agentName || null,
+    agentState: initialRuntimeState?.agentState || null,
+    agentHasUserPrompt: Boolean(initialRuntimeState?.agentName),
     agentRespondingTimer: null,
     shellIntegrationCarry: "",
+    lastTmuxCapture: initialScrollback,
   };
 
   terminals.set(id, managedTerminal);
   getTerminalSockets(id);
+  if (initialScrollback) {
+    appendScrollback(id, initialScrollback);
+  }
+  if (managedTerminal.agentState === "responding") {
+    scheduleAgentThinkingFallback(managedTerminal);
+  }
   debug(`Terminal ${id} created with PID ${proc.pid}`);
 
   return managedTerminal;
@@ -1275,19 +1563,29 @@ export function createWebApp() {
   // List terminals
   app.get("/api/terminals", async (c) => {
     const { ownerId } = getCurrentUser(c);
+    const requestingClientId =
+      c.req.header("x-deckterm-client-id")?.trim() || null;
     const backendMode = getBackendMode();
     const list = await Promise.all(
       Array.from(terminals.values())
         .filter((t) => t.ownerId === ownerId)
-        .map(async (t) => ({
-          id: t.id,
-          cwd: t.cwd,
-          createdAt: t.createdAt,
-          ...serializeTerminal(t),
-          ...(await getTerminalTelemetry(t, backendMode, {
-            detectWorktree: detectGitWorktree,
-          })),
-        })),
+        .map(async (t) => {
+          if (TMUX_BACKEND && t.sessionName) {
+            await syncTmuxRuntimeState(t).catch((err) => {
+              debug(`[tmux] runtime sync failed for ${t.id}:`, err);
+            });
+          }
+
+          return {
+            id: t.id,
+            cwd: t.cwd,
+            createdAt: t.createdAt,
+            ...serializeTerminal(t, requestingClientId),
+            ...(await getTerminalTelemetry(t, backendMode, {
+              detectWorktree: detectGitWorktree,
+            })),
+          };
+        }),
     );
     return c.json(list);
   });
@@ -1337,18 +1635,8 @@ export function createWebApp() {
 
       // Also resize tmux pane if using tmux backend
       if (TMUX_BACKEND && term.sessionName) {
-        const resizeProc = Bun.spawn([
-          "tmux",
-          "resize-pane",
-          "-t",
-          term.sessionName,
-          "-x",
-          String(cols),
-          "-y",
-          String(rows),
-        ]);
-        await resizeProc.exited;
-        debug(`Terminal ${id} tmux pane resized to ${cols}x${rows}`);
+        await syncTmuxSessionSize(term.sessionName, cols, rows);
+        debug(`Terminal ${id} tmux session resized to ${cols}x${rows}`);
       }
 
       debug(`Terminal ${id} resized to ${cols}x${rows}`);
@@ -2197,13 +2485,14 @@ export async function startWebServer(host: string, port: number) {
           });
         }
         const ownerId = auth.ownerId;
+        const clientId = url.searchParams.get("clientId")?.trim() || null;
 
         if (term.ownerId !== ownerId) {
           return new Response("Forbidden", { status: 403 });
         }
 
         const success = server.upgrade(req, {
-          data: { type: "terminal" as const, terminalId: id, ownerId },
+          data: { type: "terminal" as const, terminalId: id, ownerId, clientId },
         });
         if (success) return undefined;
 
@@ -2251,7 +2540,7 @@ export async function startWebServer(host: string, port: number) {
           return;
         }
 
-        sockets.add(ws as unknown as WebSocket);
+        sockets.add(ws);
         const socketsCount = sockets.size;
         const isReconnect = term.hadSocketConnection;
         term.hadSocketConnection = true;
@@ -2281,28 +2570,12 @@ export async function startWebServer(host: string, port: number) {
 
             if (TMUX_BACKEND && term.sessionName) {
               try {
-                const captureProc = Bun.spawn(
-                  [
-                    "tmux",
-                    "capture-pane",
-                    "-ep",
-                    "-S",
-                    "-2000",
-                    "-t",
-                    term.sessionName,
-                  ],
-                  { stdout: "pipe", stderr: "pipe" },
+                replayed = await sendTmuxPaneCapture(
+                  ws,
+                  term.sessionName,
+                  terminalId,
+                  { reason: "capture" },
                 );
-                const output = await new Response(captureProc.stdout).text();
-                await captureProc.exited;
-
-                if (output && ws.readyState === 1) {
-                  ws.send("\x1b[2J\x1b[H" + output);
-                  replayed = true;
-                  debug(
-                    `[reconnect] Sent ${output.length} bytes from tmux capture for ${terminalId}`,
-                  );
-                }
               } catch (err) {
                 debug(
                   `[reconnect] tmux capture failed for ${terminalId}, falling back to in-memory buffer`,
@@ -2357,6 +2630,18 @@ export async function startWebServer(host: string, port: number) {
                 term.rows = parsed.rows;
                 try {
                   term.terminal.resize(parsed.cols, parsed.rows);
+                  if (TMUX_BACKEND && term.sessionName) {
+                    void syncTmuxSessionSize(
+                      term.sessionName,
+                      parsed.cols,
+                      parsed.rows,
+                    ).catch((err) => {
+                      debug(
+                        `[reconnect] tmux async resize failed for ${terminalId}:`,
+                        err,
+                      );
+                    });
+                  }
                 } catch (err) {
                   debug(`Resize error for ${terminalId}:`, err);
                 }
@@ -2427,7 +2712,7 @@ export async function startWebServer(host: string, port: number) {
         const { terminalId } = data;
         const sockets = terminalSockets.get(terminalId);
         if (sockets) {
-          sockets.delete(ws as unknown as WebSocket);
+          sockets.delete(ws);
         }
       },
     },

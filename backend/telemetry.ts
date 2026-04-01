@@ -16,6 +16,11 @@ const PORT_PATTERNS = [
 export type BackendMode = "raw" | "tmux";
 export type AgentName = "codex" | "claude";
 export type AgentState = "thinking" | "responding";
+export type RecoveredTmuxRuntimeState = {
+  running: boolean;
+  agentName: AgentName | null;
+  agentState: AgentState | null;
+};
 
 export type TerminalTelemetry = {
   busy: boolean;
@@ -78,6 +83,11 @@ const OSC_SEQUENCE_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_SEQUENCE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 const C1_SEQUENCE_RE = /\x1b[@-_]/g;
 const CONTROL_CHARS_RE = /[\x00-\x08\x0b-\x1f\x7f]/g;
+const RECOVERED_AGENT_CMD_PATTERNS: Array<[AgentName, RegExp]> = [
+  ["claude", /(^|[\/\s])claude(?=[\/\s]|$)/i],
+  ["codex", /(^|[\/\s])codex(?=[\/\s]|$)/i],
+];
+const IDLE_SHELL_COMMANDS = new Set(["bash", "fish", "sh", "zsh"]);
 
 function normalizeAgentName(value: string): AgentName | null {
   const normalized = value.trim().toLowerCase();
@@ -150,6 +160,64 @@ export function resolveAgentOutputState({
   }
 
   return classifiedState;
+}
+
+export function inferRecoveredTmuxRuntimeState({
+  paneCurrentCommand,
+  processTree = [],
+  capture = "",
+}: {
+  paneCurrentCommand?: string | null;
+  processTree?: string[];
+  capture?: string | null;
+}): RecoveredTmuxRuntimeState {
+  const normalizedPaneCommand = String(paneCurrentCommand || "")
+    .trim()
+    .toLowerCase();
+  const agentName = detectRecoveredAgentName([
+    normalizedPaneCommand,
+    ...processTree,
+  ]);
+
+  if (agentName) {
+    return {
+      running: true,
+      agentName,
+      agentState: classifyAgentOutputPhase(agentName, capture || "") || "responding",
+    };
+  }
+
+  return {
+    running:
+      normalizedPaneCommand.length > 0 &&
+      !IDLE_SHELL_COMMANDS.has(normalizedPaneCommand),
+    agentName: null,
+    agentState: null,
+  };
+}
+
+export function inferPolledTmuxAgentState({
+  agentName,
+  previousCapture = "",
+  capture = "",
+}: {
+  agentName: AgentName;
+  previousCapture?: string | null;
+  capture?: string | null;
+}): AgentState {
+  const currentCapture = capture || "";
+  const priorCapture = previousCapture || "";
+
+  if (currentCapture === priorCapture) {
+    return "thinking";
+  }
+
+  const changedChunk = currentCapture.startsWith(priorCapture)
+    ? currentCapture.slice(priorCapture.length)
+    : currentCapture;
+  const classifiedState = classifyAgentOutputPhase(agentName, changedChunk);
+
+  return classifiedState || "thinking";
 }
 
 export async function getTerminalTelemetry(
@@ -378,6 +446,18 @@ async function getLinkedWorktreeRoots(
   });
 
   return linkedRoots;
+}
+
+function detectRecoveredAgentName(values: string[]): AgentName | null {
+  for (const value of values) {
+    if (!value) continue;
+    for (const [agentName, pattern] of RECOVERED_AGENT_CMD_PATTERNS) {
+      if (pattern.test(value)) {
+        return agentName;
+      }
+    }
+  }
+  return null;
 }
 
 async function runGitCommand(
