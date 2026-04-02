@@ -596,7 +596,7 @@ function getTerminalSocketStats(term: Terminal, requestingClientId?: string | nu
 }
 
 function supportsLinkedView(term: Terminal): boolean {
-  return Boolean(TMUX_BACKEND && term.sessionName);
+  return false;
 }
 
 function serializeTerminal(term: Terminal, requestingClientId?: string | null) {
@@ -654,6 +654,58 @@ function getTerminalSockets(id: string): Set<ServerWebSocket<WsData>> {
   const sockets = new Set<ServerWebSocket<WsData>>();
   terminalSockets.set(id, sockets);
   return sockets;
+}
+
+function getForeignSessionSockets(
+  sessionName: string | undefined,
+  requestingClientId: string | null,
+): Array<ServerWebSocket<WsData>> {
+  if (!sessionName || !requestingClientId) return [];
+
+  const foreignSockets: Array<ServerWebSocket<WsData>> = [];
+  for (const term of terminals.values()) {
+    if (term.sessionName !== sessionName) continue;
+    const sockets = terminalSockets.get(term.id);
+    if (!sockets) continue;
+    for (const socket of sockets) {
+      if (socket.readyState !== 1 || socket.data.type !== "terminal") continue;
+      if (!socket.data.clientId || socket.data.clientId === requestingClientId) {
+        continue;
+      }
+      foreignSockets.push(socket);
+    }
+  }
+
+  return foreignSockets;
+}
+
+function handoffTmuxSession(
+  sessionName: string | undefined,
+  requestingClientId: string | null,
+): void {
+  const foreignSockets = getForeignSessionSockets(sessionName, requestingClientId);
+  if (foreignSockets.length === 0) return;
+
+  for (const socket of foreignSockets) {
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "session_handoff",
+          sessionName,
+        }),
+      );
+    } catch {
+      // ignore
+    }
+
+    setTimeout(() => {
+      try {
+        socket.close();
+      } catch {
+        // ignore
+      }
+    }, 25);
+  }
 }
 
 function broadcastTerminalOutput(id: string, data: string) {
@@ -1209,6 +1261,7 @@ async function createManagedTerminal({
     }
 
     await hideTmuxStatusBar(sessionName);
+    await syncTmuxSessionSize(sessionName, cols, rows);
 
     proc = Bun.spawn(["tmux", "attach-session", "-t", sessionName], {
       cwd,
@@ -2538,6 +2591,10 @@ export async function startWebServer(host: string, port: number) {
         if (!term || !sockets) {
           ws.close();
           return;
+        }
+
+        if (TMUX_BACKEND && term.sessionName) {
+          handoffTmuxSession(term.sessionName, data.clientId);
         }
 
         sockets.add(ws);
