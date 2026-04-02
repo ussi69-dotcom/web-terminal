@@ -383,6 +383,14 @@ class ReconnectingWebSocket {
           this.awaitingReconnectReady = false;
           return;
         }
+        if (data.type === "session_handoff") {
+          this.callbacks.onStatusChange("taken_over", data);
+          this.intentionallyClosed = true;
+          this.awaitingReconnectReady = false;
+          this.stopHeartbeat();
+          this.ws?.close();
+          return;
+        }
       } catch {}
       this.callbacks.onMessage(e.data);
     };
@@ -5338,6 +5346,14 @@ class TerminalManager {
         <button class="btn" data-overlay-action="close">Close</button>
       `,
       },
+      taken_over: {
+        icon: "📱",
+        message: "Session resumed on another device",
+        actions: `
+        <button class="btn" data-overlay-action="retry">Resume Here</button>
+        <button class="btn" data-overlay-action="close">Close</button>
+      `,
+      },
       exited: {
         icon: "⏹️",
         message: `Process exited with code ${extra}`,
@@ -5410,7 +5426,7 @@ class TerminalManager {
       if (status === "reconnecting") {
         tab.classList.add("reconnecting");
         dbg(`[reconnect] Tab ${id} marked as reconnecting`);
-      } else if (status === "failed" || status === "dead") {
+      } else if (status === "failed" || status === "dead" || status === "taken_over") {
         tab.classList.add("disconnected");
         dbg(`[reconnect] Tab ${id} marked as disconnected`);
       } else if (status === "connected") {

@@ -2,7 +2,7 @@ function shouldBootstrapLinkedView({
   supportsLinkedView = false,
   hasForeignConnection = false,
 } = {}) {
-  return Boolean(supportsLinkedView && hasForeignConnection);
+  return false;
 }
 
 function getSharedSessionKey(terminal, terminalId) {

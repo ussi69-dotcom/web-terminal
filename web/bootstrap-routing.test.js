@@ -4,13 +4,13 @@ import {
   shouldBootstrapLinkedView,
 } from "./bootstrap-routing";
 
-test("shouldBootstrapLinkedView when tmux terminal already has foreign client", () => {
+test("shouldBootstrapLinkedView stays false when tmux terminal already has foreign client", () => {
   expect(
     shouldBootstrapLinkedView({
       supportsLinkedView: true,
       hasForeignConnection: true,
     }),
-  ).toBe(true);
+  ).toBe(false);
 });
 
 test("shouldBootstrapLinkedView stays false without foreign connection", () => {
@@ -61,7 +61,7 @@ test("planBootstrapTerminals prefers reconnect for saved terminal and skips dupl
   ]);
 });
 
-test("planBootstrapTerminals creates one linked view for foreign shared tmux session", () => {
+test("planBootstrapTerminals takes over existing tmux session instead of creating linked view", () => {
   const actions = planBootstrapTerminals({
     serverTerminals: [
       {
@@ -82,7 +82,7 @@ test("planBootstrapTerminals creates one linked view for foreign shared tmux ses
 
   expect(actions).toEqual([
     {
-      type: "linked-view",
+      type: "reconnect",
       terminalId: "desktop-a",
       savedSession: null,
     },
