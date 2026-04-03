@@ -26,6 +26,8 @@ The current product is shaped by four influences:
 - A workspace can contain one or more split terminals
 - Tabs can be merged by drag and drop
 - A command palette can switch workspaces and trigger common actions from one place
+- Desktop uses a compact top bar plus an activity rail for persistent tool surfaces
+- Mobile uses the same action model, rendered as a tools sheet behind the menu toggle
 - Workspace labels follow cwd
 - Workspace color is derived from cwd
 - Workspace signals can show:
@@ -48,6 +50,7 @@ The current product is shaped by four influences:
 - Fallback to a valid root if a stored path becomes invalid
 - Upload files
 - Create folders
+- Create a folder in the active cwd directly from the actions palette
 - Rename files
 - Delete files and directories
 - Download files
@@ -70,6 +73,7 @@ DeckTerm includes git-focused backend APIs and UI support for lightweight repo o
 - stage / unstage
 - commit
 - branches
+- branch switching from the actions palette
 - checkout
 - log
 - show
@@ -91,30 +95,28 @@ The state model is driven by shell integration markers plus agent output heurist
 
 Primary toolbar actions in the current product:
 
-- actions palette
 - new workspace terminal
+- workspace tabs
 - working directory input
 - directory browser
+- actions palette
 - linked tmux view
-- file manager
-- clipboard history
-- git panel
-- copy and paste actions
-- font size controls
-- extra keys toggle
-- line wrap toggle
-- fullscreen
 - server CPU / RAM / disk stats
-- help
+
+Secondary navigation surfaces:
+
+- desktop activity rail for files, clipboard, and git
+- mobile tools sheet for files, clipboard, git, and utility actions
+- command palette for quick actions, workspace switching, folder creation, and branch switching
 
 Modal and support surfaces:
 
-- command palette
 - directory picker
 - file manager
 - large paste confirmation
 - search bar
 - clipboard panel
+- git panel
 - debug panel
 
 ## API Surface

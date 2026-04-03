@@ -62,7 +62,8 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - Up to 10 concurrent terminals by default
 - New workspace tabs and split terminals inside a workspace
 - Drag one workspace tab onto another to merge them
-- Actions palette for cross-workspace navigation and quick actions via `Ctrl+Shift+P`
+- Actions palette for cross-workspace navigation, quick actions, folder creation, and branch switching via `Ctrl+Shift+P`
+- Compact primary toolbar with a desktop activity rail and mobile tools sheet for Git, Files, and Clipboard
 - Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
 - Linked view for tmux-backed sessions
 
