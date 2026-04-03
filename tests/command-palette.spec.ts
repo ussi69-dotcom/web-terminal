@@ -53,13 +53,19 @@ test.describe("Command palette navigation layer", () => {
   test("activates another workspace from the palette", async ({ page }) => {
     await ensureSecondWorkspace(page);
 
-    const inactiveTab = page.locator("#terminals-tabs .tab").nth(1);
-    await inactiveTab.click();
+    const firstTab = page.locator("#terminals-tabs .tab").nth(0);
+    const secondTab = page.locator("#terminals-tabs .tab").nth(1);
+    const targetLabel = (await secondTab.textContent())?.trim() || "2";
+
+    await firstTab.click();
+    await expect(firstTab).toHaveClass(/active/);
+    await expect(secondTab).not.toHaveClass(/active/);
 
     await openCommandPalette(page);
-    await page.locator("#command-palette-input").fill("deckterm_dev");
+    await page.locator("#command-palette-input").fill(targetLabel);
     await page.keyboard.press("Enter");
 
-    await expect(inactiveTab).toHaveClass(/active/);
+    await expect(secondTab).toHaveClass(/active/);
+    await expect(firstTab).not.toHaveClass(/active/);
   });
 });
