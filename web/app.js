@@ -2748,9 +2748,6 @@ class GitManager {
 
   init() {
     this.createPanel();
-    document
-      .querySelector('[data-action="git"]')
-      ?.addEventListener("click", () => this.toggle());
     this.setupKeyboardShortcuts();
   }
 
@@ -3708,6 +3705,7 @@ class TerminalManager {
     this.tabs = document.getElementById("terminals-tabs");
     this.directoryInput = document.getElementById("directory");
     this.connectionStatus = document.getElementById("connection-status");
+    this.toolsSheet = document.getElementById("tools-sheet");
 
     this.tileManager = new TileManager(this.container);
     this.clipboardManager = new ClipboardManager();
@@ -3769,11 +3767,9 @@ class TerminalManager {
     // Mobile toolbar toggle
     const toolbarToggle = document.getElementById("toolbar-toggle");
     if (toolbarToggle) {
-      toolbarToggle.addEventListener("click", () => {
-        document.querySelector(".toolbar").classList.toggle("expanded");
-        toolbarToggle.classList.toggle("active");
-      });
+      toolbarToggle.addEventListener("click", () => this.toggleToolsSheet());
     }
+    this.setupToolsSheet();
 
     // Help modal
     this.setupHelpModal();
@@ -4016,15 +4012,58 @@ class TerminalManager {
         const action = btn.dataset.action;
         if (action === "linked-view") this.createLinkedView();
         if (action === "file-manager") this.fileManager.open();
+        else if (action === "git") window.gitManager?.toggle();
         else if (action === "clipboard") this.clipboardManager.togglePanel();
         else if (action === "copy") this.copySelection();
         else if (action === "paste") this.pasteClipboard();
         else if (action === "font-decrease") this.changeFontSize(-1);
         else if (action === "font-increase") this.changeFontSize(1);
+        else if (action === "toggle-extra-keys") this.extraKeys?.toggle();
         else if (action === "fullscreen") this.toggleFullscreen();
         else if (action === "wrap-lines") this.toggleWrapLines();
+        else if (action === "help") this.openHelp();
+
+        if (btn.closest("#tools-sheet")) {
+          this.closeToolsSheet();
+        }
       });
     });
+  }
+
+  setupToolsSheet() {
+    if (!this.toolsSheet) return;
+
+    const close = () => this.closeToolsSheet();
+
+    this.toolsSheet
+      .querySelector(".tools-sheet-backdrop")
+      ?.addEventListener("click", close);
+    this.toolsSheet
+      .querySelector("#tools-sheet-close")
+      ?.addEventListener("click", close);
+  }
+
+  openToolsSheet() {
+    if (!this.toolsSheet) return;
+    this.toolsSheet.classList.remove("hidden");
+    this.toolsSheet.setAttribute("aria-hidden", "false");
+    document.getElementById("toolbar-toggle")?.classList.add("active");
+  }
+
+  closeToolsSheet() {
+    if (!this.toolsSheet) return;
+    this.toolsSheet.classList.add("hidden");
+    this.toolsSheet.setAttribute("aria-hidden", "true");
+    document.getElementById("toolbar-toggle")?.classList.remove("active");
+  }
+
+  toggleToolsSheet() {
+    if (!this.toolsSheet) return;
+    if (this.toolsSheet.classList.contains("hidden")) {
+      this.openToolsSheet();
+    } else {
+      this.closeToolsSheet();
+    }
   }
 
   setupCommandPalette() {
@@ -4738,6 +4777,7 @@ class TerminalManager {
   }
 
   openHelp() {
+    this.closeToolsSheet();
     document.getElementById("help-modal")?.classList.remove("hidden");
   }
 

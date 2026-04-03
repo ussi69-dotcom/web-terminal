@@ -844,7 +844,7 @@ body.touch-input-mode .xterm .composition-view.active {
   border-radius: 18px;
   backdrop-filter: blur(14px);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
-  z-index: 25;
+  z-index: 560;
 }
 
 .activity-rail-btn {
@@ -879,7 +879,9 @@ body.touch-input-mode .xterm .composition-view.active {
 }
 
 .tools-sheet {
-  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 620;
 }
 
 .tools-sheet.hidden {
