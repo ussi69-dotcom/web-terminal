@@ -78,57 +78,154 @@
             <i data-lucide="copy-plus"></i>
           </button>
 
-          <button id="file-manager-btn" class="btn-icon" data-action="file-manager" title="File Manager">
-            <i data-lucide="folder-open"></i>
-          </button>
-
-          <button id="clipboard-btn" class="btn-icon" data-action="clipboard" title="Clipboard History">
-            <i data-lucide="clipboard"></i>
-          </button>
-
-          <button id="git-btn" class="btn-icon" data-action="git" title="Git">
-            <i data-lucide="git-branch"></i>
-          </button>
-
-          <button id="copy-btn" class="btn-icon" data-action="copy" title="Copy">
-            <i data-lucide="copy"></i>
-          </button>
-
-          <button id="paste-btn" class="btn-icon" data-action="paste" title="Paste">
-            <i data-lucide="clipboard-paste"></i>
-          </button>
-
-          <button id="font-decrease-btn" class="btn-icon" data-action="font-decrease" title="Font -">
-            <i data-lucide="zoom-out"></i>
-          </button>
-
-          <button id="font-increase-btn" class="btn-icon" data-action="font-increase" title="Font +">
-            <i data-lucide="zoom-in"></i>
-          </button>
-
-          <button id="extra-keys-toggle-btn" class="btn-icon" data-action="toggle-extra-keys" title="Extra Keys (Ctrl+.)">
-            <i data-lucide="keyboard"></i>
-          </button>
-
-          <button id="wrap-lines-btn" class="btn-icon" data-action="wrap-lines" title="Line wrap: off">
-            <i data-lucide="wrap-text"></i>
-          </button>
-
-          <button id="fullscreen-btn" class="btn-icon" data-action="fullscreen" title="Fullscreen">
-            <i data-lucide="maximize-2"></i>
-          </button>
-
           <div id="server-stats" class="server-stats">
             <span class="stat" id="stat-cpu" title="CPU">--%</span>
             <span class="stat" id="stat-ram" title="RAM">--%</span>
             <span class="stat" id="stat-disk" title="Disk">--%</span>
           </div>
-
-          <button id="help-btn" class="btn-icon" title="Help (F1)">
-            <i data-lucide="help-circle"></i>
-          </button>
         </div>
       </header>
+
+      <aside
+        id="activity-rail"
+        class="activity-rail"
+        aria-label="Workspace tools"
+      >
+        <button
+          id="activity-rail-files"
+          class="activity-rail-btn"
+          data-action="file-manager"
+          title="Open file manager"
+          aria-label="Open file manager"
+        >
+          <i data-lucide="folder-open"></i>
+        </button>
+        <button
+          id="activity-rail-clipboard"
+          class="activity-rail-btn"
+          data-action="clipboard"
+          title="Open clipboard history"
+          aria-label="Open clipboard history"
+        >
+          <i data-lucide="clipboard"></i>
+        </button>
+        <button
+          id="activity-rail-git"
+          class="activity-rail-btn"
+          data-action="git"
+          title="Open git panel"
+          aria-label="Open git panel"
+        >
+          <i data-lucide="git-branch"></i>
+        </button>
+      </aside>
+
+      <div id="tools-sheet" class="tools-sheet hidden" aria-hidden="true">
+        <div class="tools-sheet-backdrop"></div>
+        <div class="tools-sheet-panel">
+          <div class="tools-sheet-header">
+            <div>
+              <div class="tools-sheet-kicker">Compact Navigation</div>
+              <h2>Tools</h2>
+            </div>
+            <button
+              id="tools-sheet-close"
+              class="btn-icon"
+              title="Close tools"
+              aria-label="Close tools"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="tools-sheet-grid">
+            <button
+              id="tools-sheet-files"
+              class="tools-sheet-btn"
+              data-action="file-manager"
+            >
+              <i data-lucide="folder-open"></i>
+              <span>Files</span>
+            </button>
+            <button
+              id="tools-sheet-clipboard"
+              class="tools-sheet-btn"
+              data-action="clipboard"
+            >
+              <i data-lucide="clipboard"></i>
+              <span>Clipboard</span>
+            </button>
+            <button
+              id="tools-sheet-git"
+              class="tools-sheet-btn"
+              data-action="git"
+            >
+              <i data-lucide="git-branch"></i>
+              <span>Git</span>
+            </button>
+            <button
+              id="tools-sheet-extra-keys"
+              class="tools-sheet-btn"
+              data-action="toggle-extra-keys"
+            >
+              <i data-lucide="keyboard"></i>
+              <span>Extra Keys</span>
+            </button>
+            <button
+              id="tools-sheet-wrap"
+              class="tools-sheet-btn"
+              data-action="wrap-lines"
+            >
+              <i data-lucide="wrap-text"></i>
+              <span>Wrap</span>
+            </button>
+            <button
+              id="tools-sheet-fullscreen"
+              class="tools-sheet-btn"
+              data-action="fullscreen"
+            >
+              <i data-lucide="maximize-2"></i>
+              <span>Fullscreen</span>
+            </button>
+            <button
+              id="tools-sheet-copy"
+              class="tools-sheet-btn"
+              data-action="copy"
+            >
+              <i data-lucide="copy"></i>
+              <span>Copy</span>
+            </button>
+            <button
+              id="tools-sheet-paste"
+              class="tools-sheet-btn"
+              data-action="paste"
+            >
+              <i data-lucide="clipboard-paste"></i>
+              <span>Paste</span>
+            </button>
+            <button
+              id="tools-sheet-font-decrease"
+              class="tools-sheet-btn"
+              data-action="font-decrease"
+            >
+              <i data-lucide="zoom-out"></i>
+              <span>Font -</span>
+            </button>
+            <button
+              id="tools-sheet-font-increase"
+              class="tools-sheet-btn"
+              data-action="font-increase"
+            >
+              <i data-lucide="zoom-in"></i>
+              <span>Font +</span>
+            </button>
+            <button id="tools-sheet-help" class="tools-sheet-btn">
+              <i data-lucide="help-circle"></i>
+              <span>Help</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- Terminal container - tiles created dynamically by TileManager -->
       <div id="terminal-container">

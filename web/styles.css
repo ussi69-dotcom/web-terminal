@@ -18,6 +18,7 @@
   --btn-green: #238636;
   --btn-green-hover: #2ea043;
   --toolbar-height: 48px;
+  --activity-rail-width: 56px;
   --extra-keys-height: 52px;
   --tile-gap: 4px;
   --resize-handle: 12px;
@@ -42,6 +43,7 @@ body {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  position: relative;
 }
 
 /* =============================================================================
@@ -826,6 +828,144 @@ body.touch-input-mode .xterm .composition-view.active {
 .dir-input input:focus {
   outline: none;
   border-color: var(--accent-blue);
+}
+
+.activity-rail {
+  position: absolute;
+  top: calc(var(--toolbar-height) + 10px);
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--activity-rail-width);
+  padding: 10px 8px;
+  background: rgba(13, 17, 23, 0.76);
+  border: 1px solid rgba(48, 54, 61, 0.92);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  z-index: 25;
+}
+
+.activity-rail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.activity-rail-btn:hover {
+  transform: translateX(-1px);
+  border-color: rgba(88, 166, 255, 0.35);
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.activity-rail-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tools-sheet {
+  display: none;
+}
+
+.tools-sheet.hidden {
+  display: none;
+}
+
+.tools-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 7, 12, 0.58);
+}
+
+.tools-sheet-panel {
+  position: absolute;
+  right: 16px;
+  top: calc(var(--toolbar-height) + 12px);
+  width: min(360px, calc(100vw - 24px));
+  padding: 18px;
+  border: 1px solid rgba(48, 54, 61, 0.92);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(22, 27, 34, 0.98), rgba(13, 17, 23, 0.98));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.tools-sheet-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tools-sheet-kicker {
+  color: var(--accent-blue);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.tools-sheet-header h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.tools-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tools-sheet-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.tools-sheet-btn:hover {
+  border-color: rgba(88, 166, 255, 0.35);
+  background: rgba(88, 166, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.tools-sheet-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.tools-sheet-btn span {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* =============================================================================
@@ -1776,32 +1916,23 @@ body.virtual-keyboard-open .extra-keys {
 
   /* Mobile: Row 2 hidden by default, shown with toggle */
   .toolbar-row-2 {
-    display: none;
+    display: flex;
     width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    margin-top: 8px;
+    margin-top: 6px;
     gap: 8px;
+    align-items: center;
   }
 
   .toolbar-row-2::before {
     display: none;
   }
 
-  .toolbar.expanded .toolbar-row-2 {
-    display: flex;
-    order: 10;
-  }
-
-  .toolbar.expanded .dir-input {
+  .dir-input {
     flex: 1 1 auto;
-    min-width: 120px;
-    max-width: 100%;
+    min-width: 0;
   }
 
-  .toolbar.expanded .dir-input input {
+  .dir-input input {
     flex: 1;
     width: auto;
     min-width: 0;
@@ -1823,6 +1954,26 @@ body.virtual-keyboard-open .extra-keys {
 
   .toolbar .status-dot {
     margin-left: auto;
+  }
+
+  .activity-rail {
+    display: none;
+  }
+
+  .tools-sheet-panel {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    border-right: none;
+    border-bottom: none;
+    border-left: none;
+    border-radius: 24px 24px 0 0;
+    padding: 20px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .tools-sheet-grid {
+    grid-template-columns: 1fr;
   }
 
   .btn-icon {
