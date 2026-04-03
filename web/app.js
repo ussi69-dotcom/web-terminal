@@ -3697,6 +3697,7 @@ class TerminalManager {
     this.viewportFocusTimer = null;
     this.notificationsEnabled = true;
     this.clientInstanceId = this.getOrCreateClientInstanceId();
+    this.commandPaletteGitCache = new Map();
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -4107,6 +4108,13 @@ class TerminalManager {
 
   registerCommandPaletteActions() {
     if (!this.commandPaletteRegistry) return;
+    const NavigationSurface = window.NavigationSurface || {};
+    const createNewFolderAction =
+      NavigationSurface.createNewFolderAction || (() => null);
+    const createOpenGitBranchesAction =
+      NavigationSurface.createOpenGitBranchesAction || (() => null);
+    const buildGitBranchActions =
+      NavigationSurface.buildGitBranchActions || (() => []);
 
     const actions = [
       {
@@ -4197,6 +4205,13 @@ class TerminalManager {
 
     this.commandPaletteRegistry.registerProvider((context = {}) => {
       const contextualActions = [];
+      const newFolderAction = createNewFolderAction(context, {
+        createFolder: (cwd) => this.createFolderFromPalette(cwd),
+      });
+
+      if (newFolderAction) {
+        contextualActions.push(newFolderAction);
+      }
 
       if (context.canCreateLinkedView) {
         contextualActions.push({
@@ -4218,6 +4233,20 @@ class TerminalManager {
           run: () => this.extraKeys?.toggle(),
         });
       }
+
+      const openGitBranchesAction = createOpenGitBranchesAction(context, {
+        openGitBranches: (cwd) => this.openGitBranchesFromPalette(cwd),
+      });
+      if (openGitBranchesAction) {
+        contextualActions.push(openGitBranchesAction);
+      }
+
+      contextualActions.push(
+        ...buildGitBranchActions(context, {
+          switchBranch: (cwd, branch) =>
+            this.switchGitBranchFromPalette(cwd, branch),
+        }),
+      );
 
       return contextualActions;
     });
@@ -4271,12 +4300,22 @@ class TerminalManager {
 
   getCommandPaletteContext() {
     const activeTerminal = this.getActiveTerminal();
+    const cwd = activeTerminal?.cwd || this.directoryInput?.value || "";
+    const gitContext = this.commandPaletteGitCache.get(cwd) || {
+      isGitRepo: false,
+      gitBranches: [],
+      currentGitBranch: "",
+    };
+
     return {
       activeId: this.activeId,
-      cwd: activeTerminal?.cwd || this.directoryInput?.value || "",
+      cwd,
       canCreateLinkedView: this.canCreateLinkedView(activeTerminal),
       hasExtraKeys: Boolean(this.extraKeys),
       extraKeysVisible: Boolean(this.extraKeys?.visible),
+      gitBranches: gitContext.gitBranches || [],
+      currentGitBranch: gitContext.currentGitBranch || "",
+      isGitRepo: Boolean(gitContext.isGitRepo),
       wrapLines: this.wrapLines,
     };
   }
@@ -4296,18 +4335,152 @@ class TerminalManager {
     this.commandPalette.refreshResults();
   }
 
-  openCommandPalette() {
+  async ensureCommandPaletteGitContext(cwd) {
+    const nextCwd = String(cwd || "").trim();
+    if (!nextCwd || this.commandPaletteGitCache.has(nextCwd)) {
+      return this.commandPaletteGitCache.get(nextCwd) || {
+        isGitRepo: false,
+        gitBranches: [],
+        currentGitBranch: "",
+      };
+    }
+
+    try {
+      const res = await fetch(
+        `/api/git/branches?cwd=${encodeURIComponent(nextCwd)}`,
+      );
+      const data = await res.json().catch(() => ({}));
+      const payload =
+        res.ok && !data.error
+          ? {
+              isGitRepo: true,
+              gitBranches: Array.isArray(data.branches) ? data.branches : [],
+              currentGitBranch: String(data.current || ""),
+            }
+          : {
+              isGitRepo: false,
+              gitBranches: [],
+              currentGitBranch: "",
+            };
+
+      this.commandPaletteGitCache.set(nextCwd, payload);
+      return payload;
+    } catch {
+      const payload = {
+        isGitRepo: false,
+        gitBranches: [],
+        currentGitBranch: "",
+      };
+      this.commandPaletteGitCache.set(nextCwd, payload);
+      return payload;
+    }
+  }
+
+  async buildCommandPaletteContext() {
+    const cwd = this.getActiveTerminal()?.cwd || this.directoryInput?.value || "";
+    await this.ensureCommandPaletteGitContext(cwd);
+    return this.getCommandPaletteContext();
+  }
+
+  async openCommandPalette() {
     if (!this.commandPalette) return;
-    this.commandPalette.open(this.getCommandPaletteContext());
+    this.closeToolsSheet();
+    this.commandPalette.open(await this.buildCommandPaletteContext());
   }
 
   closeCommandPalette() {
     this.commandPalette?.close();
   }
 
-  toggleCommandPalette() {
+  async toggleCommandPalette() {
     if (!this.commandPalette) return;
-    this.commandPalette.toggle(this.getCommandPaletteContext());
+    if (this.isCommandPaletteOpen()) {
+      this.commandPalette.close();
+      return;
+    }
+    await this.openCommandPalette();
+  }
+
+  async createFolderFromPalette(cwd) {
+    const nextCwd = String(cwd || "").trim();
+    if (!nextCwd) return;
+
+    const folderName = prompt("Folder name:");
+    if (!folderName) return;
+
+    const joinPath =
+      window.NavigationSurface?.joinPath ||
+      ((base, child) => `${String(base).replace(/\/+$/, "")}/${child}`);
+    const targetPath = joinPath(nextCwd, folderName);
+
+    try {
+      const res = await fetch(
+        `/api/files/mkdir?path=${encodeURIComponent(targetPath)}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        alert(payload.error || "Failed");
+        return;
+      }
+
+      if (
+        !document.getElementById("file-modal")?.classList.contains("hidden") &&
+        this.fileManager?.currentPath === nextCwd
+      ) {
+        this.fileManager.loadDir(nextCwd);
+      }
+    } catch (err) {
+      alert("Failed: " + err.message);
+    }
+  }
+
+  async openGitBranchesFromPalette(cwd) {
+    await this.openGitPanel();
+    if (window.gitManager?.panel?.classList.contains("hidden")) return;
+    const branchesEl = window.gitManager.panel.querySelector("#git-branches");
+    if (branchesEl?.classList.contains("hidden")) {
+      window.gitManager.toggleBranches();
+    } else {
+      await window.gitManager.loadBranches();
+    }
+  }
+
+  async switchGitBranchFromPalette(cwd, branch) {
+    const nextCwd = String(cwd || "").trim();
+    const nextBranch = String(branch || "").trim();
+    if (!nextCwd || !nextBranch) return;
+
+    try {
+      const res = await fetch("/api/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: nextCwd, branch: nextBranch }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.error) {
+        alert(payload.error || "Checkout failed");
+        return;
+      }
+
+      const cached = this.commandPaletteGitCache.get(nextCwd);
+      this.commandPaletteGitCache.set(nextCwd, {
+        isGitRepo: true,
+        gitBranches: cached?.gitBranches || [],
+        currentGitBranch: nextBranch,
+      });
+
+      if (
+        window.gitManager &&
+        !window.gitManager.panel?.classList.contains("hidden") &&
+        (window.gitManager.state.cwd || window.gitManager.currentCwd) === nextCwd
+      ) {
+        await window.gitManager.refresh();
+      }
+    } catch (err) {
+      alert("Failed to switch branch");
+      console.error("Switch branch error:", err);
+    }
   }
 
   getTerminalTextarea(terminalState) {

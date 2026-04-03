@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun run backend/index.ts",
     "start": "bun run backend/index.ts",
-    "test:unit": "bun test ./backend/telemetry.test.ts ./backend/startup-failure.test.ts ./backend/tmux-client-size.test.ts ./web/terminal-colors.test.js ./web/action-registry.test.js ./web/command-palette.test.js ./web/ci-config.test.js",
+    "test:unit": "bun test ./backend/telemetry.test.ts ./backend/startup-failure.test.ts ./backend/tmux-client-size.test.ts ./web/terminal-colors.test.js ./web/action-registry.test.js ./web/command-palette.test.js ./web/navigation-surface.test.js ./web/ci-config.test.js",
     "test:e2e:smoke": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test reconnect-tab-status.spec.ts mobile-regressions.spec.ts phase3-clipboard.spec.ts --workers=1 --reporter=line",
     "test:e2e:workspace": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test workspace-signals.spec.ts --workers=1 --reporter=line",
     "test:e2e:navigation": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test command-palette.spec.ts --workers=1 --reporter=line",
