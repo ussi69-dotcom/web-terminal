@@ -200,6 +200,13 @@ export async function pressShortcut(
 }
 
 /**
+ * Open the global command palette using the standard keyboard shortcut.
+ */
+export async function openCommandPalette(page: Page) {
+  await page.keyboard.press("Control+Shift+P");
+}
+
+/**
  * Press document-level keyboard shortcut
  * Dispatches event directly to document to bypass xterm.js event capture
  */
