@@ -971,6 +971,161 @@ body.touch-input-mode .xterm .composition-view.active {
 }
 
 /* =============================================================================
+   FILE EXPLORER SURFACE
+   ============================================================================= */
+
+.file-explorer {
+  position: fixed;
+  inset: 0;
+  z-index: 580;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding:
+    calc(var(--toolbar-height) + 12px)
+    calc(var(--activity-rail-width) + 24px)
+    16px
+    16px;
+  pointer-events: none;
+}
+
+.file-explorer.hidden {
+  display: none;
+}
+
+.file-explorer-backdrop {
+  display: none;
+}
+
+.file-explorer-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(400px, calc(100vw - var(--activity-rail-width) - 48px));
+  min-width: 320px;
+  height: calc(100vh - var(--toolbar-height) - 28px);
+  pointer-events: auto;
+  border: 1px solid rgba(48, 54, 61, 0.92);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(88, 166, 255, 0.06), rgba(13, 17, 23, 0) 18%),
+    linear-gradient(180deg, rgba(22, 27, 34, 0.98), rgba(13, 17, 23, 0.98));
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  overflow: hidden;
+}
+
+.file-explorer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.file-explorer-kicker {
+  color: var(--accent-blue);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.file-explorer-header h3 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.file-explorer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-explorer-path-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.file-explorer-breadcrumb {
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.file-explorer-breadcrumb span {
+  color: var(--text-secondary);
+}
+
+.file-explorer-toolbar {
+  padding: 12px 16px;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.file-explorer-toolbar .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-explorer-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0)),
+    transparent;
+}
+
+.file-explorer-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px dashed rgba(139, 148, 158, 0.28);
+  border-radius: 16px;
+  background: rgba(22, 27, 34, 0.62);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.file-explorer-empty strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.file-explorer-empty span {
+  font-size: 13px;
+}
+
+.file-explorer-drop-zone {
+  inset: 16px;
+  border-radius: 20px;
+}
+
+.file-explorer-footer {
+  display: none;
+  padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(13, 17, 23, 0.82);
+}
+
+.file-explorer-footer .btn {
+  width: 100%;
+}
+
+/* =============================================================================
    SERVER STATS & STATUS
    ============================================================================= */
 
@@ -1960,6 +2115,43 @@ body.virtual-keyboard-open .extra-keys {
 
   .activity-rail {
     display: none;
+  }
+
+  .file-explorer {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+  }
+
+  .file-explorer-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(3, 7, 12, 0.7);
+  }
+
+  .file-explorer-shell {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+  }
+
+  .file-explorer-header {
+    padding: 18px 16px 14px;
+  }
+
+  .file-explorer-header h3 {
+    font-size: 24px;
+  }
+
+  .file-explorer-path-hint {
+    display: none;
+  }
+
+  .file-explorer-footer {
+    display: block;
   }
 
   .tools-sheet-panel {
