@@ -50,6 +50,22 @@ test.describe("Command palette navigation layer", () => {
     await expect(page.locator("#file-modal")).toBeVisible();
   });
 
+  test("Escape closes the palette and restores terminal focus", async ({
+    page,
+  }) => {
+    await openCommandPalette(page);
+    await expect(page.locator("#command-palette")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#command-palette")).toHaveClass(/hidden/);
+
+    const activeClassName = await page.evaluate(() => {
+      return document.activeElement?.className || "";
+    });
+
+    expect(activeClassName).toContain("xterm-helper-textarea");
+  });
+
   test("activates another workspace from the palette", async ({ page }) => {
     await ensureSecondWorkspace(page);
 
@@ -67,5 +83,34 @@ test.describe("Command palette navigation layer", () => {
 
     await expect(secondTab).toHaveClass(/active/);
     await expect(firstTab).not.toHaveClass(/active/);
+  });
+});
+
+test.describe("Command palette navigation layer on mobile", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
+  });
+
+  test("renders as a mobile sheet and still runs actions", async ({ page }) => {
+    await openCommandPalette(page);
+
+    const panel = page.locator(".command-palette-panel");
+    await expect(panel).toBeVisible();
+
+    const box = await panel.boundingBox();
+    expect(box).toBeTruthy();
+    expect(box?.width || 0).toBeGreaterThan(360);
+    expect(box?.y || 0).toBeGreaterThan(140);
+
+    await page.locator("#command-palette-input").fill("Open File Manager");
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator("#file-modal")).toBeVisible();
   });
 });

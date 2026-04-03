@@ -3711,6 +3711,8 @@ class TerminalManager {
 
     this.tileManager = new TileManager(this.container);
     this.clipboardManager = new ClipboardManager();
+    this.commandPaletteRegistry = null;
+    this.commandPalette = null;
 
     this.init();
   }
@@ -3755,6 +3757,7 @@ class TerminalManager {
 
     // Toolbar action buttons
     this.setupToolbarActions();
+    this.setupCommandPalette();
     this.updateWrapButton();
     this.updateLinkedViewButton();
 
@@ -4024,6 +4027,250 @@ class TerminalManager {
     });
   }
 
+  setupCommandPalette() {
+    const ActionRegistryCtor = window.ActionRegistry?.ActionRegistry;
+    const CommandPaletteCtor =
+      window.CommandPaletteController?.CommandPaletteController;
+    const root = document.getElementById("command-palette");
+    const input = document.getElementById("command-palette-input");
+    const results = document.getElementById("command-palette-results");
+
+    if (
+      !ActionRegistryCtor ||
+      !CommandPaletteCtor ||
+      !root ||
+      !input ||
+      !results
+    ) {
+      return;
+    }
+
+    this.commandPaletteRegistry = new ActionRegistryCtor();
+    this.commandPalette = new CommandPaletteCtor({
+      root,
+      input,
+      results,
+      registry: this.commandPaletteRegistry,
+    });
+
+    document
+      .getElementById("command-palette-trigger")
+      ?.addEventListener("click", () => this.toggleCommandPalette());
+
+    root.addEventListener("click", (event) => {
+      if (event.target === root) {
+        this.closeCommandPalette();
+      }
+    });
+
+    this.registerCommandPaletteActions();
+  }
+
+  registerCommandPaletteActions() {
+    if (!this.commandPaletteRegistry) return;
+
+    const actions = [
+      {
+        id: "new-terminal",
+        title: "New Terminal",
+        group: "Actions",
+        keywords: ["workspace", "shell", "tab"],
+        priority: 50,
+        run: () => this.createTerminal(),
+      },
+      {
+        id: "split-workspace",
+        title: "Split Workspace",
+        group: "Actions",
+        keywords: ["split", "pane", "terminal"],
+        priority: 45,
+        run: () => this.splitWorkspace(),
+      },
+      {
+        id: "open-git",
+        title: "Open Git",
+        group: "Actions",
+        keywords: ["repo", "branch", "diff"],
+        priority: 40,
+        run: () => this.openGitPanel(),
+      },
+      {
+        id: "open-file-manager",
+        title: "Open File Manager",
+        group: "Actions",
+        keywords: ["files", "explorer", "browse"],
+        priority: 40,
+        run: () => this.fileManager.open(),
+      },
+      {
+        id: "open-clipboard",
+        title: "Open Clipboard",
+        group: "Actions",
+        keywords: ["paste", "copy", "history"],
+        priority: 30,
+        run: () => this.clipboardManager.togglePanel(),
+      },
+      {
+        id: "search-terminal",
+        title: "Search in Terminal",
+        group: "Views",
+        keywords: ["find", "search", "terminal"],
+        run: () => this.toggleSearch(),
+      },
+      {
+        id: "toggle-line-wrap",
+        title: "Toggle Line Wrap",
+        group: "Views",
+        keywords: ["wrap", "lines", "overflow"],
+        run: () => this.toggleWrapLines(),
+      },
+      {
+        id: "toggle-fullscreen",
+        title: "Toggle Fullscreen",
+        group: "Views",
+        keywords: ["fullscreen", "focus", "zen"],
+        run: () => this.toggleFullscreen(),
+      },
+      {
+        id: "font-increase",
+        title: "Increase Font Size",
+        group: "Views",
+        keywords: ["zoom", "font", "larger"],
+        run: () => this.changeFontSize(1),
+      },
+      {
+        id: "font-decrease",
+        title: "Decrease Font Size",
+        group: "Views",
+        keywords: ["zoom", "font", "smaller"],
+        run: () => this.changeFontSize(-1),
+      },
+      {
+        id: "open-help",
+        title: "Open Help",
+        group: "Views",
+        keywords: ["shortcuts", "docs", "help"],
+        run: () => this.openHelp(),
+      },
+    ];
+
+    actions.forEach((action) => this.commandPaletteRegistry.register(action));
+
+    this.commandPaletteRegistry.registerProvider((context = {}) => {
+      const contextualActions = [];
+
+      if (context.canCreateLinkedView) {
+        contextualActions.push({
+          id: "open-linked-view",
+          title: "Open Linked View",
+          group: "Contextual",
+          keywords: ["tmux", "linked", "shared"],
+          run: () => this.createLinkedView(),
+        });
+      }
+
+      if (context.hasExtraKeys) {
+        contextualActions.push({
+          id: "toggle-extra-keys",
+          title: "Toggle Extra Keys",
+          group: "Contextual",
+          keywords: ["keyboard", "modifiers", "mobile"],
+          meta: context.extraKeysVisible ? ["Visible"] : ["Hidden"],
+          run: () => this.extraKeys?.toggle(),
+        });
+      }
+
+      return contextualActions;
+    });
+
+    this.commandPaletteRegistry.registerProvider(() => {
+      return Array.from(this.tabs.querySelectorAll(".tab"))
+        .map((tab) => {
+          const workspaceId = tab.dataset.workspaceId;
+          if (!workspaceId) return null;
+
+          const snapshot = this.getWorkspaceSnapshot(workspaceId);
+          const targetId = this.resolveWorkspaceTerminalId(workspaceId);
+          if (!targetId) return null;
+
+          const rawTabText = tab.textContent?.trim() || "";
+          const condensedTabText = rawTabText.replace(/\s+/g, "");
+          const index = tab.dataset.index || "";
+          const label = snapshot.label || "Workspace";
+          const metadata = [];
+
+          if (workspaceId === this.terminals.get(this.activeId)?.workspaceId) {
+            metadata.push("Active");
+          }
+          if (snapshot.count > 1) {
+            metadata.push(`${snapshot.count} terminals`);
+          }
+          snapshot.descriptors.forEach((descriptor) => {
+            metadata.push(descriptor.label);
+          });
+
+          return {
+            id: `workspace:${workspaceId}`,
+            title: label,
+            group: "Workspaces",
+            keywords: [
+              workspaceId,
+              index,
+              `${index} ${label}`,
+              `${index}${label}`,
+              rawTabText,
+              condensedTabText,
+              snapshot.cwd,
+            ],
+            meta: metadata,
+            run: () => this.switchTo(targetId),
+          };
+        })
+        .filter(Boolean);
+    });
+  }
+
+  getCommandPaletteContext() {
+    const activeTerminal = this.getActiveTerminal();
+    return {
+      activeId: this.activeId,
+      cwd: activeTerminal?.cwd || this.directoryInput?.value || "",
+      canCreateLinkedView: this.canCreateLinkedView(activeTerminal),
+      hasExtraKeys: Boolean(this.extraKeys),
+      extraKeysVisible: Boolean(this.extraKeys?.visible),
+      wrapLines: this.wrapLines,
+    };
+  }
+
+  isCommandPaletteOpen() {
+    return Boolean(
+      this.commandPalette &&
+        !document
+          .getElementById("command-palette")
+          ?.classList.contains("hidden"),
+    );
+  }
+
+  refreshCommandPalette() {
+    if (!this.commandPalette || !this.isCommandPaletteOpen()) return;
+    this.commandPalette.context = this.getCommandPaletteContext();
+    this.commandPalette.refreshResults();
+  }
+
+  openCommandPalette() {
+    if (!this.commandPalette) return;
+    this.commandPalette.open(this.getCommandPaletteContext());
+  }
+
+  closeCommandPalette() {
+    this.commandPalette?.close();
+  }
+
+  toggleCommandPalette() {
+    if (!this.commandPalette) return;
+    this.commandPalette.toggle(this.getCommandPaletteContext());
+  }
+
   getTerminalTextarea(terminalState) {
     return terminalState?.element?.querySelector(".xterm-helper-textarea");
   }
@@ -4126,6 +4373,7 @@ class TerminalManager {
     button.hidden = !isAvailable;
     button.disabled = !isAvailable;
     button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+    this.refreshCommandPalette();
   }
 
   updateWorkspaceLabel(workspaceId, cwd) {
@@ -4446,6 +4694,7 @@ class TerminalManager {
     if (!btn) return;
     btn.classList.toggle("active", this.wrapLines);
     btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+    this.refreshCommandPalette();
   }
 
   toggleWrapLines() {
@@ -4496,8 +4745,21 @@ class TerminalManager {
     document.getElementById("help-modal")?.classList.add("hidden");
   }
 
+  openGitPanel() {
+    const cwd = this.getActiveTerminal()?.cwd || this.directoryInput?.value || "~";
+    return window.gitManager?.show(cwd);
+  }
+
   setupKeyboardShortcuts() {
     document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        this.toggleCommandPalette();
+        return;
+      }
+      if (this.isCommandPaletteOpen()) {
+        return;
+      }
       if (e.ctrlKey && e.key === "n") {
         e.preventDefault();
         this.createTerminal();
@@ -5972,6 +6234,7 @@ class TerminalManager {
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
       this.renderWorkspaceTab(tab);
     });
+    this.refreshCommandPalette();
   }
 
   groupWithPrevious() {
@@ -6111,6 +6374,7 @@ class TerminalManager {
       );
     }
     this.updateLinkedViewButton();
+    this.refreshCommandPalette();
   }
 
   switchToIndex(index) {

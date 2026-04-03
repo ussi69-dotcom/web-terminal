@@ -9,6 +9,7 @@ const ACTION_GROUP_ORDER = {
 function normalizeText(value) {
   return String(value || "")
     .trim()
+    .replace(/\s+/g, " ")
     .toLowerCase();
 }
 
