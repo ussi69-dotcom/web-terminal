@@ -25,6 +25,7 @@ The current product is shaped by four influences:
 - Each top tab is a workspace
 - A workspace can contain one or more split terminals
 - Tabs can be merged by drag and drop
+- A command palette can switch workspaces and trigger common actions from one place
 - Workspace labels follow cwd
 - Workspace color is derived from cwd
 - Workspace signals can show:
@@ -90,6 +91,7 @@ The state model is driven by shell integration markers plus agent output heurist
 
 Primary toolbar actions in the current product:
 
+- actions palette
 - new workspace terminal
 - working directory input
 - directory browser
@@ -107,6 +109,7 @@ Primary toolbar actions in the current product:
 
 Modal and support surfaces:
 
+- command palette
 - directory picker
 - file manager
 - large paste confirmation
