@@ -17,6 +17,7 @@ import {
   parseShellIntegrationChunk,
   resolveAgentOutputState,
 } from "./telemetry";
+import { syncTmuxSessionClients } from "./tmux-client-size";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -998,28 +999,11 @@ async function captureTmuxPane(sessionName: string): Promise<string> {
   return output;
 }
 
-async function getTmuxClientTty(sessionName: string): Promise<string | null> {
-  const clientProc = Bun.spawn(
-    ["tmux", "list-clients", "-F", "#{client_tty}\t#{session_name}"],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const output = await new Response(clientProc.stdout).text();
-  await clientProc.exited;
-
-  for (const line of output.split("\n")) {
-    const [tty = "", currentSession = ""] = line.trim().split("\t");
-    if (tty && currentSession === sessionName) {
-      return tty;
-    }
-  }
-
-  return null;
-}
-
 async function syncTmuxSessionSize(
   sessionName: string,
   cols: number,
   rows: number,
+  options: { waitForClient?: boolean } = {},
 ): Promise<void> {
   const resizeWindowProc = Bun.spawn([
     "tmux",
@@ -1045,19 +1029,9 @@ async function syncTmuxSessionSize(
   ]);
   await resizePaneProc.exited;
 
-  const clientTty = await getTmuxClientTty(sessionName);
-  if (!clientTty) return;
-
-  const ttyResizeProc = Bun.spawn([
-    "stty",
-    "-F",
-    clientTty,
-    "rows",
-    String(rows),
-    "cols",
-    String(cols),
-  ]);
-  await ttyResizeProc.exited;
+  await syncTmuxSessionClients(sessionName, cols, rows, {
+    waitForClient: options.waitForClient,
+  });
 }
 
 async function sendTmuxPaneCapture(
@@ -1278,6 +1252,8 @@ async function createManagedTerminal({
         closeAndRemoveTerminal(exitCode, signalCode);
       },
     });
+
+    await syncTmuxSessionSize(sessionName, cols, rows, { waitForClient: true });
   } else {
     proc = Bun.spawn(shellCommand, {
       cwd,
