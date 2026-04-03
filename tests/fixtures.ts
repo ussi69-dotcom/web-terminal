@@ -275,6 +275,24 @@ export async function createGitFixtureRepo(): Promise<string> {
   return repoDir;
 }
 
+export async function createExplorerFixtureDir(
+  childNames: string[] = ["child"],
+): Promise<{ root: string; children: string[] }> {
+  const homeRoot = process.env.HOME || os.tmpdir();
+  const fixtureRoot = path.join(homeRoot, ".deckterm-test-fixtures");
+  await mkdir(fixtureRoot, { recursive: true });
+  const root = await mkdtemp(path.join(fixtureRoot, "deckterm-files-fixture-"));
+
+  for (const childName of childNames) {
+    await mkdir(path.join(root, childName), { recursive: true });
+  }
+
+  return {
+    root,
+    children: childNames.map((childName) => path.join(root, childName)),
+  };
+}
+
 export async function cleanupTempDir(dir?: string | null) {
   if (!dir) return;
   await rm(dir, { recursive: true, force: true });
@@ -313,6 +331,17 @@ export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
   await page.context().clearCookies();
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
+}
+
+export async function createWorkspaceInDir(page: Page, cwd: string) {
+  await page.fill("#directory", cwd);
+  await page.click("#new-terminal");
+  await waitForTerminal(page);
+}
+
+export async function openToolsSheet(page: Page) {
+  await page.click("#toolbar-toggle");
+  await expect(page.locator("#tools-sheet")).toBeVisible();
 }
 
 /**

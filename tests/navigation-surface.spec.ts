@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   cleanupTempDir,
+  createWorkspaceInDir,
   createGitFixtureRepo,
   expect,
   openCommandPalette,
@@ -12,12 +13,6 @@ import {
 } from "./fixtures";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
-
-async function createWorkspaceInDir(page, cwd: string) {
-  await page.fill("#directory", cwd);
-  await page.click("#new-terminal");
-  await waitForTerminal(page);
-}
 
 test.describe("Compact navigation surface on desktop", () => {
   let tempDirs: string[] = [];
@@ -50,7 +45,8 @@ test.describe("Compact navigation surface on desktop", () => {
     await expect(page.locator("#git-panel")).toBeVisible();
 
     await page.click("#activity-rail-files");
-    await expect(page.locator("#file-modal")).toBeVisible();
+    await expect(page.locator("#file-explorer")).toBeVisible();
+    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
   });
 
   test("creates a folder from the command palette in the current cwd", async ({

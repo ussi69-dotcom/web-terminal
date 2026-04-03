@@ -47,7 +47,8 @@ test.describe("Command palette navigation layer", () => {
     await page.locator("#command-palette-input").fill("Open File Manager");
     await page.keyboard.press("Enter");
 
-    await expect(page.locator("#file-modal")).toBeVisible();
+    await expect(page.locator("#file-explorer")).toBeVisible();
+    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
   });
 
   test("Escape closes the palette and restores terminal focus", async ({
@@ -111,6 +112,7 @@ test.describe("Command palette navigation layer on mobile", () => {
     await page.locator("#command-palette-input").fill("Open File Manager");
     await page.keyboard.press("Enter");
 
-    await expect(page.locator("#file-modal")).toBeVisible();
+    await expect(page.locator("#file-explorer")).toBeVisible();
+    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
   });
 });
