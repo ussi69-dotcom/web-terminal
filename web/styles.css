@@ -1738,6 +1738,11 @@ body.touch-input-mode .xterm .composition-view.active {
   background: var(--bg-tertiary);
 }
 
+.file-item.selected {
+  background: rgba(88, 166, 255, 0.14);
+  border: 1px solid rgba(88, 166, 255, 0.35);
+}
+
 .file-item .file-icon {
   font-size: 18px;
   width: 24px;

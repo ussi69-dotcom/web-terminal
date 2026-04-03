@@ -34,7 +34,7 @@ test.describe("File explorer surface on desktop", () => {
       "data-mode",
       "docked",
     );
-    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
+    await expect(page.locator("#file-modal")).toHaveCount(0);
   });
 
   test("remembers the explorer path per workspace and coordinates with Git", async ({
@@ -45,6 +45,9 @@ test.describe("File explorer surface on desktop", () => {
     tempDirs.push(workspaceA.root, workspaceB.root);
 
     await createWorkspaceInDir(page, workspaceA.root);
+    const workspaceAId = await page
+      .locator("#terminals-tabs .tab.active")
+      .getAttribute("data-workspace-id");
     await page.click("#activity-rail-files");
     await expect(page.locator("#file-explorer")).toBeVisible();
     await page
@@ -57,6 +60,9 @@ test.describe("File explorer surface on desktop", () => {
     );
 
     await createWorkspaceInDir(page, workspaceB.root);
+    const workspaceBId = await page
+      .locator("#terminals-tabs .tab.active")
+      .getAttribute("data-workspace-id");
     await page.click("#activity-rail-files");
     await page
       .locator("#file-explorer .file-item")
@@ -75,11 +81,20 @@ test.describe("File explorer surface on desktop", () => {
     await expect(page.locator("#file-explorer")).toBeVisible();
     await expect(page.locator("#git-panel")).not.toBeVisible();
 
-    await page.locator("#terminals-tabs .tab").nth(0).click();
+    await page
+      .locator(`#terminals-tabs .tab[data-workspace-id="${workspaceAId}"]`)
+      .click();
     await expect(page.locator("#file-explorer .breadcrumb")).toContainText(
       "alpha",
     );
     await expect(page.locator("#file-explorer .breadcrumb")).not.toContainText(
+      "beta",
+    );
+
+    await page
+      .locator(`#terminals-tabs .tab[data-workspace-id="${workspaceBId}"]`)
+      .click();
+    await expect(page.locator("#file-explorer .breadcrumb")).toContainText(
       "beta",
     );
   });
@@ -107,6 +122,6 @@ test.describe("File explorer surface on mobile", () => {
       "data-mode",
       "overlay",
     );
-    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
+    await expect(page.locator("#file-modal")).toHaveCount(0);
   });
 });

@@ -46,7 +46,7 @@ test.describe("Compact navigation surface on desktop", () => {
 
     await page.click("#activity-rail-files");
     await expect(page.locator("#file-explorer")).toBeVisible();
-    await expect(page.locator("#file-modal")).toHaveClass(/hidden/);
+    await expect(page.locator("#file-modal")).toHaveCount(0);
   });
 
   test("creates a folder from the command palette in the current cwd", async ({

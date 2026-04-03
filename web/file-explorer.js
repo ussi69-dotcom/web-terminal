@@ -1,5 +1,22 @@
 const FILE_EXPLORER_MOBILE_BREAKPOINT = 768;
 
+const FILE_ICONS = {
+  js: "📜",
+  ts: "📜",
+  json: "📋",
+  md: "📝",
+  txt: "📝",
+  html: "🌐",
+  css: "🎨",
+  png: "🖼",
+  jpg: "🖼",
+  jpeg: "🖼",
+  pdf: "📕",
+  zip: "📦",
+  sh: "⚙️",
+  py: "🐍",
+};
+
 function normalizeExplorerPath(value) {
   const next = String(value || "").trim();
   return next || null;
@@ -30,12 +47,79 @@ function resolveFileExplorerMode(
   return getViewportWidth(viewport) <= breakpoint ? "overlay" : "docked";
 }
 
+function joinExplorerPath(basePath, childName) {
+  const base = String(basePath || "").trim();
+  const child = String(childName || "")
+    .trim()
+    .replace(/^\/+/, "");
+
+  if (!base) return child;
+  if (!child) return base;
+  if (base === "/") return `/${child}`;
+  return `${base.replace(/\/+$/, "")}/${child}`;
+}
+
+function getDefaultAlertImpl() {
+  return (...args) => {
+    if (typeof alert === "function") {
+      return alert(...args);
+    }
+    return undefined;
+  };
+}
+
+function getDefaultConfirmImpl() {
+  return (...args) => {
+    if (typeof confirm === "function") {
+      return confirm(...args);
+    }
+    return true;
+  };
+}
+
+function getDefaultPromptImpl() {
+  return (...args) => {
+    if (typeof prompt === "function") {
+      return prompt(...args);
+    }
+    return null;
+  };
+}
+
+function getDefaultOpenWindowImpl() {
+  return (...args) => {
+    if (typeof window !== "undefined" && typeof window.open === "function") {
+      return window.open(...args);
+    }
+    return null;
+  };
+}
+
+function formatFileSize(bytes) {
+  const nextBytes = Number(bytes);
+  if (!Number.isFinite(nextBytes) || nextBytes <= 0) return "";
+  if (nextBytes < 1024) return `${nextBytes} B`;
+  if (nextBytes < 1024 * 1024) return `${(nextBytes / 1024).toFixed(1)} KB`;
+  return `${(nextBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getItemIcon(item) {
+  if (item?.isDir) return "📁";
+  const ext = String(item?.name || "").split(".").pop()?.toLowerCase() || "";
+  return FILE_ICONS[ext] || "📄";
+}
+
 class FileExplorerController {
   constructor({
     root = null,
     viewport = null,
     breakpoint = FILE_EXPLORER_MOBILE_BREAKPOINT,
     renderers = {},
+    fetchImpl = null,
+    alertImpl = null,
+    confirmImpl = null,
+    promptImpl = null,
+    openWindowImpl = null,
   } = {}) {
     this.root =
       root ||
@@ -45,6 +129,12 @@ class FileExplorerController {
     this.viewport =
       viewport || (typeof window !== "undefined" ? window : { innerWidth: 1024 });
     this.breakpoint = breakpoint;
+    this.fetchImpl =
+      fetchImpl || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
+    this.alertImpl = alertImpl || getDefaultAlertImpl();
+    this.confirmImpl = confirmImpl || getDefaultConfirmImpl();
+    this.promptImpl = promptImpl || getDefaultPromptImpl();
+    this.openWindowImpl = openWindowImpl || getDefaultOpenWindowImpl();
     this.renderers = {
       breadcrumb:
         typeof renderers.breadcrumb === "function" ? renderers.breadcrumb : null,
@@ -58,24 +148,51 @@ class FileExplorerController {
     this.currentPathByWorkspace = new Map();
     this.selectedItemByWorkspace = new Map();
     this.itemsByWorkspace = new Map();
+    this.pendingLoadByWorkspace = new Map();
     this.loading = false;
     this.error = null;
+    this.dragActive = false;
+    this.loadSequence = 0;
 
+    this.shellEl = null;
+    this.backdropEl = null;
     this.breadcrumbEl = null;
     this.listEl = null;
+    this.dropZoneEl = null;
+    this.uploadInputEl = null;
+    this.uploadBtnEl = null;
+    this.mkdirBtnEl = null;
+    this.refreshBtnEl = null;
     this.closeButtons = [];
 
     this.handleClose = this.close.bind(this);
+    this.handleBackdropClick = this.handleBackdropClick.bind(this);
+    this.handleUpload = this.handleUpload.bind(this);
+    this.handleDragOver = this.handleDragOver.bind(this);
+    this.handleDragLeave = this.handleDragLeave.bind(this);
+    this.handleDropEvent = this.handleDropEvent.bind(this);
 
     this.bindDom();
     this.syncDom();
   }
 
+  get currentPath() {
+    if (!this.currentWorkspaceId) return null;
+    return this.getWorkspacePath(this.currentWorkspaceId);
+  }
+
   bindDom() {
     if (!this.root || typeof this.root.querySelector !== "function") return;
 
+    this.shellEl = this.root.querySelector(".file-explorer-shell");
+    this.backdropEl = this.root.querySelector(".file-explorer-backdrop");
     this.breadcrumbEl = this.root.querySelector("#file-explorer-breadcrumb");
     this.listEl = this.root.querySelector("#file-explorer-list");
+    this.dropZoneEl = this.root.querySelector("#file-explorer-drop-zone");
+    this.uploadInputEl = this.root.querySelector("#file-explorer-upload-input");
+    this.uploadBtnEl = this.root.querySelector("#file-explorer-upload-btn");
+    this.mkdirBtnEl = this.root.querySelector("#file-explorer-mkdir-btn");
+    this.refreshBtnEl = this.root.querySelector("#file-explorer-refresh-btn");
 
     const closeSelectors = [
       "#file-explorer-close",
@@ -88,6 +205,46 @@ class FileExplorerController {
     this.closeButtons.forEach((button) => {
       button.addEventListener("click", this.handleClose);
     });
+
+    this.backdropEl?.addEventListener("click", this.handleBackdropClick);
+    this.uploadBtnEl?.addEventListener("click", () => this.uploadInputEl?.click());
+    this.uploadInputEl?.addEventListener("change", this.handleUpload);
+    this.mkdirBtnEl?.addEventListener("click", () => void this.createFolder());
+    this.refreshBtnEl?.addEventListener("click", () => {
+      if (!this.currentPath) return;
+      void this.loadDir(this.currentPath);
+    });
+
+    const dropTarget = this.shellEl || this.root;
+    dropTarget?.addEventListener("dragover", this.handleDragOver);
+    dropTarget?.addEventListener("dragleave", this.handleDragLeave);
+    dropTarget?.addEventListener("drop", this.handleDropEvent);
+  }
+
+  handleBackdropClick(event) {
+    if (event.target === this.backdropEl) {
+      this.close();
+    }
+  }
+
+  handleDragOver(event) {
+    event.preventDefault();
+    this.setDragActive(true);
+  }
+
+  handleDragLeave(event) {
+    const nextTarget = event.relatedTarget;
+    const dropTarget = this.shellEl || this.root;
+    if (dropTarget?.contains?.(nextTarget)) return;
+    this.setDragActive(false);
+  }
+
+  handleDropEvent(event) {
+    event.preventDefault();
+    this.setDragActive(false);
+    if (event.dataTransfer?.files?.length) {
+      void this.uploadFiles(event.dataTransfer.files);
+    }
   }
 
   resolveMode(mode) {
@@ -108,15 +265,15 @@ class FileExplorerController {
       items: workspaceId ? this.getWorkspaceItems(workspaceId) : [],
       loading: this.loading,
       error: this.error,
+      dragActive: this.dragActive,
     };
   }
 
   syncDom() {
     if (!this.root) return;
 
-    if (this.root.classList?.toggle) {
-      this.root.classList.toggle("hidden", !this.isOpen);
-    }
+    this.root.classList?.toggle("hidden", !this.isOpen);
+    this.root.classList?.toggle("drag-active", this.dragActive);
 
     if (this.root.dataset) {
       this.root.dataset.mode = this.mode;
@@ -125,10 +282,10 @@ class FileExplorerController {
       this.root.dataset.error = this.error || "";
     }
 
-    if (typeof this.root.setAttribute === "function") {
-      this.root.setAttribute("data-mode", this.mode);
-      this.root.setAttribute("aria-hidden", this.isOpen ? "false" : "true");
-    }
+    this.root.setAttribute("data-mode", this.mode);
+    this.root.setAttribute("aria-hidden", this.isOpen ? "false" : "true");
+    this.shellEl?.setAttribute("aria-modal", this.mode === "overlay" ? "true" : "false");
+    this.dropZoneEl?.classList?.toggle("hidden", !this.dragActive);
   }
 
   render() {
@@ -142,8 +299,34 @@ class FileExplorerController {
     const snapshot = this.buildSnapshot();
 
     if (this.breadcrumbEl) {
-      this.breadcrumbEl.textContent =
-        snapshot.path || "Open Files to browse the current workspace.";
+      this.breadcrumbEl.innerHTML = "";
+
+      if (!snapshot.path) {
+        const placeholder = document.createElement("span");
+        placeholder.textContent = "Open Files to browse the current workspace.";
+        this.breadcrumbEl.appendChild(placeholder);
+      } else {
+        const parts = snapshot.path.split("/").filter(Boolean);
+        const rootLink = document.createElement("a");
+        rootLink.textContent = "/";
+        rootLink.dataset.path = "/";
+        rootLink.addEventListener("click", () => void this.loadDir("/"));
+        this.breadcrumbEl.appendChild(rootLink);
+
+        let currentPath = "";
+        parts.forEach((part) => {
+          currentPath += `/${part}`;
+
+          const separator = document.createTextNode(" / ");
+          const link = document.createElement("a");
+          link.textContent = part;
+          link.dataset.path = currentPath;
+          link.addEventListener("click", () => void this.loadDir(currentPath));
+
+          this.breadcrumbEl.appendChild(separator);
+          this.breadcrumbEl.appendChild(link);
+        });
+      }
     }
 
     this.renderers.breadcrumb?.(snapshot);
@@ -157,12 +340,137 @@ class FileExplorerController {
       this.listEl.dataset.path = snapshot.path || "";
     }
 
+    if (this.listEl) {
+      this.listEl.innerHTML = "";
+
+      if (snapshot.loading) {
+        this.listEl.appendChild(
+          this.createMessageCard(
+            "muted",
+            "Loading files",
+            "Refreshing directory contents for the active workspace.",
+          ),
+        );
+      } else if (snapshot.error) {
+        this.listEl.appendChild(
+          this.createMessageCard(
+            "error",
+            "Explorer error",
+            snapshot.error,
+          ),
+        );
+      } else if (snapshot.items.length === 0) {
+        this.listEl.appendChild(
+          this.createMessageCard(
+            "muted",
+            "This folder is empty",
+            "Create a folder, upload files, or switch to a different workspace path.",
+          ),
+        );
+      } else {
+        snapshot.items.forEach((item) => {
+          this.listEl.appendChild(this.createItemElement(item, snapshot));
+        });
+      }
+    }
+
     this.renderers.list?.(snapshot);
   }
 
   renderStatus() {
     const snapshot = this.buildSnapshot();
     this.renderers.status?.(snapshot);
+  }
+
+  createMessageCard(kind, title, body) {
+    const card = document.createElement("div");
+    card.className = kind === "error" ? "error" : "file-explorer-empty";
+
+    if (kind === "error") {
+      const label = document.createElement("strong");
+      label.textContent = title;
+      const detail = document.createElement("div");
+      detail.textContent = body;
+      card.appendChild(label);
+      card.appendChild(detail);
+      return card;
+    }
+
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const detail = document.createElement("span");
+    detail.textContent = body;
+    card.appendChild(heading);
+    card.appendChild(detail);
+    return card;
+  }
+
+  createItemElement(item, snapshot) {
+    const el = document.createElement("div");
+    const isSelected = snapshot.selectedItem?.path === item.path;
+    el.className = "file-item";
+    if (isSelected) el.classList.add("selected");
+    if (item.isDir) el.classList.add("is-dir");
+    el.dataset.path = item.path;
+
+    const iconEl = document.createElement("span");
+    iconEl.className = "file-icon";
+    iconEl.textContent = getItemIcon(item);
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "file-name";
+    nameEl.textContent = item.name;
+
+    const sizeEl = document.createElement("span");
+    sizeEl.className = "file-size";
+    sizeEl.textContent = item.isDir ? "" : formatFileSize(item.size);
+
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "file-actions";
+
+    if (!item.isDir && !item.isParent) {
+      const downloadBtn = document.createElement("button");
+      downloadBtn.type = "button";
+      downloadBtn.className = "download";
+      downloadBtn.title = "Download";
+      downloadBtn.textContent = "⬇";
+      downloadBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.downloadFile(item.path);
+      });
+      actionsEl.appendChild(downloadBtn);
+    }
+
+    if (!item.isParent) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "delete danger";
+      deleteBtn.title = "Delete";
+      deleteBtn.textContent = "🗑";
+      deleteBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void this.deleteItem(item.path, item.isDir);
+      });
+      actionsEl.appendChild(deleteBtn);
+    }
+
+    el.appendChild(iconEl);
+    el.appendChild(nameEl);
+    el.appendChild(sizeEl);
+    el.appendChild(actionsEl);
+
+    el.addEventListener("click", () => {
+      if (item.isDir) {
+        this.setSelectedItem(snapshot.workspaceId, null);
+        void this.loadDir(item.path, snapshot.workspaceId);
+        return;
+      }
+
+      this.setSelectedItem(snapshot.workspaceId, item);
+      this.renderList();
+    });
+
+    return el;
   }
 
   openForWorkspace(workspaceId, cwd = "", mode = null) {
@@ -185,6 +493,7 @@ class FileExplorerController {
 
   close() {
     this.isOpen = false;
+    this.dragActive = false;
     this.render();
   }
 
@@ -258,6 +567,242 @@ class FileExplorerController {
     this.error = error ? String(error) : null;
     this.renderStatus();
     return this.error;
+  }
+
+  setDragActive(dragActive) {
+    this.dragActive = Boolean(dragActive);
+    this.syncDom();
+    this.renderStatus();
+    return this.dragActive;
+  }
+
+  buildItemsFromBrowse(data) {
+    const items = [];
+    const currentPath = normalizeExplorerPath(data?.path) || "/";
+
+    if (currentPath !== "/") {
+      const parentPath =
+        currentPath.split("/").slice(0, -1).join("/") || "/";
+      items.push({
+        name: "..",
+        path: parentPath,
+        isDir: true,
+        isParent: true,
+      });
+    }
+
+    (data?.dirs || []).forEach((name) => {
+      items.push({
+        name,
+        path: joinExplorerPath(currentPath, name),
+        isDir: true,
+      });
+    });
+
+    (data?.files || []).forEach((file) => {
+      items.push({
+        name: file.name,
+        size: file.size,
+        path: joinExplorerPath(currentPath, file.name),
+        isDir: false,
+      });
+    });
+
+    return items;
+  }
+
+  async loadDir(path, workspaceId = this.currentWorkspaceId) {
+    if (!this.fetchImpl) {
+      throw new Error("FileExplorerController requires fetch support");
+    }
+
+    const normalizedWorkspaceId = String(workspaceId || "").trim();
+    const nextPath =
+      normalizeExplorerPath(path) ||
+      this.getWorkspacePath(normalizedWorkspaceId) ||
+      "/";
+
+    if (!normalizedWorkspaceId || !nextPath) return null;
+
+    const requestId = ++this.loadSequence;
+    this.pendingLoadByWorkspace.set(normalizedWorkspaceId, requestId);
+
+    if (normalizedWorkspaceId === this.currentWorkspaceId) {
+      this.currentPathByWorkspace.set(normalizedWorkspaceId, nextPath);
+      this.setLoading(true);
+      this.setError(null);
+      this.render();
+    } else {
+      this.currentPathByWorkspace.set(normalizedWorkspaceId, nextPath);
+    }
+
+    try {
+      const res = await this.fetchImpl(
+        `/api/browse?path=${encodeURIComponent(nextPath)}&files=true`,
+      );
+      const data = await res.json().catch(() => ({}));
+      if (this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId) {
+        return null;
+      }
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Cannot read directory");
+      }
+
+      const resolvedPath = normalizeExplorerPath(data.path) || nextPath;
+      const items = this.buildItemsFromBrowse(data);
+
+      this.currentPathByWorkspace.set(normalizedWorkspaceId, resolvedPath);
+      this.itemsByWorkspace.set(normalizedWorkspaceId, items);
+      this.loading = false;
+      this.error = null;
+
+      if (normalizedWorkspaceId === this.currentWorkspaceId) {
+        this.render();
+      }
+
+      return data;
+    } catch (err) {
+      if (this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId) {
+        return null;
+      }
+
+      this.loading = false;
+      this.error =
+        err instanceof Error ? err.message : "Failed to load directory";
+      if (normalizedWorkspaceId === this.currentWorkspaceId) {
+        this.render();
+      }
+      return null;
+    }
+  }
+
+  downloadFile(path) {
+    const nextPath = normalizeExplorerPath(path);
+    if (!nextPath) return;
+
+    this.openWindowImpl(
+      `/api/files/download?path=${encodeURIComponent(nextPath)}`,
+      "_blank",
+    );
+  }
+
+  async deleteItem(path, isDir = false, workspaceId = this.currentWorkspaceId) {
+    const targetPath = normalizeExplorerPath(path);
+    const normalizedWorkspaceId = String(workspaceId || "").trim();
+    if (!this.fetchImpl || !targetPath || !normalizedWorkspaceId) return false;
+
+    const shouldDelete = this.confirmImpl(
+      `Delete ${isDir ? "folder" : "file"}?\n${targetPath}`,
+    );
+    if (!shouldDelete) return false;
+
+    try {
+      const res = await this.fetchImpl(
+        `/api/files?path=${encodeURIComponent(targetPath)}`,
+        { method: "DELETE" },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.alertImpl(payload.error || "Failed to delete");
+        return false;
+      }
+
+      const selectedItem = this.getSelectedItem(normalizedWorkspaceId);
+      if (selectedItem?.path === targetPath) {
+        this.setSelectedItem(normalizedWorkspaceId, null);
+      }
+
+      await this.loadDir(
+        this.getWorkspacePath(normalizedWorkspaceId) || "/",
+        normalizedWorkspaceId,
+      );
+      return true;
+    } catch (err) {
+      this.alertImpl(`Failed: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
+  }
+
+  async createFolder(path = null, folderName = null, workspaceId = this.currentWorkspaceId) {
+    const normalizedWorkspaceId = String(workspaceId || "").trim();
+    const basePath =
+      normalizeExplorerPath(path) ||
+      this.getWorkspacePath(normalizedWorkspaceId);
+    if (!this.fetchImpl || !basePath) return false;
+
+    const nextFolderName =
+      typeof folderName === "string" ? folderName.trim() : "";
+    const resolvedFolderName =
+      nextFolderName || String(this.promptImpl("Folder name:") || "").trim();
+
+    if (!resolvedFolderName) return false;
+
+    try {
+      const targetPath = joinExplorerPath(basePath, resolvedFolderName);
+      const res = await this.fetchImpl(
+        `/api/files/mkdir?path=${encodeURIComponent(targetPath)}`,
+        { method: "POST" },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.alertImpl(payload.error || "Failed");
+        return false;
+      }
+
+      if (normalizedWorkspaceId) {
+        await this.loadDir(basePath, normalizedWorkspaceId);
+      }
+      return true;
+    } catch (err) {
+      this.alertImpl(`Failed: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
+  }
+
+  async handleUpload(event) {
+    const files = event?.target?.files;
+    if (files?.length) {
+      await this.uploadFiles(files);
+    }
+    if (event?.target) {
+      event.target.value = "";
+    }
+  }
+
+  async uploadFiles(files, path = null, workspaceId = this.currentWorkspaceId) {
+    const normalizedWorkspaceId = String(workspaceId || "").trim();
+    const basePath =
+      normalizeExplorerPath(path) ||
+      this.getWorkspacePath(normalizedWorkspaceId);
+    if (!this.fetchImpl || !basePath || !normalizedWorkspaceId || !files?.length) {
+      return false;
+    }
+
+    for (const file of Array.from(files)) {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await this.fetchImpl(
+          `/api/files/upload?path=${encodeURIComponent(basePath)}`,
+          { method: "POST", body: formData },
+        );
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          this.alertImpl(payload.error || "Upload failed");
+          return false;
+        }
+      } catch (err) {
+        this.alertImpl(
+          `Upload failed: ${err instanceof Error ? err.message : err}`,
+        );
+        return false;
+      }
+    }
+
+    await this.loadDir(basePath, normalizedWorkspaceId);
+    return true;
   }
 }
 

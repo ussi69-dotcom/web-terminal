@@ -95,8 +95,8 @@
           id="activity-rail-files"
           class="activity-rail-btn"
           data-action="file-manager"
-          title="Open file manager"
-          aria-label="Open file manager"
+          title="Open files explorer"
+          aria-label="Open files explorer"
         >
           <i data-lucide="folder-open"></i>
         </button>
@@ -292,8 +292,8 @@
             <div class="file-explorer-empty">
               <strong>Explorer shell ready.</strong>
               <span>
-                This surface will replace the legacy modal and keep workspace
-                paths pinned here.
+                This surface keeps file state pinned to the active workspace and
+                shares the right-side shell with Git.
               </span>
             </div>
           </div>
@@ -446,38 +446,6 @@
       </div>
     </div>
 
-    <!-- File Manager Modal -->
-    <div id="file-modal" class="modal hidden">
-      <div class="modal-content modal-large">
-        <div class="modal-header">
-          <h3>File Manager</h3>
-          <button class="modal-close" id="file-close">&times;</button>
-        </div>
-        <div id="file-breadcrumb" class="breadcrumb"></div>
-        <div class="file-toolbar">
-          <button id="file-upload-btn" class="btn">
-            <i data-lucide="upload"></i>
-            <span>Upload</span>
-          </button>
-          <button id="file-mkdir-btn" class="btn">
-            <i data-lucide="folder-plus"></i>
-            <span>New Folder</span>
-          </button>
-          <button id="file-refresh-btn" class="btn-icon" title="Refresh">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-          <input type="file" id="file-upload-input" multiple hidden />
-        </div>
-        <div id="file-list" class="file-list"></div>
-        <div id="file-drop-zone" class="file-drop-zone hidden">
-          <span>Drop files here to upload</span>
-        </div>
-        <div class="modal-actions">
-          <button id="file-modal-close" class="btn">Close</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Paste Confirmation Modal -->
     <div id="paste-modal" class="modal hidden">
       <div class="modal-content">
@@ -545,8 +513,8 @@
 
               <h4>Surfaces</h4>
               <table class="help-table">
-                <tr><td>Desktop</td><td>Use the activity rail for Files, Clipboard, and Git</td></tr>
-                <tr><td>Mobile menu</td><td>Opens the tools sheet with the same secondary tools</td></tr>
+                <tr><td>Desktop</td><td>Use the activity rail to open the docked Files explorer, Clipboard, and Git</td></tr>
+                <tr><td>Mobile menu</td><td>Opens the tools sheet, then Files expands into a full overlay explorer</td></tr>
               </table>
             </div>
           </div>

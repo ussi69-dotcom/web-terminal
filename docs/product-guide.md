@@ -46,6 +46,10 @@ The current product is shaped by four influences:
 
 ### 4. Built-in file operations
 
+- Desktop Files opens as a persistent right-side explorer sidebar
+- Mobile Files opens as a full overlay explorer
+- Explorer path and lightweight selection state are remembered per workspace
+- Files and Git coordinate as mutually exclusive right-side shell surfaces
 - Browse directories inside allowed roots
 - Fallback to a valid root if a stored path becomes invalid
 - Upload files
@@ -78,7 +82,7 @@ DeckTerm includes git-focused backend APIs and UI support for lightweight repo o
 - log
 - show
 
-This is intended as a terminal-adjacent helper, not a full graphical git client.
+This is intended as a terminal-adjacent helper, not a full graphical git client. When Git opens, it takes over the same right-side shell slot used by Files.
 
 ### 7. Agent-aware workspace state
 
@@ -106,13 +110,14 @@ Primary toolbar actions in the current product:
 Secondary navigation surfaces:
 
 - desktop activity rail for files, clipboard, and git
+- desktop files explorer as a persistent right-side sidebar
 - mobile tools sheet for files, clipboard, git, and utility actions
+- mobile files explorer as a full overlay
 - command palette for quick actions, workspace switching, folder creation, and branch switching
 
 Modal and support surfaces:
 
 - directory picker
-- file manager
 - large paste confirmation
 - search bar
 - clipboard panel

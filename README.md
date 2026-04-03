@@ -9,7 +9,7 @@ It combines persistent tmux-backed shells, workspace tabs, split tiles, mobile-f
 - Persistent tmux-backed terminal sessions that survive browser reconnects and service restarts
 - Workspace tabs with split terminals, drag-to-merge behavior, linked views, and cwd-based color signals
 - Mobile-friendly terminal controls with extra keys, viewport-aware focus recovery, and image/text clipboard handling
-- Built-in file manager for browse, upload, download, mkdir, rename, and delete inside allowed roots
+- Workspace-aware file explorer for browse, upload, download, mkdir, rename, and delete inside allowed roots
 - Built-in git panel and git APIs for status, diff, stage, unstage, commit, branch, checkout, log, and show
 - Agent-aware workspace badges such as `Codex` and `Codex Responding`
 - Release-based production deployment from `main` with CI verification and atomic rollout
@@ -64,6 +64,7 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - Drag one workspace tab onto another to merge them
 - Actions palette for cross-workspace navigation, quick actions, folder creation, and branch switching via `Ctrl+Shift+P`
 - Compact primary toolbar with a desktop activity rail and mobile tools sheet for Git, Files, and Clipboard
+- Desktop Files opens as a persistent right-side explorer while mobile Files opens as an overlay
 - Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
 - Linked view for tmux-backed sessions
 
@@ -79,7 +80,7 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - OSC52 clipboard capture
 - Clipboard history panel
 - Large-paste warning flow
-- File browser and file manager under allowed filesystem roots
+- File explorer under allowed filesystem roots with per-workspace path memory
 
 ### Git workflow
 

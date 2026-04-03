@@ -1949,245 +1949,6 @@ class ExtraKeysManager {
 }
 
 // =============================================================================
-// FILE MANAGER
-// =============================================================================
-
-class FileManager {
-  constructor() {
-    this.currentPath = "/";
-    this.init();
-  }
-
-  init() {
-    document
-      .querySelector('[data-action="file-manager"]')
-      ?.addEventListener("click", () => this.open());
-    document
-      .getElementById("file-close")
-      ?.addEventListener("click", () => this.close());
-    document
-      .getElementById("file-modal-close")
-      ?.addEventListener("click", () => this.close());
-    document
-      .getElementById("file-upload-btn")
-      ?.addEventListener("click", () => {
-        document.getElementById("file-upload-input")?.click();
-      });
-    document
-      .getElementById("file-upload-input")
-      ?.addEventListener("change", (e) => this.handleUpload(e));
-    document
-      .getElementById("file-mkdir-btn")
-      ?.addEventListener("click", () => this.createFolder());
-    document
-      .getElementById("file-refresh-btn")
-      ?.addEventListener("click", () => this.loadDir(this.currentPath));
-
-    const modal = document.getElementById("file-modal");
-    const dropZone = document.getElementById("file-drop-zone");
-    if (modal && dropZone) {
-      modal.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("hidden");
-      });
-      modal.addEventListener("dragleave", (e) => {
-        if (!modal.contains(e.relatedTarget)) dropZone.classList.add("hidden");
-      });
-      modal.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("hidden");
-        this.handleDrop(e.dataTransfer.files);
-      });
-    }
-  }
-
-  open() {
-    document.getElementById("file-modal")?.classList.remove("hidden");
-    const dir = document.getElementById("directory")?.value || "/";
-    this.loadDir(dir);
-  }
-
-  close() {
-    document.getElementById("file-modal")?.classList.add("hidden");
-  }
-
-  async loadDir(path) {
-    try {
-      const res = await fetch(
-        `/api/browse?path=${encodeURIComponent(path)}&files=true`,
-      );
-      const data = await res.json();
-      if (data.error) return alert(data.error);
-
-      this.currentPath = data.path;
-      this.renderBreadcrumb(data.path);
-      this.renderFileList(data);
-    } catch (err) {
-      console.error("Failed to load directory:", err);
-    }
-  }
-
-  renderBreadcrumb(path) {
-    const parts = path.split("/").filter(Boolean);
-    let html = '<a data-path="/">/</a>';
-    let currentPath = "";
-    for (const part of parts) {
-      currentPath += "/" + part;
-      html += ` / <a data-path="${currentPath}">${part}</a>`;
-    }
-
-    const breadcrumb = document.getElementById("file-breadcrumb");
-    if (breadcrumb) {
-      breadcrumb.innerHTML = html;
-      breadcrumb.querySelectorAll("a").forEach((a) => {
-        a.addEventListener("click", () => this.loadDir(a.dataset.path));
-      });
-    }
-  }
-
-  renderFileList(data) {
-    const list = document.getElementById("file-list");
-    if (!list) return;
-    list.innerHTML = "";
-
-    if (data.path !== "/") {
-      const parent = data.path.split("/").slice(0, -1).join("/") || "/";
-      list.appendChild(
-        this.createItem({ name: "..", isDir: true, path: parent }),
-      );
-    }
-
-    const dirs = (data.dirs || []).map((name) => ({
-      name,
-      isDir: true,
-      path: data.path + "/" + name,
-    }));
-    const files = (data.files || []).map((f) => ({
-      ...f,
-      isDir: false,
-      path: data.path + "/" + f.name,
-    }));
-
-    dirs.forEach((item) => list.appendChild(this.createItem(item)));
-    files.forEach((item) => list.appendChild(this.createItem(item)));
-  }
-
-  createItem(item) {
-    const el = document.createElement("div");
-    el.className = "file-item";
-
-    const icons = {
-      js: "📜",
-      ts: "📜",
-      json: "📋",
-      md: "📝",
-      txt: "📝",
-      html: "🌐",
-      css: "🎨",
-      png: "🖼",
-      jpg: "🖼",
-      pdf: "📕",
-      zip: "📦",
-      sh: "⚙️",
-      py: "🐍",
-    };
-    const ext = item.name.split(".").pop()?.toLowerCase() || "";
-    const icon = item.isDir ? "📁" : icons[ext] || "📄";
-    const size = item.size ? this.formatSize(item.size) : "";
-
-    el.innerHTML = `
-      <span class="file-icon">${icon}</span>
-      <span class="file-name">${item.name}</span>
-      <span class="file-size">${size}</span>
-      <div class="file-actions">
-        ${!item.isDir ? `<button class="download" title="Download">⬇</button>` : ""}
-        ${item.name !== ".." ? `<button class="delete danger" title="Delete">🗑</button>` : ""}
-      </div>
-    `;
-
-    el.addEventListener("click", () => item.isDir && this.loadDir(item.path));
-    el.querySelector(".download")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.downloadFile(item.path);
-    });
-    el.querySelector(".delete")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.deleteItem(item.path, item.isDir);
-    });
-
-    return el;
-  }
-
-  formatSize(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  }
-
-  downloadFile(path) {
-    window.open(
-      `/api/files/download?path=${encodeURIComponent(path)}`,
-      "_blank",
-    );
-  }
-
-  async deleteItem(path, isDir) {
-    if (!confirm(`Delete ${isDir ? "folder" : "file"}?\n${path}`)) return;
-    try {
-      const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`, {
-        method: "DELETE",
-      });
-      if (res.ok) this.loadDir(this.currentPath);
-      else alert((await res.json()).error || "Failed to delete");
-    } catch (err) {
-      alert("Failed: " + err.message);
-    }
-  }
-
-  async createFolder() {
-    const name = prompt("Folder name:");
-    if (!name) return;
-    try {
-      const res = await fetch(
-        `/api/files/mkdir?path=${encodeURIComponent(this.currentPath + "/" + name)}`,
-        { method: "POST" },
-      );
-      if (res.ok) this.loadDir(this.currentPath);
-      else alert((await res.json()).error || "Failed");
-    } catch (err) {
-      alert("Failed: " + err.message);
-    }
-  }
-
-  async handleUpload(e) {
-    const files = e.target.files;
-    if (files?.length) await this.uploadFiles(files);
-    e.target.value = "";
-  }
-
-  handleDrop(files) {
-    if (files?.length) this.uploadFiles(files);
-  }
-
-  async uploadFiles(files) {
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append("file", file);
-      try {
-        const res = await fetch(
-          `/api/files/upload?path=${encodeURIComponent(this.currentPath)}`,
-          { method: "POST", body: formData },
-        );
-        if (!res.ok) alert(`Upload failed: ${(await res.json()).error}`);
-      } catch (err) {
-        alert(`Upload failed: ${err.message}`);
-      }
-    }
-    this.loadDir(this.currentPath);
-  }
-}
-
-// =============================================================================
 // STATS MANAGER
 // =============================================================================
 
@@ -3698,6 +3459,7 @@ class TerminalManager {
     this.notificationsEnabled = true;
     this.clientInstanceId = this.getOrCreateClientInstanceId();
     this.commandPaletteGitCache = new Map();
+    this.rightSurface = "none";
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3803,7 +3565,9 @@ class TerminalManager {
 
     // Initialize sub-managers
     this.extraKeys = new ExtraKeysManager(this);
-    this.fileManager = new FileManager();
+    const FileExplorerCtor =
+      window.FileExplorerController?.FileExplorerController;
+    this.fileExplorer = FileExplorerCtor ? new FileExplorerCtor() : null;
 
     // Mobile swipe support
     this.setupMobileSwipe();
@@ -4009,11 +3773,11 @@ class TerminalManager {
   setupToolbarActions() {
     // Handle all buttons with data-action attribute (visible toolbar buttons)
     document.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const action = btn.dataset.action;
         if (action === "linked-view") this.createLinkedView();
-        if (action === "file-manager") this.fileManager.open();
-        else if (action === "git") window.gitManager?.toggle();
+        else if (action === "file-manager") await this.openFileExplorer();
+        else if (action === "git") await this.openGitPanel();
         else if (action === "clipboard") this.clipboardManager.togglePanel();
         else if (action === "copy") this.copySelection();
         else if (action === "paste") this.pasteClipboard();
@@ -4147,7 +3911,7 @@ class TerminalManager {
         group: "Actions",
         keywords: ["files", "explorer", "browse"],
         priority: 40,
-        run: () => this.fileManager.open(),
+        run: () => this.openFileExplorer(),
       },
       {
         id: "open-clipboard",
@@ -4405,33 +4169,9 @@ class TerminalManager {
     const nextCwd = String(cwd || "").trim();
     if (!nextCwd) return;
 
-    const folderName = prompt("Folder name:");
-    if (!folderName) return;
-
-    const joinPath =
-      window.NavigationSurface?.joinPath ||
-      ((base, child) => `${String(base).replace(/\/+$/, "")}/${child}`);
-    const targetPath = joinPath(nextCwd, folderName);
-
-    try {
-      const res = await fetch(
-        `/api/files/mkdir?path=${encodeURIComponent(targetPath)}`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        alert(payload.error || "Failed");
-        return;
-      }
-
-      if (
-        !document.getElementById("file-modal")?.classList.contains("hidden") &&
-        this.fileManager?.currentPath === nextCwd
-      ) {
-        this.fileManager.loadDir(nextCwd);
-      }
-    } catch (err) {
-      alert("Failed: " + err.message);
+    if (this.fileExplorer?.createFolder) {
+      const { workspaceId } = this.getActiveWorkspaceContext();
+      await this.fileExplorer.createFolder(nextCwd, null, workspaceId);
     }
   }
 
@@ -4958,9 +4698,102 @@ class TerminalManager {
     document.getElementById("help-modal")?.classList.add("hidden");
   }
 
-  openGitPanel() {
-    const cwd = this.getActiveTerminal()?.cwd || this.directoryInput?.value || "~";
+  getActiveWorkspaceContext() {
+    const active = this.getActiveTerminal();
+    return {
+      workspaceId: active?.workspaceId || null,
+      cwd: active?.cwd || this.directoryInput?.value || "/",
+    };
+  }
+
+  getRightSurface() {
+    const filesOpen = Boolean(this.fileExplorer?.isOpen);
+    const gitOpen = Boolean(
+      window.gitManager &&
+        !window.gitManager.panel?.classList.contains("hidden"),
+    );
+    const nextSurface = filesOpen ? "files" : gitOpen ? "git" : "none";
+    this.rightSurface = nextSurface;
+    return nextSurface;
+  }
+
+  async openFileExplorer() {
+    if (!this.fileExplorer) return null;
+
+    const { workspaceId, cwd } = this.getActiveWorkspaceContext();
+    if (!workspaceId) return null;
+
+    if (
+      window.gitManager &&
+      !window.gitManager.panel?.classList.contains("hidden")
+    ) {
+      window.gitManager.hide();
+    }
+
+    const targetPath = this.fileExplorer.openForWorkspace(workspaceId, cwd);
+    this.rightSurface = "files";
+
+    if (targetPath) {
+      await this.fileExplorer.loadDir(targetPath, workspaceId);
+    }
+
+    return targetPath;
+  }
+
+  closeFileExplorer() {
+    this.fileExplorer?.close();
+    this.getRightSurface();
+  }
+
+  async toggleFileExplorer() {
+    if (this.getRightSurface() === "files") {
+      this.closeFileExplorer();
+      return;
+    }
+    await this.openFileExplorer();
+  }
+
+  async openGitPanel() {
+    const { cwd } = this.getActiveWorkspaceContext();
+    if (!cwd) return null;
+
+    if (this.fileExplorer?.isOpen) {
+      this.fileExplorer.close();
+    }
+
+    this.rightSurface = "git";
     return window.gitManager?.show(cwd);
+  }
+
+  closeGitPanel() {
+    window.gitManager?.hide();
+    this.getRightSurface();
+  }
+
+  async toggleGitPanel() {
+    if (this.getRightSurface() === "git") {
+      this.closeGitPanel();
+      return;
+    }
+    await this.openGitPanel();
+  }
+
+  async syncRightSurfaceForWorkspace() {
+    const surface = this.getRightSurface();
+    const { workspaceId, cwd } = this.getActiveWorkspaceContext();
+    if (!workspaceId) return;
+
+    if (surface === "files") {
+      const targetPath = this.fileExplorer?.openForWorkspace(workspaceId, cwd);
+      if (targetPath) {
+        await this.fileExplorer.loadDir(targetPath, workspaceId);
+      }
+      return;
+    }
+
+    if (surface === "git") {
+      await window.gitManager?.show(cwd);
+    }
   }
 
   setupKeyboardShortcuts() {
@@ -6588,6 +6421,7 @@ class TerminalManager {
     }
     this.updateLinkedViewButton();
     this.refreshCommandPalette();
+    void this.syncRightSurfaceForWorkspace();
   }
 
   switchToIndex(index) {
