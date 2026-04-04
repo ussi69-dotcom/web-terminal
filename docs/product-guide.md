@@ -25,7 +25,7 @@ The current product is shaped by four influences:
 - Each top tab is a workspace
 - A workspace can contain one or more split terminals
 - Tabs can be merged by drag and drop
-- A command palette can switch workspaces and trigger advanced actions from one place
+- A command palette acts as a jump layer for workspace switching, recent workspace reopen, directory jumps, cwd reveal in Files, and branch checkout
 - Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
 - Mobile uses a bottom action bar with Files, Git, Paste, and More
 - More opens the overflow surface for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
@@ -79,7 +79,7 @@ DeckTerm includes git-focused backend APIs and UI support for lightweight repo o
 - stage / unstage
 - commit
 - branches
-- branch switching from the command palette
+- explicit branch checkout from the command palette
 - checkout
 - log
 - show
@@ -114,7 +114,7 @@ Secondary navigation surfaces:
 
 - desktop files explorer as a persistent right-side sidebar
 - mobile files explorer as a full overlay
-- command palette for discovery, workspace switching, folder creation, and branch switching
+- command palette for jump-layer navigation, folder creation, cwd reveal in Files, and branch checkout
 - overflow surface behind More for clipboard and utility actions
 
 Modal and support surfaces:

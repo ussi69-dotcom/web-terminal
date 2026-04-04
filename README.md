@@ -62,12 +62,12 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - Up to 10 concurrent terminals by default
 - New workspace tabs and split terminals inside a workspace
 - Drag one workspace tab onto another to merge them
-- Command palette for cross-workspace navigation, quick actions, folder creation, and branch switching via `Ctrl+Shift+P`
+- Command palette for workspace switching, reopening recent workspaces, directory jumps, cwd reveal in Files, and branch checkout via `Ctrl+Shift+P`
 - Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
 - Mobile uses a bottom action bar for Files, Git, Paste, and More
 - More opens overflow actions for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
 - Desktop Files opens as a persistent right-side explorer while mobile Files opens as an overlay
-- Command palette stays focused on discovery and advanced commands rather than basic navigation
+- Command palette stays focused on jump-layer and advanced commands rather than basic visible navigation
 - Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
 - Linked view for tmux-backed sessions
 

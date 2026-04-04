@@ -4825,6 +4825,29 @@ class TerminalManager {
     return true;
   }
 
+  async focusGitBranchCheckoutFromPalette(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+
+    const gitContext = await this.ensureCommandPaletteGitContext(targetCwd);
+
+    requestAnimationFrame(async () => {
+      if (!this.commandPalette) return;
+      this.closeToolsSheet();
+      this.commandPalette.open({
+        ...this.getCommandPaletteContext(),
+        cwd: targetCwd,
+        gitBranches: gitContext.gitBranches || [],
+        currentGitBranch: gitContext.currentGitBranch || "",
+        isGitRepo: Boolean(gitContext.isGitRepo),
+      });
+      this.commandPalette?.setQuery("branch");
+      this.syncSurfaceButtonState();
+    });
+
+    return true;
+  }
+
   registerCommandPaletteActions() {
     if (!this.commandPaletteRegistry) return;
     const NavigationSurface = window.NavigationSurface || {};
@@ -4981,6 +5004,20 @@ class TerminalManager {
           meta: [context.cwd],
           priority: 38,
           run: () => this.revealCurrentCwdInFilesFromPalette(context.cwd),
+        });
+      }
+
+      if (context.isGitRepo && context.cwd) {
+        contextualActions.push({
+          id: `checkout-git-branch:${context.cwd}`,
+          title: "Checkout Git Branch",
+          group: "Contextual",
+          keywords: ["checkout", "branch", "git", context.cwd],
+          meta: context.currentGitBranch
+            ? [`Current: ${context.currentGitBranch}`]
+            : null,
+          priority: 37,
+          run: () => this.focusGitBranchCheckoutFromPalette(context.cwd),
         });
       }
 
