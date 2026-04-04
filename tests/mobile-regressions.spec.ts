@@ -2,7 +2,9 @@ import path from "node:path";
 import {
   test,
   expect,
+  expectExactButtons,
   resetAppState,
+  openLayoutEditor,
   waitForTerminal,
   resizeWindow,
 } from "./fixtures";
@@ -70,18 +72,9 @@ test.describe("Mobile regressions", () => {
     page,
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
-    const toolbar = page.locator(".toolbar");
 
     await expect(mobileBar).toBeVisible();
-    await expect(mobileBar.getByRole("button", { name: "Files" })).toBeVisible();
-    await expect(mobileBar.getByRole("button", { name: "Git" })).toBeVisible();
-    await expect(mobileBar.getByRole("button", { name: "Paste" })).toBeVisible();
-    await expect(mobileBar.getByRole("button", { name: "More" })).toBeVisible();
-
-    await expect(toolbar.getByRole("button", { name: "Files" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "Git" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "Paste" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "More" })).toHaveCount(0);
+    await expectExactButtons(mobileBar, ["Files", "Git", "Paste", "More"]);
   });
 
   test("customizes the mobile pinned actions from More and moves them back to More", async ({
@@ -89,30 +82,22 @@ test.describe("Mobile regressions", () => {
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
 
-    await page.getByRole("button", { name: "More" }).click();
-    await expect(page.locator("#tools-sheet")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Edit layout" }).click();
-    await page.getByRole("button", { name: "Mobile" }).click();
+    const toolsSheet = await openLayoutEditor(page, "Mobile");
     await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Available in More" }),
     ).toBeVisible();
 
-    const clipboardAction = page
-      .locator("#tools-sheet")
-      .getByRole("button", { name: "Clipboard" });
-    const pinnedZone = page.locator("[data-layout-dropzone='pinned']");
-    const availableZone = page.locator("[data-layout-dropzone='available']");
+    const clipboardAction = toolsSheet.getByRole("button", { name: "Clipboard" });
+    const pinnedZone = toolsSheet.locator("[data-layout-dropzone='pinned']");
+    const availableZone = toolsSheet.locator("[data-layout-dropzone='available']");
 
     await clipboardAction.dragTo(pinnedZone);
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
 
-    await mobileBar
-      .getByRole("button", { name: "Clipboard" })
-      .dragTo(availableZone);
+    await toolsSheet.getByRole("button", { name: "Clipboard" }).dragTo(availableZone);
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
+    await expect(toolsSheet.getByRole("button", { name: "Clipboard" })).toBeVisible();
 
     await page.getByRole("button", { name: "Done" }).click();
     await page.getByRole("button", { name: "More" }).click();

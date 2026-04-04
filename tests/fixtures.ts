@@ -1,4 +1,4 @@
-import { test as base, expect, Page } from "@playwright/test";
+import { test as base, expect, Locator, Page } from "@playwright/test";
 import { execSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -342,6 +342,29 @@ export async function createWorkspaceInDir(page: Page, cwd: string) {
 export async function openToolsSheet(page: Page) {
   await page.click("#toolbar-toggle");
   await expect(page.locator("#tools-sheet")).toBeVisible();
+}
+
+export async function openLayoutEditor(
+  page: Page,
+  mode: "Desktop" | "Mobile",
+) {
+  const toolsSheet = page.locator("#tools-sheet");
+
+  await page.getByRole("button", { name: "More" }).click();
+  await expect(toolsSheet).toBeVisible();
+  await page.getByRole("button", { name: "Edit layout" }).click();
+  await page.getByRole("button", { name: mode }).click();
+
+  return toolsSheet;
+}
+
+export async function expectExactButtons(
+  container: Locator,
+  labels: string[],
+) {
+  const buttons = container.getByRole("button");
+  await expect(buttons).toHaveCount(labels.length);
+  await expect(buttons).toHaveText(labels);
 }
 
 /**
