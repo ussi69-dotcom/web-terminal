@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   ACTION_LAYOUT_STORAGE_KEY,
+  ACTION_RECENT_WORKSPACES_STORAGE_KEY,
   buildGitBranchActions,
   createNewFolderAction,
   createOpenGitBranchesAction,
@@ -14,12 +15,17 @@ import {
   getOverflowActionIds,
   joinPath,
   loadActionLayoutState,
+  loadRecentWorkspaceEntries,
   pinLayoutAction,
+  resetRecentWorkspaceEntries,
   reorderLayoutAction,
   resetActionLayoutState,
   saveActionLayoutState,
+  saveRecentWorkspaceEntries,
+  upsertRecentWorkspaceEntry,
   unpinLayoutAction,
   validateActionLayoutState,
+  validateRecentWorkspaceEntry,
 } from "./navigation-surface";
 
 function createMemoryStorage(initial = {}) {
@@ -129,6 +135,16 @@ test("loads defaults when storage is empty or invalid", () => {
   );
 });
 
+test("loads an empty recent workspace list when storage is empty or invalid", () => {
+  const emptyStorage = createMemoryStorage();
+  expect(loadRecentWorkspaceEntries(emptyStorage)).toEqual([]);
+
+  const invalidStorage = createMemoryStorage({
+    [ACTION_RECENT_WORKSPACES_STORAGE_KEY]: "{",
+  });
+  expect(loadRecentWorkspaceEntries(invalidStorage)).toEqual([]);
+});
+
 test("validates layout state by filtering unknown ids and ignoring more", () => {
   expect(
     validateActionLayoutState({
@@ -177,6 +193,105 @@ test("save and reset layout state round trip through storage", () => {
 
   resetActionLayoutState(storage);
   expect(loadActionLayoutState(storage)).toEqual(getDefaultActionLayoutState());
+});
+
+test("validates recent workspace entries by normalizing cwd, labels, and timestamps", () => {
+  expect(
+    validateRecentWorkspaceEntry({
+      cwd: " /tmp/project-a/ ",
+      label: "project-a",
+      lastUsedAt: "1712265600000",
+    }),
+  ).toEqual({
+    cwd: "/tmp/project-a",
+    label: "project-a",
+    lastUsedAt: 1712265600000,
+  });
+
+  expect(validateRecentWorkspaceEntry({ cwd: "", label: "x" })).toBeNull();
+  expect(validateRecentWorkspaceEntry(null)).toBeNull();
+});
+
+test("upsertRecentWorkspaceEntry deduplicates by cwd and preserves the latest label snapshot", () => {
+  const entries = [
+    {
+      cwd: "/tmp/project-a",
+      label: "project-a",
+      lastUsedAt: 1712265600000,
+    },
+    {
+      cwd: "/tmp/project-b",
+      label: "project-b",
+      lastUsedAt: 1712265700000,
+    },
+  ];
+
+  expect(
+    upsertRecentWorkspaceEntry(entries, {
+      cwd: "/tmp/project-a",
+      label: "project-a-renamed",
+      lastUsedAt: 1712265800000,
+    }),
+  ).toEqual([
+    {
+      cwd: "/tmp/project-a",
+      label: "project-a-renamed",
+      lastUsedAt: 1712265800000,
+    },
+    {
+      cwd: "/tmp/project-b",
+      label: "project-b",
+      lastUsedAt: 1712265700000,
+    },
+  ]);
+});
+
+test("save and reset recent workspace entries round trip through storage", () => {
+  const storage = createMemoryStorage();
+  const entries = [
+    {
+      cwd: "/tmp/project-b",
+      label: "project-b",
+      lastUsedAt: 1712265700000,
+    },
+    {
+      cwd: "/tmp/project-a",
+      label: "project-a",
+      lastUsedAt: 1712265600000,
+    },
+  ];
+
+  saveRecentWorkspaceEntries(storage, entries);
+  expect(loadRecentWorkspaceEntries(storage)).toEqual(entries);
+
+  resetRecentWorkspaceEntries(storage);
+  expect(loadRecentWorkspaceEntries(storage)).toEqual([]);
+});
+
+test("recent workspace entries sort newest first and trim to a fixed limit", () => {
+  const seeded = Array.from({ length: 12 }, (_, index) => ({
+    cwd: `/tmp/project-${String(index).padStart(2, "0")}`,
+    label: `project-${index}`,
+    lastUsedAt: 1712265600000 + index * 1000,
+  }));
+
+  const trimmed = loadRecentWorkspaceEntries(
+    createMemoryStorage({
+      [ACTION_RECENT_WORKSPACES_STORAGE_KEY]: JSON.stringify(seeded),
+    }),
+  );
+
+  expect(trimmed).toHaveLength(10);
+  expect(trimmed[0]).toEqual({
+    cwd: "/tmp/project-11",
+    label: "project-11",
+    lastUsedAt: 1712265600000 + 11 * 1000,
+  });
+  expect(trimmed[9]).toEqual({
+    cwd: "/tmp/project-02",
+    label: "project-2",
+    lastUsedAt: 1712265600000 + 2 * 1000,
+  });
 });
 
 test("desktop customizable action ids keep more fixed outside the editor", () => {

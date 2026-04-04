@@ -3,6 +3,8 @@ function normalizeCwd(value) {
 }
 
 const ACTION_LAYOUT_STORAGE_KEY = "deckterm.actionLayout.v1";
+const ACTION_RECENT_WORKSPACES_STORAGE_KEY = "deckterm.recentWorkspaces.v1";
+const ACTION_RECENT_WORKSPACES_MAX_ENTRIES = 10;
 
 const NAVIGATION_SURFACE_HIERARCHY = Object.freeze({
   desktopPrimary: Object.freeze(["files", "git", "palette", "more"]),
@@ -177,6 +179,126 @@ function saveActionLayoutState(storage, value) {
 
 function resetActionLayoutState(storage) {
   return saveActionLayoutState(storage, getDefaultActionLayoutState());
+}
+
+function validateRecentWorkspaceEntry(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const cwd = normalizeRecentWorkspaceCwd(value.cwd);
+  if (!cwd) {
+    return null;
+  }
+
+  const label = normalizeCwd(value.label) || cwd;
+  const lastUsedAt = Number(value.lastUsedAt);
+  if (!Number.isFinite(lastUsedAt)) {
+    return null;
+  }
+
+  return {
+    cwd,
+    label,
+    lastUsedAt,
+  };
+}
+
+function normalizeRecentWorkspaceCwd(value) {
+  const cwd = normalizeCwd(value);
+  if (!cwd) {
+    return "";
+  }
+
+  if (cwd === "/") {
+    return cwd;
+  }
+
+  return cwd.replace(/\/+$/, "");
+}
+
+function sortRecentWorkspaceEntries(entries) {
+  return [...entries].sort((left, right) => {
+    if (right.lastUsedAt !== left.lastUsedAt) {
+      return right.lastUsedAt - left.lastUsedAt;
+    }
+
+    return left.cwd.localeCompare(right.cwd);
+  });
+}
+
+function limitRecentWorkspaceEntries(entries, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+  const limit = Math.max(0, Number(maxEntries) || 0);
+  return entries.slice(0, limit);
+}
+
+function normalizeRecentWorkspaceEntries(value, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const byCwd = new Map();
+  for (const entry of value) {
+    const normalized = validateRecentWorkspaceEntry(entry);
+    if (!normalized) continue;
+
+    const current = byCwd.get(normalized.cwd);
+    if (!current || normalized.lastUsedAt >= current.lastUsedAt) {
+      byCwd.set(normalized.cwd, normalized);
+    }
+  }
+
+  return limitRecentWorkspaceEntries(
+    sortRecentWorkspaceEntries([...byCwd.values()]),
+    maxEntries,
+  );
+}
+
+function loadRecentWorkspaceEntries(storage, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+  const raw = readStorageValue(storage, ACTION_RECENT_WORKSPACES_STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    return normalizeRecentWorkspaceEntries(JSON.parse(raw), maxEntries);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentWorkspaceEntries(
+  storage,
+  value,
+  maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+) {
+  const next = normalizeRecentWorkspaceEntries(value, maxEntries);
+  writeStorageValue(
+    storage,
+    ACTION_RECENT_WORKSPACES_STORAGE_KEY,
+    JSON.stringify(next),
+  );
+  return next;
+}
+
+function resetRecentWorkspaceEntries(storage) {
+  return saveRecentWorkspaceEntries(storage, []);
+}
+
+function upsertRecentWorkspaceEntry(
+  entries,
+  value,
+  maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+) {
+  const normalized = validateRecentWorkspaceEntry(value);
+  if (!normalized) {
+    return normalizeRecentWorkspaceEntries(entries, maxEntries);
+  }
+
+  const next = Array.isArray(entries) ? entries.slice() : [];
+  const filtered = next.filter((entry) => validateRecentWorkspaceEntry(entry)?.cwd !== normalized.cwd);
+  filtered.unshift(normalized);
+  return normalizeRecentWorkspaceEntries(filtered, maxEntries);
 }
 
 function getDesktopCustomizableActionIds() {
@@ -377,6 +499,8 @@ function buildGitBranchActions(context = {}, handlers = {}) {
 const NavigationSurfaceModule = {
   ACTION_LAYOUT_DEFAULTS,
   ACTION_LAYOUT_STORAGE_KEY,
+  ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+  ACTION_RECENT_WORKSPACES_STORAGE_KEY,
   buildGitBranchActions,
   createNewFolderAction,
   createOpenGitBranchesAction,
@@ -392,12 +516,20 @@ const NavigationSurfaceModule = {
   getOverflowActionIds,
   joinPath,
   loadActionLayoutState,
+  loadRecentWorkspaceEntries,
   pinLayoutAction,
+  resetRecentWorkspaceEntries,
   reorderLayoutAction,
   resetActionLayoutState,
   saveActionLayoutState,
+  saveRecentWorkspaceEntries,
+  sortRecentWorkspaceEntries,
+  limitRecentWorkspaceEntries,
+  normalizeRecentWorkspaceEntries,
+  upsertRecentWorkspaceEntry,
   unpinLayoutAction,
   validateActionLayoutState,
+  validateRecentWorkspaceEntry,
 };
 
 if (typeof window !== "undefined") {
@@ -411,6 +543,10 @@ if (typeof module !== "undefined" && module.exports) {
 if (typeof exports !== "undefined") {
   exports.ACTION_LAYOUT_DEFAULTS = ACTION_LAYOUT_DEFAULTS;
   exports.ACTION_LAYOUT_STORAGE_KEY = ACTION_LAYOUT_STORAGE_KEY;
+  exports.ACTION_RECENT_WORKSPACES_MAX_ENTRIES =
+    ACTION_RECENT_WORKSPACES_MAX_ENTRIES;
+  exports.ACTION_RECENT_WORKSPACES_STORAGE_KEY =
+    ACTION_RECENT_WORKSPACES_STORAGE_KEY;
   exports.buildGitBranchActions = buildGitBranchActions;
   exports.createNewFolderAction = createNewFolderAction;
   exports.createOpenGitBranchesAction = createOpenGitBranchesAction;
@@ -426,10 +562,18 @@ if (typeof exports !== "undefined") {
   exports.getOverflowActionIds = getOverflowActionIds;
   exports.joinPath = joinPath;
   exports.loadActionLayoutState = loadActionLayoutState;
+  exports.loadRecentWorkspaceEntries = loadRecentWorkspaceEntries;
   exports.pinLayoutAction = pinLayoutAction;
+  exports.resetRecentWorkspaceEntries = resetRecentWorkspaceEntries;
   exports.reorderLayoutAction = reorderLayoutAction;
   exports.resetActionLayoutState = resetActionLayoutState;
   exports.saveActionLayoutState = saveActionLayoutState;
+  exports.saveRecentWorkspaceEntries = saveRecentWorkspaceEntries;
+  exports.sortRecentWorkspaceEntries = sortRecentWorkspaceEntries;
+  exports.limitRecentWorkspaceEntries = limitRecentWorkspaceEntries;
+  exports.normalizeRecentWorkspaceEntries = normalizeRecentWorkspaceEntries;
+  exports.upsertRecentWorkspaceEntry = upsertRecentWorkspaceEntry;
   exports.unpinLayoutAction = unpinLayoutAction;
   exports.validateActionLayoutState = validateActionLayoutState;
+  exports.validateRecentWorkspaceEntry = validateRecentWorkspaceEntry;
 }
