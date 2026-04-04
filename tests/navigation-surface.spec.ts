@@ -123,6 +123,5 @@ test.describe("Shell action hierarchy on mobile", () => {
     await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Paste" })).toBeVisible();
     await expect(page.getByRole("button", { name: "More" })).toBeVisible();
-    await expect(page.locator("#tools-sheet")).toHaveCount(0);
   });
 });

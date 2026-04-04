@@ -63,12 +63,19 @@ test.describe("Mobile regressions", () => {
   test("keeps primary actions in a dedicated bottom action bar", async ({
     page,
   }) => {
-    await expect(page.locator("#mobile-action-bar")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Files" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Paste" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
-    await expect(page.locator(".toolbar-row-2")).toHaveCount(0);
+    const mobileBar = page.locator("#mobile-action-bar");
+    const toolbar = page.locator(".toolbar");
+
+    await expect(mobileBar).toBeVisible();
+    await expect(mobileBar.getByRole("button", { name: "Files" })).toBeVisible();
+    await expect(mobileBar.getByRole("button", { name: "Git" })).toBeVisible();
+    await expect(mobileBar.getByRole("button", { name: "Paste" })).toBeVisible();
+    await expect(mobileBar.getByRole("button", { name: "More" })).toBeVisible();
+
+    await expect(toolbar.getByRole("button", { name: "Files" })).toHaveCount(0);
+    await expect(toolbar.getByRole("button", { name: "Git" })).toHaveCount(0);
+    await expect(toolbar.getByRole("button", { name: "Paste" })).toHaveCount(0);
+    await expect(toolbar.getByRole("button", { name: "More" })).toHaveCount(0);
   });
 
   test("touch input helpers stay visually hidden at the cursor", async ({
