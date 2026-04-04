@@ -312,6 +312,116 @@ const normalizeWorkspacePorts = (ports) => {
   ].sort((left, right) => left - right);
 };
 
+const ACTION_BUTTON_CONFIG = Object.freeze({
+  files: Object.freeze({
+    label: "Files",
+    icon: "folder-open",
+    action: "file-manager",
+    desktopId: "desktop-files-btn",
+    mobileId: "mobile-files-btn",
+    toolsId: "tools-sheet-files",
+    desktopTone: "primary",
+  }),
+  git: Object.freeze({
+    label: "Git",
+    icon: "git-branch",
+    action: "git",
+    desktopId: "desktop-git-btn",
+    mobileId: "mobile-git-btn",
+    toolsId: "tools-sheet-git",
+    desktopTone: "primary",
+  }),
+  palette: Object.freeze({
+    label: "Palette",
+    icon: "more-horizontal",
+    action: "palette",
+    desktopId: "command-palette-trigger",
+    toolsId: "tools-sheet-palette",
+    desktopTone: "secondary",
+  }),
+  clipboard: Object.freeze({
+    label: "Clipboard",
+    icon: "clipboard",
+    action: "clipboard",
+    toolsId: "tools-sheet-clipboard",
+    desktopTone: "secondary",
+  }),
+  "toggle-extra-keys": Object.freeze({
+    label: "Extra Keys",
+    icon: "keyboard",
+    action: "toggle-extra-keys",
+    toolsId: "tools-sheet-extra-keys",
+    desktopTone: "secondary",
+  }),
+  "wrap-lines": Object.freeze({
+    label: "Wrap",
+    icon: "wrap-text",
+    action: "wrap-lines",
+    toolsId: "tools-sheet-wrap",
+    desktopTone: "secondary",
+  }),
+  fullscreen: Object.freeze({
+    label: "Fullscreen",
+    icon: "maximize-2",
+    action: "fullscreen",
+    toolsId: "tools-sheet-fullscreen",
+    desktopTone: "secondary",
+  }),
+  "font-decrease": Object.freeze({
+    label: "Font -",
+    icon: "zoom-out",
+    action: "font-decrease",
+    toolsId: "tools-sheet-font-decrease",
+    desktopTone: "secondary",
+  }),
+  "font-increase": Object.freeze({
+    label: "Font +",
+    icon: "zoom-in",
+    action: "font-increase",
+    toolsId: "tools-sheet-font-increase",
+    desktopTone: "secondary",
+  }),
+  help: Object.freeze({
+    label: "Help",
+    icon: "help-circle",
+    action: "help",
+    toolsId: "tools-sheet-help",
+    desktopTone: "secondary",
+  }),
+  "linked-view": Object.freeze({
+    label: "Linked View",
+    icon: "copy-plus",
+    action: "linked-view",
+    toolsId: "tools-sheet-linked-view",
+    desktopTone: "secondary",
+  }),
+  paste: Object.freeze({
+    label: "Paste",
+    icon: "clipboard-paste",
+    action: "paste",
+    mobileId: "mobile-paste-btn",
+    toolsId: "tools-sheet-paste",
+    desktopTone: "secondary",
+  }),
+  copy: Object.freeze({
+    label: "Copy",
+    icon: "copy",
+    action: "copy",
+    toolsId: "tools-sheet-copy",
+    desktopTone: "secondary",
+  }),
+  more: Object.freeze({
+    label: "More",
+    icon: "ellipsis",
+    action: "toggle-tools-sheet",
+    desktopId: "desktop-more-btn",
+    mobileId: "mobile-more-btn",
+    desktopTone: "secondary",
+  }),
+});
+
+const FIXED_TOOLS_SHEET_ACTION_IDS = Object.freeze(["copy"]);
+
 // =============================================================================
 // RECONNECTING WEBSOCKET
 // =============================================================================
@@ -3477,6 +3587,11 @@ class TerminalManager {
     this.actionLayoutState = null;
     this.layoutEditorMode = "desktop";
     this.layoutEditorOpen = false;
+    this.layoutDragState = null;
+    this.handleSurfaceActionClick = this.handleSurfaceActionClick.bind(this);
+    this.handleLayoutDragMove = this.handleLayoutDragMove.bind(this);
+    this.handleLayoutDragEnd = this.handleLayoutDragEnd.bind(this);
+    this.handleLayoutDragCancel = this.handleLayoutDragCancel.bind(this);
 
     this.tileManager = new TileManager(this.container);
     this.clipboardManager = new ClipboardManager();
@@ -3586,6 +3701,11 @@ class TerminalManager {
     const FileExplorerCtor =
       window.FileExplorerController?.FileExplorerController;
     this.fileExplorer = FileExplorerCtor ? new FileExplorerCtor() : null;
+    platformDetector.onChange(() => {
+      this.renderActionSurfaces();
+      this.syncSurfaceButtonState();
+    });
+    this.renderActionSurfaces();
 
     // Mobile swipe support
     this.setupMobileSwipe();
@@ -3789,30 +3909,221 @@ class TerminalManager {
   }
 
   setupToolbarActions() {
-    // Handle all buttons with data-action attribute (visible toolbar buttons)
-    document.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const action = btn.dataset.action;
-        if (action === "linked-view") this.createLinkedView();
-        else if (action === "file-manager") await this.openFileExplorer();
-        else if (action === "git") await this.openGitPanel();
-        else if (action === "toggle-tools-sheet") this.toggleToolsSheet();
-        else if (action === "open-dir-picker") this.openDirPicker();
-        else if (action === "clipboard") this.clipboardManager.togglePanel();
-        else if (action === "copy") this.copySelection();
-        else if (action === "paste") this.pasteClipboard();
-        else if (action === "font-decrease") this.changeFontSize(-1);
-        else if (action === "font-increase") this.changeFontSize(1);
-        else if (action === "toggle-extra-keys") this.extraKeys?.toggle();
-        else if (action === "fullscreen") this.toggleFullscreen();
-        else if (action === "wrap-lines") this.toggleWrapLines();
-        else if (action === "help") this.openHelp();
+    document.addEventListener("click", this.handleSurfaceActionClick);
+  }
 
-        if (btn.closest("#tools-sheet")) {
-          this.closeToolsSheet();
-        }
-      });
+  getActiveChromeMode() {
+    return platformDetector.smallScreen ? "mobile" : "desktop";
+  }
+
+  getActionButtonConfig(actionId) {
+    return ACTION_BUTTON_CONFIG[actionId] || null;
+  }
+
+  getLayoutPinnedActionIds(mode) {
+    const normalizedMode = mode === "mobile" ? "mobile" : "desktop";
+    const state = this.getActionLayoutState();
+    const key = normalizedMode === "mobile" ? "mobilePinned" : "desktopPinned";
+    return Array.isArray(state[key]) ? [...state[key]] : [];
+  }
+
+  getToolsSheetActionIds(mode = this.getActiveChromeMode()) {
+    const available =
+      this.navigationSurface.getAvailableActionIds?.(
+        mode,
+        this.getLayoutPinnedActionIds(mode),
+      ) || [];
+    const actionIds = [...available];
+
+    FIXED_TOOLS_SHEET_ACTION_IDS.forEach((actionId) => {
+      if (!actionIds.includes(actionId)) {
+        actionIds.push(actionId);
+      }
     });
+
+    return actionIds.filter((actionId) => this.getActionButtonConfig(actionId));
+  }
+
+  getPrimaryActionIds(mode) {
+    return [...this.getLayoutPinnedActionIds(mode), "more"].filter((actionId) =>
+      this.getActionButtonConfig(actionId),
+    );
+  }
+
+  getActionButtonId(actionId, surface) {
+    const config = this.getActionButtonConfig(actionId);
+    if (!config) return null;
+    if (surface === "desktop-primary") return config.desktopId || null;
+    if (surface === "mobile-primary") return config.mobileId || null;
+    if (surface === "tools-sheet") return config.toolsId || null;
+    return null;
+  }
+
+  createActionButton(actionId, surface, density = "normal") {
+    const config = this.getActionButtonConfig(actionId);
+    if (!config) return null;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = config.action;
+    button.dataset.actionId = actionId;
+    button.dataset.actionSurface = surface;
+    button.dataset.density = density;
+
+    const elementId = this.getActionButtonId(actionId, surface);
+    if (elementId) {
+      button.id = elementId;
+    }
+
+    const label = config.label;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+
+    if (surface === "desktop-primary") {
+      const toneClass =
+        config.desktopTone === "primary"
+          ? "toolbar-action-btn-primary"
+          : "toolbar-action-btn-secondary";
+      button.className = `toolbar-action-btn ${toneClass}`;
+      if (actionId === "palette") {
+        button.setAttribute("aria-haspopup", "dialog");
+        button.setAttribute("aria-controls", "command-palette");
+      }
+    } else if (surface === "mobile-primary") {
+      button.className = "mobile-action-btn";
+    } else {
+      button.className = "tools-sheet-btn";
+    }
+
+    const icon = document.createElement("i");
+    icon.dataset.lucide = config.icon;
+    button.appendChild(icon);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.appendChild(text);
+
+    return button;
+  }
+
+  renderPrimaryActionBar(root, mode, surface) {
+    if (!root) return;
+
+    const actionIds = this.getPrimaryActionIds(mode);
+    const density =
+      this.navigationSurface.getActionDensityTier?.(
+        mode,
+        Math.max(0, actionIds.length - 1),
+      ) || "normal";
+
+    root.replaceChildren();
+    root.dataset.density = density;
+
+    if (surface === "mobile-primary") {
+      root.style.setProperty("--mobile-action-bar-columns", String(actionIds.length || 1));
+    }
+
+    actionIds.forEach((actionId) => {
+      const button = this.createActionButton(actionId, surface, density);
+      if (button) {
+        root.appendChild(button);
+      }
+    });
+  }
+
+  renderToolsSheetGrid() {
+    const grid = this.toolsSheet?.querySelector("#tools-sheet-grid");
+    if (!grid) return;
+
+    const mode = this.getActiveChromeMode();
+    const actionIds = this.getToolsSheetActionIds(mode);
+    grid.replaceChildren();
+    grid.dataset.mode = mode;
+    grid.dataset.empty = actionIds.length > 0 ? "false" : "true";
+
+    actionIds.forEach((actionId) => {
+      const button = this.createActionButton(actionId, "tools-sheet");
+      if (button) {
+        grid.appendChild(button);
+      }
+    });
+  }
+
+  renderActionSurfaces() {
+    this.renderPrimaryActionBar(
+      document.getElementById("desktop-primary-actions"),
+      "desktop",
+      "desktop-primary",
+    );
+    this.renderPrimaryActionBar(
+      document.getElementById("mobile-action-bar"),
+      "mobile",
+      "mobile-primary",
+    );
+    this.renderToolsSheetGrid();
+    initLucideIcons();
+    this.syncSurfaceButtonState();
+    this.updateWrapButton();
+    this.updateLinkedViewButton();
+  }
+
+  syncSurfaceButtonState() {
+    const surface = this.getRightSurface();
+    const moreOpen = Boolean(
+      this.toolsSheet && !this.toolsSheet.classList.contains("hidden"),
+    );
+    const paletteOpen = this.isCommandPaletteOpen();
+
+    document.querySelectorAll("[data-action-id]").forEach((button) => {
+      const actionId = button.dataset.actionId;
+      if (actionId === "files") {
+        button.classList.toggle("active", surface === "files");
+      } else if (actionId === "git") {
+        button.classList.toggle("active", surface === "git");
+      } else if (actionId === "more") {
+        button.classList.toggle("active", moreOpen);
+      } else if (actionId === "palette") {
+        button.classList.toggle("active", paletteOpen);
+      }
+    });
+  }
+
+  async handleSurfaceAction(action, button) {
+    if (action === "linked-view") this.createLinkedView();
+    else if (action === "file-manager") await this.openFileExplorer();
+    else if (action === "git") await this.openGitPanel();
+    else if (action === "toggle-tools-sheet") this.toggleToolsSheet();
+    else if (action === "open-dir-picker") this.openDirPicker();
+    else if (action === "clipboard") this.clipboardManager.togglePanel();
+    else if (action === "copy") this.copySelection();
+    else if (action === "paste") await this.pasteClipboard();
+    else if (action === "font-decrease") this.changeFontSize(-1);
+    else if (action === "font-increase") this.changeFontSize(1);
+    else if (action === "toggle-extra-keys") this.extraKeys?.toggle();
+    else if (action === "fullscreen") this.toggleFullscreen();
+    else if (action === "wrap-lines") this.toggleWrapLines();
+    else if (action === "help") this.openHelp();
+    else if (action === "palette") this.toggleCommandPalette();
+
+    if (
+      button?.closest("#tools-sheet") &&
+      action !== "toggle-tools-sheet" &&
+      action !== "palette"
+    ) {
+      this.closeToolsSheet();
+    }
+
+    if (button?.closest("#tools-sheet") && action === "palette") {
+      this.closeToolsSheet();
+    }
+
+    this.syncSurfaceButtonState();
+  }
+
+  handleSurfaceActionClick(event) {
+    const button = event.target.closest("[data-action]");
+    if (!button || button.disabled) return;
+    void this.handleSurfaceAction(button.dataset.action, button);
   }
 
   getCurrentDirectoryValue() {
@@ -3873,6 +4184,12 @@ class TerminalManager {
       .querySelector("#layout-editor-done")
       ?.addEventListener("click", () => this.closeToolsSheet());
 
+    this.toolsSheet
+      .querySelector("#layout-editor")
+      ?.addEventListener("pointerdown", (event) =>
+        this.handleLayoutChipPointerDown(event),
+      );
+
     this.renderToolsSheetView();
   }
 
@@ -3893,15 +4210,18 @@ class TerminalManager {
     this.toolsSheet.setAttribute("aria-hidden", "false");
     this.setOverflowToggleState(true);
     this.renderToolsSheetView();
+    this.syncSurfaceButtonState();
   }
 
   closeToolsSheet() {
     if (!this.toolsSheet) return;
+    this.cleanupLayoutDrag({ rerender: false });
     this.layoutEditorOpen = false;
     this.toolsSheet.classList.add("hidden");
     this.toolsSheet.setAttribute("aria-hidden", "true");
     this.setOverflowToggleState(false);
     this.renderToolsSheetView();
+    this.syncSurfaceButtonState();
   }
 
   toggleToolsSheet() {
@@ -3914,22 +4234,10 @@ class TerminalManager {
   }
 
   getLayoutActionLabel(actionId) {
-    const labels = {
-      files: "Files",
-      git: "Git",
-      palette: "Palette",
-      paste: "Paste",
-      clipboard: "Clipboard",
-      "toggle-extra-keys": "Extra Keys",
-      "wrap-lines": "Wrap",
-      fullscreen: "Fullscreen",
-      "font-decrease": "Font -",
-      "font-increase": "Font +",
-      help: "Help",
-      "linked-view": "Linked View",
-    };
-
-    return labels[actionId] || actionId.replace(/-/g, " ");
+    return (
+      this.getActionButtonConfig(actionId)?.label ||
+      actionId.replace(/-/g, " ")
+    );
   }
 
   getDefaultLayoutEditorState() {
@@ -3962,6 +4270,7 @@ class TerminalManager {
       ? this.navigationSurface.saveActionLayoutState?.(localStorage, next) ||
         next
       : next;
+    this.renderActionSurfaces();
     return this.actionLayoutState;
   }
 
@@ -3969,6 +4278,7 @@ class TerminalManager {
     this.actionLayoutState =
       this.navigationSurface.resetActionLayoutState?.(localStorage) ||
       this.getDefaultLayoutEditorState();
+    this.renderActionSurfaces();
     return this.actionLayoutState;
   }
 
@@ -4004,6 +4314,7 @@ class TerminalManager {
   renderLayoutEditorChips(container, actionIds, bucket) {
     if (!container) return;
     container.replaceChildren();
+    container.dataset.layoutBucket = bucket;
 
     actionIds.forEach((actionId) => {
       const chip = document.createElement("button");
@@ -4064,6 +4375,7 @@ class TerminalManager {
     if (!this.toolsSheet) return;
     const editing = this.layoutEditorOpen;
     this.toolsSheet.classList.toggle("tools-sheet-editing", editing);
+    this.renderToolsSheetGrid();
 
     const editButton = this.toolsSheet.querySelector("#tools-sheet-edit-layout");
     if (editButton) {
@@ -4087,6 +4399,253 @@ class TerminalManager {
   resetLayoutEditorDefaults() {
     this.resetActionLayoutState();
     this.renderLayoutEditor();
+  }
+
+  handleLayoutChipPointerDown(event) {
+    if (!this.layoutEditorOpen) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    const chip = event.target.closest(".tools-sheet-layout-chip");
+    if (!chip) return;
+
+    const actionId = chip.dataset.layoutActionId;
+    const sourceBucket = chip.dataset.layoutBucket;
+    if (!actionId || !sourceBucket) return;
+
+    event.preventDefault();
+    this.cleanupLayoutDrag({ rerender: false });
+
+    const ghost = document.createElement("div");
+    ghost.className = "tools-sheet-layout-ghost";
+    ghost.textContent = this.getLayoutActionLabel(actionId);
+    document.body.appendChild(ghost);
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "tools-sheet-layout-placeholder";
+    placeholder.setAttribute("aria-hidden", "true");
+
+    chip.classList.add("is-dragging", "drag-source-hidden");
+    chip.insertAdjacentElement("afterend", placeholder);
+
+    this.layoutDragState = {
+      actionId,
+      sourceBucket,
+      mode: this.getLayoutEditorMode(),
+      sourceChip: chip,
+      placeholder,
+      ghost,
+      dropBucket: sourceBucket,
+      dropIndex: null,
+    };
+
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+    document.addEventListener("pointermove", this.handleLayoutDragMove);
+    document.addEventListener("pointerup", this.handleLayoutDragEnd);
+    document.addEventListener("pointercancel", this.handleLayoutDragCancel);
+  }
+
+  getLayoutEditorBucket(bucket) {
+    const suffix = bucket === "available" ? "available" : "pinned";
+    return this.toolsSheet?.querySelector(`#layout-editor-${suffix}-actions`) || null;
+  }
+
+  updateLayoutDragGhostPosition(clientX, clientY) {
+    const ghost = this.layoutDragState?.ghost;
+    if (!ghost) return;
+    ghost.style.left = `${clientX}px`;
+    ghost.style.top = `${clientY}px`;
+  }
+
+  getLayoutDropIndex(container, clientX, clientY) {
+    const chips = Array.from(
+      container.querySelectorAll(".tools-sheet-layout-chip"),
+    ).filter((chip) => !chip.classList.contains("drag-source-hidden"));
+
+    if (chips.length === 0) {
+      return 0;
+    }
+
+    for (let index = 0; index < chips.length; index++) {
+      const rect = chips[index].getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const isAboveRow = clientY < rect.top;
+      const isWithinRow = clientY >= rect.top && clientY <= rect.bottom;
+      if (isAboveRow) {
+        return index;
+      }
+      if (isWithinRow && clientX < midX) {
+        return index;
+      }
+    }
+
+    return chips.length;
+  }
+
+  getLayoutDropContext(clientX, clientY) {
+    const buckets = [
+      { bucket: "pinned", element: this.getLayoutEditorBucket("pinned") },
+      { bucket: "available", element: this.getLayoutEditorBucket("available") },
+    ].filter((entry) => entry.element);
+
+    for (const entry of buckets) {
+      const rect = entry.element.getBoundingClientRect();
+      const inset = 18;
+      const withinBounds =
+        clientX >= rect.left - inset &&
+        clientX <= rect.right + inset &&
+        clientY >= rect.top - inset &&
+        clientY <= rect.bottom + inset;
+
+      if (!withinBounds) continue;
+
+      return {
+        bucket: entry.bucket,
+        element: entry.element,
+        index:
+          entry.bucket === "pinned"
+            ? this.getLayoutDropIndex(entry.element, clientX, clientY)
+            : entry.element.querySelectorAll(".tools-sheet-layout-chip").length,
+      };
+    }
+
+    return null;
+  }
+
+  moveLayoutPlaceholder(container, index) {
+    const placeholder = this.layoutDragState?.placeholder;
+    if (!placeholder || !container) return;
+
+    const chips = Array.from(
+      container.querySelectorAll(".tools-sheet-layout-chip"),
+    ).filter((chip) => !chip.classList.contains("drag-source-hidden"));
+    const target = chips[Math.max(0, Math.min(index, chips.length - 1))];
+
+    if (!target) {
+      container.appendChild(placeholder);
+      return;
+    }
+
+    if (index >= chips.length) {
+      container.appendChild(placeholder);
+    } else {
+      container.insertBefore(placeholder, target);
+    }
+  }
+
+  updateLayoutDragTarget(clientX, clientY) {
+    if (!this.layoutDragState) return;
+
+    this.updateLayoutDragGhostPosition(clientX, clientY);
+
+    const pinnedBucket = this.getLayoutEditorBucket("pinned");
+    const availableBucket = this.getLayoutEditorBucket("available");
+    [pinnedBucket, availableBucket].forEach((bucket) => {
+      bucket?.classList.add("is-drop-target");
+      bucket?.classList.remove("is-drop-active");
+    });
+
+    const dropContext = this.getLayoutDropContext(clientX, clientY);
+    if (!dropContext) {
+      this.layoutDragState.dropBucket = null;
+      this.layoutDragState.dropIndex = null;
+      return;
+    }
+
+    dropContext.element.classList.add("is-drop-active");
+    this.layoutDragState.dropBucket = dropContext.bucket;
+    this.layoutDragState.dropIndex = dropContext.index;
+    this.moveLayoutPlaceholder(dropContext.element, dropContext.index);
+  }
+
+  layoutStatesEqual(left, right) {
+    const leftDesktop = Array.isArray(left?.desktopPinned) ? left.desktopPinned : [];
+    const leftMobile = Array.isArray(left?.mobilePinned) ? left.mobilePinned : [];
+    const rightDesktop = Array.isArray(right?.desktopPinned) ? right.desktopPinned : [];
+    const rightMobile = Array.isArray(right?.mobilePinned) ? right.mobilePinned : [];
+
+    return (
+      leftDesktop.join("\n") === rightDesktop.join("\n") &&
+      leftMobile.join("\n") === rightMobile.join("\n")
+    );
+  }
+
+  applyLayoutDragResult() {
+    if (!this.layoutDragState) return false;
+
+    const { actionId, sourceBucket, dropBucket, dropIndex, mode } =
+      this.layoutDragState;
+    const state = this.getActionLayoutState();
+    let nextState = state;
+
+    if (sourceBucket === "available" && dropBucket === "pinned") {
+      nextState =
+        this.navigationSurface.pinLayoutAction?.(
+          state,
+          mode,
+          actionId,
+          dropIndex,
+        ) || state;
+    } else if (sourceBucket === "pinned" && dropBucket === "available") {
+      nextState =
+        this.navigationSurface.unpinLayoutAction?.(state, mode, actionId) || state;
+    } else if (sourceBucket === "pinned" && dropBucket === "pinned") {
+      nextState =
+        this.navigationSurface.reorderLayoutAction?.(
+          state,
+          mode,
+          actionId,
+          dropIndex,
+        ) || state;
+    }
+
+    if (this.layoutStatesEqual(state, nextState)) {
+      return false;
+    }
+
+    this.setActionLayoutState(nextState);
+    return true;
+  }
+
+  cleanupLayoutDrag({ rerender = true } = {}) {
+    if (!this.layoutDragState) return;
+
+    document.removeEventListener("pointermove", this.handleLayoutDragMove);
+    document.removeEventListener("pointerup", this.handleLayoutDragEnd);
+    document.removeEventListener("pointercancel", this.handleLayoutDragCancel);
+
+    const { sourceChip, placeholder, ghost } = this.layoutDragState;
+    sourceChip?.classList.remove("is-dragging", "drag-source-hidden");
+    placeholder?.remove();
+    ghost?.remove();
+
+    [this.getLayoutEditorBucket("pinned"), this.getLayoutEditorBucket("available")].forEach(
+      (bucket) => {
+        bucket?.classList.remove("is-drop-target", "is-drop-active");
+      },
+    );
+
+    this.layoutDragState = null;
+
+    if (rerender && this.layoutEditorOpen) {
+      this.renderLayoutEditor();
+    }
+  }
+
+  handleLayoutDragMove(event) {
+    if (!this.layoutDragState) return;
+    event.preventDefault();
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+  }
+
+  handleLayoutDragEnd(event) {
+    if (!this.layoutDragState) return;
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+    this.applyLayoutDragResult();
+    this.cleanupLayoutDrag({ rerender: true });
+  }
+
+  handleLayoutDragCancel() {
+    this.cleanupLayoutDrag({ rerender: true });
   }
 
   setupCommandPalette() {
@@ -4114,10 +4673,6 @@ class TerminalManager {
       results,
       registry: this.commandPaletteRegistry,
     });
-
-    document
-      .getElementById("command-palette-trigger")
-      ?.addEventListener("click", () => this.toggleCommandPalette());
 
     root.addEventListener("click", (event) => {
       if (event.target === root) {
@@ -4409,16 +4964,18 @@ class TerminalManager {
     if (!this.commandPalette) return;
     this.closeToolsSheet();
     this.commandPalette.open(await this.buildCommandPaletteContext());
+    this.syncSurfaceButtonState();
   }
 
   closeCommandPalette() {
     this.commandPalette?.close();
+    this.syncSurfaceButtonState();
   }
 
   async toggleCommandPalette() {
     if (!this.commandPalette) return;
     if (this.isCommandPaletteOpen()) {
-      this.commandPalette.close();
+      this.closeCommandPalette();
       return;
     }
     await this.openCommandPalette();
@@ -4578,12 +5135,14 @@ class TerminalManager {
   }
 
   updateLinkedViewButton() {
-    const button = document.getElementById("linked-view-btn");
-    if (!button) return;
     const isAvailable = this.canCreateLinkedView();
-    button.hidden = !isAvailable;
-    button.disabled = !isAvailable;
-    button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+    document
+      .querySelectorAll('#linked-view-btn, [data-action="linked-view"]')
+      .forEach((button) => {
+        button.hidden = !isAvailable;
+        button.disabled = !isAvailable;
+        button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+      });
     this.refreshCommandPalette();
   }
 
@@ -4901,10 +5460,10 @@ class TerminalManager {
   }
 
   updateWrapButton() {
-    const btn = document.getElementById("wrap-lines-btn");
-    if (!btn) return;
-    btn.classList.toggle("active", this.wrapLines);
-    btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+    document.querySelectorAll('[data-action="wrap-lines"]').forEach((btn) => {
+      btn.classList.toggle("active", this.wrapLines);
+      btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+    });
     this.refreshCommandPalette();
   }
 
@@ -4951,6 +5510,7 @@ class TerminalManager {
   openHelp() {
     this.closeToolsSheet();
     document.getElementById("help-modal")?.classList.remove("hidden");
+    this.syncSurfaceButtonState();
   }
 
   closeHelp() {
@@ -4996,12 +5556,14 @@ class TerminalManager {
       await this.fileExplorer.loadDir(targetPath, workspaceId);
     }
 
+    this.syncSurfaceButtonState();
     return targetPath;
   }
 
   closeFileExplorer() {
     this.fileExplorer?.close();
     this.getRightSurface();
+    this.syncSurfaceButtonState();
   }
 
   async toggleFileExplorer() {
@@ -5021,12 +5583,15 @@ class TerminalManager {
     }
 
     this.rightSurface = "git";
-    return window.gitManager?.show(cwd);
+    const result = await window.gitManager?.show(cwd);
+    this.syncSurfaceButtonState();
+    return result;
   }
 
   closeGitPanel() {
     window.gitManager?.hide();
     this.getRightSurface();
+    this.syncSurfaceButtonState();
   }
 
   async toggleGitPanel() {

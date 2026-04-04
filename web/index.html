@@ -56,49 +56,11 @@
             </button>
           </div>
 
-          <div class="desktop-primary-actions" aria-label="Primary actions">
-            <button
-              id="desktop-files-btn"
-              class="toolbar-action-btn toolbar-action-btn-primary"
-              data-action="file-manager"
-              title="Open files explorer"
-              aria-label="Files"
-            >
-              <i data-lucide="folder-open"></i>
-              <span>Files</span>
-            </button>
-            <button
-              id="desktop-git-btn"
-              class="toolbar-action-btn toolbar-action-btn-primary"
-              data-action="git"
-              title="Open git panel"
-              aria-label="Git"
-            >
-              <i data-lucide="git-branch"></i>
-              <span>Git</span>
-            </button>
-            <button
-              id="command-palette-trigger"
-              class="toolbar-action-btn toolbar-action-btn-secondary"
-              title="Actions (Ctrl+Shift+P)"
-              aria-label="Palette"
-              aria-haspopup="dialog"
-              aria-controls="command-palette"
-            >
-              <i data-lucide="more-horizontal"></i>
-              <span>Palette</span>
-            </button>
-          <button
-            id="desktop-more-btn"
-            class="toolbar-action-btn toolbar-action-btn-secondary"
-            title="More"
-            aria-label="More"
-            data-action="toggle-tools-sheet"
-          >
-            <i data-lucide="ellipsis"></i>
-            <span>More</span>
-          </button>
-        </div>
+          <div
+            id="desktop-primary-actions"
+            class="desktop-primary-actions"
+            aria-label="Primary actions"
+          ></div>
 
           <button
             id="linked-view-btn"
@@ -229,96 +191,11 @@
             </section>
           </div>
 
-          <div class="tools-sheet-grid">
-            <button
-              id="tools-sheet-files"
-              class="tools-sheet-btn"
-              data-action="file-manager"
-            >
-              <i data-lucide="folder-open"></i>
-              <span>Files</span>
-            </button>
-            <button
-              id="tools-sheet-clipboard"
-              class="tools-sheet-btn"
-              data-action="clipboard"
-            >
-              <i data-lucide="clipboard"></i>
-              <span>Clipboard</span>
-            </button>
-            <button
-              id="tools-sheet-git"
-              class="tools-sheet-btn"
-              data-action="git"
-            >
-              <i data-lucide="git-branch"></i>
-              <span>Git</span>
-            </button>
-            <button
-              id="tools-sheet-extra-keys"
-              class="tools-sheet-btn"
-              data-action="toggle-extra-keys"
-            >
-              <i data-lucide="keyboard"></i>
-              <span>Extra Keys</span>
-            </button>
-            <button
-              id="tools-sheet-wrap"
-              class="tools-sheet-btn"
-              data-action="wrap-lines"
-            >
-              <i data-lucide="wrap-text"></i>
-              <span>Wrap</span>
-            </button>
-            <button
-              id="tools-sheet-fullscreen"
-              class="tools-sheet-btn"
-              data-action="fullscreen"
-            >
-              <i data-lucide="maximize-2"></i>
-              <span>Fullscreen</span>
-            </button>
-            <button
-              id="tools-sheet-copy"
-              class="tools-sheet-btn"
-              data-action="copy"
-            >
-              <i data-lucide="copy"></i>
-              <span>Copy</span>
-            </button>
-            <button
-              id="tools-sheet-paste"
-              class="tools-sheet-btn"
-              data-action="paste"
-            >
-              <i data-lucide="clipboard-paste"></i>
-              <span>Paste</span>
-            </button>
-            <button
-              id="tools-sheet-font-decrease"
-              class="tools-sheet-btn"
-              data-action="font-decrease"
-            >
-              <i data-lucide="zoom-out"></i>
-              <span>Font -</span>
-            </button>
-            <button
-              id="tools-sheet-font-increase"
-              class="tools-sheet-btn"
-              data-action="font-increase"
-            >
-              <i data-lucide="zoom-in"></i>
-              <span>Font +</span>
-            </button>
-            <button
-              id="tools-sheet-help"
-              class="tools-sheet-btn"
-              data-action="help"
-            >
-              <i data-lucide="help-circle"></i>
-              <span>Help</span>
-            </button>
-          </div>
+          <div
+            id="tools-sheet-grid"
+            class="tools-sheet-grid"
+            aria-label="More actions"
+          ></div>
         </div>
       </div>
 
@@ -449,48 +326,7 @@
         <span id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</span>
       </div>
 
-      <nav id="mobile-action-bar" class="mobile-action-bar" aria-label="Primary actions">
-        <button
-          id="mobile-files-btn"
-          class="mobile-action-btn"
-          data-action="file-manager"
-          title="Open files explorer"
-          aria-label="Files"
-        >
-          <i data-lucide="folder-open"></i>
-          <span>Files</span>
-        </button>
-        <button
-          id="mobile-git-btn"
-          class="mobile-action-btn"
-          data-action="git"
-          title="Open git panel"
-          aria-label="Git"
-        >
-          <i data-lucide="git-branch"></i>
-          <span>Git</span>
-        </button>
-        <button
-          id="mobile-paste-btn"
-          class="mobile-action-btn"
-          data-action="paste"
-          title="Paste clipboard"
-          aria-label="Paste"
-        >
-          <i data-lucide="clipboard-paste"></i>
-          <span>Paste</span>
-        </button>
-        <button
-          id="mobile-more-btn"
-          class="mobile-action-btn"
-          data-action="toggle-tools-sheet"
-          title="More"
-          aria-label="More"
-        >
-          <i data-lucide="ellipsis"></i>
-          <span>More</span>
-        </button>
-      </nav>
+      <nav id="mobile-action-bar" class="mobile-action-bar" aria-label="Primary actions"></nav>
 
       <!-- Debug Panel (debug=1 only) -->
       <div id="debug-panel" class="debug-panel">

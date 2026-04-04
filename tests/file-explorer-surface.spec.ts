@@ -3,7 +3,6 @@ import {
   createExplorerFixtureDir,
   createWorkspaceInDir,
   expect,
-  openToolsSheet,
   resetAppState,
   test,
   waitForTerminal,
@@ -111,11 +110,10 @@ test.describe("File explorer surface on mobile", () => {
     await waitForTerminal(page);
   });
 
-  test("opens Files from the tools sheet as a full overlay", async ({
+  test("opens Files from the mobile primary bar as a full overlay", async ({
     page,
   }) => {
-    await openToolsSheet(page);
-    await page.click("#tools-sheet-files");
+    await page.click("#mobile-files-btn");
 
     await expect(page.locator("#file-explorer")).toBeVisible();
     await expect(page.locator("#file-explorer")).toHaveAttribute(
