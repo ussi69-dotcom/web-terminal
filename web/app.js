@@ -3473,6 +3473,10 @@ class TerminalManager {
     this.toolbar = document.querySelector(".toolbar");
     this.connectionStatus = document.getElementById("connection-status");
     this.toolsSheet = document.getElementById("tools-sheet");
+    this.navigationSurface = window.NavigationSurface || {};
+    this.actionLayoutState = null;
+    this.layoutEditorMode = "desktop";
+    this.layoutEditorOpen = false;
 
     this.tileManager = new TileManager(this.container);
     this.clipboardManager = new ClipboardManager();
@@ -3546,6 +3550,7 @@ class TerminalManager {
       toolbarToggle.addEventListener("click", () => this.toggleToolsSheet());
     }
     this.setupToolsSheet();
+    this.setupLayoutEditor();
 
     // Help modal
     this.setupHelpModal();
@@ -3845,6 +3850,32 @@ class TerminalManager {
       ?.addEventListener("click", close);
   }
 
+  setupLayoutEditor() {
+    if (!this.toolsSheet) return;
+
+    this.toolsSheet
+      .querySelector("#tools-sheet-edit-layout")
+      ?.addEventListener("click", () => this.openLayoutEditor());
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.addEventListener("click", () => this.setLayoutEditorMode("desktop"));
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.addEventListener("click", () => this.setLayoutEditorMode("mobile"));
+
+    this.toolsSheet
+      .querySelector("#layout-editor-reset")
+      ?.addEventListener("click", () => this.resetLayoutEditorDefaults());
+
+    this.toolsSheet
+      .querySelector("#layout-editor-done")
+      ?.addEventListener("click", () => this.closeToolsSheet());
+
+    this.renderToolsSheetView();
+  }
+
   setOverflowToggleState(isOpen) {
     document
       .querySelectorAll('[data-action="toggle-tools-sheet"], #toolbar-toggle')
@@ -3853,18 +3884,24 @@ class TerminalManager {
       });
   }
 
-  openToolsSheet() {
+  openToolsSheet({ preserveLayoutEditor = false } = {}) {
     if (!this.toolsSheet) return;
+    if (!preserveLayoutEditor) {
+      this.layoutEditorOpen = false;
+    }
     this.toolsSheet.classList.remove("hidden");
     this.toolsSheet.setAttribute("aria-hidden", "false");
     this.setOverflowToggleState(true);
+    this.renderToolsSheetView();
   }
 
   closeToolsSheet() {
     if (!this.toolsSheet) return;
+    this.layoutEditorOpen = false;
     this.toolsSheet.classList.add("hidden");
     this.toolsSheet.setAttribute("aria-hidden", "true");
     this.setOverflowToggleState(false);
+    this.renderToolsSheetView();
   }
 
   toggleToolsSheet() {
@@ -3874,6 +3911,182 @@ class TerminalManager {
     } else {
       this.closeToolsSheet();
     }
+  }
+
+  getLayoutActionLabel(actionId) {
+    const labels = {
+      files: "Files",
+      git: "Git",
+      palette: "Palette",
+      paste: "Paste",
+      clipboard: "Clipboard",
+      "toggle-extra-keys": "Extra Keys",
+      "wrap-lines": "Wrap",
+      fullscreen: "Fullscreen",
+      "font-decrease": "Font -",
+      "font-increase": "Font +",
+      help: "Help",
+      "linked-view": "Linked View",
+    };
+
+    return labels[actionId] || actionId.replace(/-/g, " ");
+  }
+
+  getDefaultLayoutEditorState() {
+    const desktopPinned =
+      this.navigationSurface.getDesktopPrimaryActionIds?.() || [];
+    const mobilePinned =
+      this.navigationSurface.getMobilePrimaryActionIds?.() || [];
+
+    return {
+      desktopPinned: desktopPinned.filter((actionId) => actionId !== "more"),
+      mobilePinned: mobilePinned.filter((actionId) => actionId !== "more"),
+    };
+  }
+
+  getActionLayoutState() {
+    if (!this.actionLayoutState) {
+      this.actionLayoutState =
+        this.navigationSurface.loadActionLayoutState?.(localStorage) ||
+        this.getDefaultLayoutEditorState();
+    }
+    return this.actionLayoutState;
+  }
+
+  setActionLayoutState(nextState, { persist = true } = {}) {
+    const next =
+      this.navigationSurface.validateActionLayoutState?.(nextState) ||
+      nextState ||
+      this.getDefaultLayoutEditorState();
+    this.actionLayoutState = persist
+      ? this.navigationSurface.saveActionLayoutState?.(localStorage, next) ||
+        next
+      : next;
+    return this.actionLayoutState;
+  }
+
+  resetActionLayoutState() {
+    this.actionLayoutState =
+      this.navigationSurface.resetActionLayoutState?.(localStorage) ||
+      this.getDefaultLayoutEditorState();
+    return this.actionLayoutState;
+  }
+
+  getLayoutEditorMode() {
+    return this.layoutEditorMode === "mobile" ? "mobile" : "desktop";
+  }
+
+  getLayoutEditorPinnedKey() {
+    return this.getLayoutEditorMode() === "mobile"
+      ? "mobilePinned"
+      : "desktopPinned";
+  }
+
+  openLayoutEditor(mode = this.layoutEditorMode) {
+    if (!this.toolsSheet) return;
+    this.layoutEditorMode = mode === "mobile" ? "mobile" : "desktop";
+    this.layoutEditorOpen = true;
+    this.openToolsSheet({ preserveLayoutEditor: true });
+    this.renderLayoutEditor();
+  }
+
+  setLayoutEditorMode(mode) {
+    this.layoutEditorMode = mode === "mobile" ? "mobile" : "desktop";
+    this.layoutEditorOpen = true;
+    if (this.toolsSheet?.classList.contains("hidden")) {
+      this.openToolsSheet({ preserveLayoutEditor: true });
+    } else {
+      this.renderToolsSheetView();
+    }
+    this.renderLayoutEditor();
+  }
+
+  renderLayoutEditorChips(container, actionIds, bucket) {
+    if (!container) return;
+    container.replaceChildren();
+
+    actionIds.forEach((actionId) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tools-sheet-layout-chip";
+      chip.dataset.layoutActionId = actionId;
+      chip.dataset.layoutBucket = bucket;
+      chip.textContent = this.getLayoutActionLabel(actionId);
+      chip.title = this.getLayoutActionLabel(actionId);
+      container.appendChild(chip);
+    });
+  }
+
+  renderLayoutEditor() {
+    if (!this.toolsSheet) return;
+    const root = this.toolsSheet.querySelector("#layout-editor");
+    const mode = this.getLayoutEditorMode();
+    const state = this.getActionLayoutState();
+    const pinnedKey = this.getLayoutEditorPinnedKey();
+    const pinned = Array.isArray(state[pinnedKey]) ? state[pinnedKey] : [];
+    const available =
+      this.navigationSurface.getAvailableActionIds?.(mode, pinned) || [];
+
+    if (root) {
+      root.dataset.mode = mode;
+      root.setAttribute("aria-hidden", this.layoutEditorOpen ? "false" : "true");
+      root.classList.toggle("hidden", !this.layoutEditorOpen);
+    }
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.classList.toggle("active", mode === "desktop");
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.classList.toggle("active", mode === "mobile");
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.setAttribute("aria-pressed", mode === "desktop" ? "true" : "false");
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.setAttribute("aria-pressed", mode === "mobile" ? "true" : "false");
+
+    this.renderLayoutEditorChips(
+      this.toolsSheet.querySelector("#layout-editor-pinned-actions"),
+      pinned,
+      "pinned",
+    );
+    this.renderLayoutEditorChips(
+      this.toolsSheet.querySelector("#layout-editor-available-actions"),
+      available,
+      "available",
+    );
+    this.renderToolsSheetView();
+  }
+
+  renderToolsSheetView() {
+    if (!this.toolsSheet) return;
+    const editing = this.layoutEditorOpen;
+    this.toolsSheet.classList.toggle("tools-sheet-editing", editing);
+
+    const editButton = this.toolsSheet.querySelector("#tools-sheet-edit-layout");
+    if (editButton) {
+      editButton.hidden = editing;
+      editButton.setAttribute("aria-hidden", editing ? "true" : "false");
+    }
+
+    const grid = this.toolsSheet.querySelector(".tools-sheet-grid");
+    if (grid) {
+      grid.hidden = editing;
+      grid.setAttribute("aria-hidden", editing ? "true" : "false");
+    }
+
+    const editorRoot = this.toolsSheet.querySelector("#layout-editor");
+    if (editorRoot) {
+      editorRoot.hidden = !editing;
+      editorRoot.setAttribute("aria-hidden", editing ? "false" : "true");
+    }
+  }
+
+  resetLayoutEditorDefaults() {
+    this.resetActionLayoutState();
+    this.renderLayoutEditor();
   }
 
   setupCommandPalette() {
@@ -6788,6 +7001,7 @@ document.addEventListener("DOMContentLoaded", () => {
           x: "×",
           copy: "📋",
           "clipboard-paste": "📥",
+          "sliders-horizontal": "⚙",
           "zoom-in": "+",
           "zoom-out": "-",
           "maximize-2": "⛶",

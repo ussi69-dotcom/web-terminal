@@ -987,6 +987,174 @@ body.touch-input-mode .xterm .composition-view.active {
   flex: 0 0 auto;
 }
 
+.tools-sheet-edit-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 166, 255, 0.22);
+  border-radius: 14px;
+  background: rgba(88, 166, 255, 0.08);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.tools-sheet-edit-layout:hover {
+  border-color: rgba(88, 166, 255, 0.42);
+  background: rgba(88, 166, 255, 0.14);
+  transform: translateY(-1px);
+}
+
+.tools-sheet-edit-layout svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.tools-sheet-edit-layout span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tools-sheet-layout-editor {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.tools-sheet.tools-sheet-editing .tools-sheet-grid {
+  display: none;
+}
+
+.tools-sheet.tools-sheet-editing .tools-sheet-edit-layout {
+  display: none;
+}
+
+.tools-sheet.tools-sheet-editing .tools-sheet-layout-editor {
+  display: flex;
+}
+
+.tools-sheet-layout-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tools-sheet-layout-toggle {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tools-sheet-layout-toggle-btn,
+.tools-sheet-layout-action-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.tools-sheet-layout-toggle-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tools-sheet-layout-toggle-btn:hover,
+.tools-sheet-layout-action-btn:hover {
+  transform: translateY(-1px);
+}
+
+.tools-sheet-layout-toggle-btn.active,
+.tools-sheet-layout-toggle-btn[aria-pressed="true"] {
+  border-color: rgba(88, 166, 255, 0.36);
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.tools-sheet-layout-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.tools-sheet-layout-action-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tools-sheet-layout-action-btn:hover {
+  border-color: rgba(88, 166, 255, 0.32);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.tools-sheet-layout-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tools-sheet-layout-section-header h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.tools-sheet-layout-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 52px;
+  padding: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tools-sheet-layout-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: default;
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.tools-sheet-layout-chip[data-layout-bucket="available"] {
+  opacity: 0.96;
+}
+
 .tools-sheet-btn {
   display: flex;
   align-items: center;
@@ -2257,6 +2425,27 @@ body.virtual-keyboard-open .extra-keys {
 
   .tools-sheet-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tools-sheet-layout-toolbar {
+    align-items: stretch;
+  }
+
+  .tools-sheet-layout-toggle {
+    width: 100%;
+  }
+
+  .tools-sheet-layout-toggle-btn {
+    flex: 1 1 0;
+  }
+
+  .tools-sheet-layout-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .tools-sheet-layout-action-btn {
+    flex: 1 1 0;
   }
 
   .mobile-action-bar {

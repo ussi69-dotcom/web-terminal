@@ -154,6 +154,81 @@
             </button>
           </div>
 
+          <button
+            id="tools-sheet-edit-layout"
+            class="tools-sheet-edit-layout"
+            type="button"
+          >
+            <i data-lucide="sliders-horizontal"></i>
+            <span>Edit layout</span>
+          </button>
+
+          <div
+            id="layout-editor"
+            class="tools-sheet-layout-editor hidden"
+            data-testid="layout-editor"
+            aria-hidden="true"
+          >
+            <div class="tools-sheet-layout-toolbar">
+              <div class="tools-sheet-layout-toggle" role="group" aria-label="Layout mode">
+                <button
+                  id="layout-editor-mode-desktop"
+                  class="tools-sheet-layout-toggle-btn"
+                  type="button"
+                  aria-pressed="true"
+                >
+                  Desktop
+                </button>
+                <button
+                  id="layout-editor-mode-mobile"
+                  class="tools-sheet-layout-toggle-btn"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  Mobile
+                </button>
+              </div>
+              <div class="tools-sheet-layout-actions">
+                <button
+                  id="layout-editor-reset"
+                  class="tools-sheet-layout-action-btn"
+                  type="button"
+                >
+                  Reset defaults
+                </button>
+                <button
+                  id="layout-editor-done"
+                  class="tools-sheet-layout-action-btn"
+                  type="button"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+
+            <section class="tools-sheet-layout-section">
+              <div class="tools-sheet-layout-section-header">
+                <h3>Pinned</h3>
+              </div>
+              <div
+                id="layout-editor-pinned-actions"
+                class="tools-sheet-layout-chips"
+                data-testid="layout-editor-pinned-actions"
+              ></div>
+            </section>
+
+            <section class="tools-sheet-layout-section">
+              <div class="tools-sheet-layout-section-header">
+                <h3>Available in More</h3>
+              </div>
+              <div
+                id="layout-editor-available-actions"
+                class="tools-sheet-layout-chips"
+                data-testid="layout-editor-available-actions"
+              ></div>
+            </section>
+          </div>
+
           <div class="tools-sheet-grid">
             <button
               id="tools-sheet-files"
