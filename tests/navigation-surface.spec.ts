@@ -8,6 +8,7 @@ import {
   expect,
   openCommandPalette,
   resetAppState,
+  resizeWindow,
   test,
   waitForTerminal,
 } from "./fixtures";
@@ -101,6 +102,54 @@ test.describe("Shell action hierarchy on desktop", () => {
         }).trim(),
       )
       .toBe(targetBranch);
+  });
+
+  test("customizes the desktop pinned actions from More and persists them across reload", async ({
+    page,
+  }) => {
+    const toolbar = page.locator(".toolbar");
+
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit layout" }).click();
+    await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Available" })).toBeVisible();
+
+    const clipboardAction = page
+      .locator("#tools-sheet")
+      .getByRole("button", { name: "Clipboard" });
+    const pinnedZone = page.getByRole("heading", { name: "Pinned" });
+
+    await clipboardAction.dragTo(pinnedZone);
+    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+
+    await page.reload();
+    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+  });
+
+  test("resets the custom desktop layout back to desktop and mobile defaults", async ({
+    page,
+  }) => {
+    const toolbar = page.locator(".toolbar");
+
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+    await page.getByRole("button", { name: "Edit layout" }).click();
+    await expect(page.getByRole("button", { name: "Reset defaults" })).toBeVisible();
+    await page.getByRole("button", { name: "Reset defaults" }).click();
+
+    for (const name of ["Files", "Git", "Palette", "More"]) {
+      await expect(toolbar.getByRole("button", { name })).toBeVisible();
+    }
+
+    await resizeWindow(page, 390, 844);
+    const mobileBar = page.locator("#mobile-action-bar");
+    await expect(mobileBar).toBeVisible();
+    for (const name of ["Files", "Git", "Paste", "More"]) {
+      await expect(mobileBar.getByRole("button", { name })).toBeVisible();
+    }
   });
 });
 

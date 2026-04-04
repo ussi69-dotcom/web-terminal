@@ -84,6 +84,37 @@ test.describe("Mobile regressions", () => {
     await expect(toolbar.getByRole("button", { name: "More" })).toHaveCount(0);
   });
 
+  test("customizes the mobile pinned actions from More and moves them back to More", async ({
+    page,
+  }) => {
+    const mobileBar = page.locator("#mobile-action-bar");
+
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit layout" }).click();
+    await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Available" })).toBeVisible();
+
+    const clipboardAction = page
+      .locator("#tools-sheet")
+      .getByRole("button", { name: "Clipboard" });
+    const pinnedZone = page.getByRole("heading", { name: "Pinned" });
+    const availableZone = page.getByRole("heading", { name: "Available" });
+
+    await clipboardAction.dragTo(pinnedZone);
+    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+
+    await mobileBar
+      .getByRole("button", { name: "Clipboard" })
+      .dragTo(availableZone);
+    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" })).toBeVisible();
+  });
+
   test("mobile chrome keeps the bottom action bar visible without a size warning", async ({
     page,
   }) => {
