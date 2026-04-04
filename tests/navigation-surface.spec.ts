@@ -114,13 +114,16 @@ test.describe("Shell action hierarchy on desktop", () => {
     await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
 
     await page.getByRole("button", { name: "Edit layout" }).click();
+    await page.getByRole("button", { name: "Desktop" }).click();
     await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Available" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Available in More" }),
+    ).toBeVisible();
 
     const clipboardAction = page
       .locator("#tools-sheet")
       .getByRole("button", { name: "Clipboard" });
-    const pinnedZone = page.getByRole("heading", { name: "Pinned" });
+    const pinnedZone = page.locator("[data-layout-dropzone='pinned']");
 
     await clipboardAction.dragTo(pinnedZone);
     await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
@@ -137,12 +140,26 @@ test.describe("Shell action hierarchy on desktop", () => {
     await page.getByRole("button", { name: "More" }).click();
     await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
     await page.getByRole("button", { name: "Edit layout" }).click();
+    await page.getByRole("button", { name: "Desktop" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Available in More" }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset defaults" })).toBeVisible();
+
+    await page
+      .locator("#tools-sheet")
+      .getByRole("button", { name: "Clipboard" })
+      .dragTo(page.locator("[data-layout-dropzone='pinned']"));
+    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+
     await page.getByRole("button", { name: "Reset defaults" }).click();
 
     for (const name of ["Files", "Git", "Palette", "More"]) {
       await expect(toolbar.getByRole("button", { name })).toBeVisible();
     }
+    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toHaveCount(
+      0,
+    );
 
     await resizeWindow(page, 390, 844);
     const mobileBar = page.locator("#mobile-action-bar");
@@ -150,6 +167,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     for (const name of ["Files", "Git", "Paste", "More"]) {
       await expect(mobileBar.getByRole("button", { name })).toBeVisible();
     }
+    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(
+      0,
+    );
   });
 });
 

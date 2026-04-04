@@ -94,14 +94,17 @@ test.describe("Mobile regressions", () => {
     await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
 
     await page.getByRole("button", { name: "Edit layout" }).click();
+    await page.getByRole("button", { name: "Mobile" }).click();
     await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Available" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Available in More" }),
+    ).toBeVisible();
 
     const clipboardAction = page
       .locator("#tools-sheet")
       .getByRole("button", { name: "Clipboard" });
-    const pinnedZone = page.getByRole("heading", { name: "Pinned" });
-    const availableZone = page.getByRole("heading", { name: "Available" });
+    const pinnedZone = page.locator("[data-layout-dropzone='pinned']");
+    const availableZone = page.locator("[data-layout-dropzone='available']");
 
     await clipboardAction.dragTo(pinnedZone);
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
@@ -111,6 +114,7 @@ test.describe("Mobile regressions", () => {
       .dragTo(availableZone);
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
 
+    await page.getByRole("button", { name: "Done" }).click();
     await page.getByRole("button", { name: "More" }).click();
     await expect(page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" })).toBeVisible();
   });
