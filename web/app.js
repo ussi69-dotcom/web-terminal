@@ -4780,6 +4780,51 @@ class TerminalManager {
     return true;
   }
 
+  getCommandPaletteQuery() {
+    return String(this.commandPalette?.input?.value || "").trim();
+  }
+
+  isPaletteDirectoryQuery(query) {
+    const value = String(query || "").trim();
+    return value.startsWith("/") || value.startsWith("~/");
+  }
+
+  async resolvePaletteDirectory(path) {
+    const targetPath = String(path || "").trim();
+    if (!targetPath) return null;
+
+    try {
+      const res = await fetch(
+        `/api/browse?path=${encodeURIComponent(targetPath)}&files=true`,
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.error) {
+        throw new Error(payload.error || "Cannot open directory");
+      }
+
+      return this.normalizeWorkspaceCwd(payload.path || targetPath);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Cannot open directory";
+      alert(message);
+      return null;
+    }
+  }
+
+  async goToDirectoryFromPalette(path) {
+    const resolvedPath = await this.resolvePaletteDirectory(path);
+    if (!resolvedPath) return false;
+    return this.switchOrCreateWorkspaceForCwd(resolvedPath);
+  }
+
+  async revealCurrentCwdInFilesFromPalette(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+    this.setDirectoryValue(targetCwd);
+    await this.openFileExplorer();
+    return true;
+  }
+
   registerCommandPaletteActions() {
     if (!this.commandPaletteRegistry) return;
     const NavigationSurface = window.NavigationSurface || {};
@@ -4877,6 +4922,25 @@ class TerminalManager {
 
     actions.forEach((action) => this.commandPaletteRegistry.register(action));
 
+    this.commandPaletteRegistry.registerProvider(() => {
+      const query = this.getCommandPaletteQuery();
+      if (!this.isPaletteDirectoryQuery(query)) {
+        return [];
+      }
+
+      return [
+        {
+          id: `go-to-directory:${query}`,
+          title: "Go to Directory...",
+          group: "Actions",
+          keywords: [query, "directory", "cwd", "jump", "open path"],
+          meta: [query],
+          priority: 48,
+          run: () => this.goToDirectoryFromPalette(query),
+        },
+      ];
+    });
+
     this.commandPaletteRegistry.registerProvider((context = {}) => {
       const contextualActions = [];
       const newFolderAction = createNewFolderAction(context, {
@@ -4905,6 +4969,18 @@ class TerminalManager {
           keywords: ["keyboard", "modifiers", "mobile"],
           meta: context.extraKeysVisible ? ["Visible"] : ["Hidden"],
           run: () => this.extraKeys?.toggle(),
+        });
+      }
+
+      if (context.cwd) {
+        contextualActions.push({
+          id: `reveal-cwd:${context.cwd}`,
+          title: "Reveal Current CWD in Files",
+          group: "Contextual",
+          keywords: ["files", "explorer", "cwd", "reveal", context.cwd],
+          meta: [context.cwd],
+          priority: 38,
+          run: () => this.revealCurrentCwdInFilesFromPalette(context.cwd),
         });
       }
 
