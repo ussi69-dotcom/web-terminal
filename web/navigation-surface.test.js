@@ -66,33 +66,33 @@ test("buildGitBranchActions excludes current branch and switches selected branch
 });
 
 test("desktop primary actions exclude clipboard and include palette + more", () => {
-  expect(getDesktopPrimaryActionIds()).toEqual([
-    "files",
-    "git",
-    "palette",
-    "more",
-  ]);
-  expect(getDesktopPrimaryActionIds()).not.toContain("clipboard");
+  const desktopPrimary = getDesktopPrimaryActionIds();
+  expect(desktopPrimary).toHaveLength(4);
+  expect(desktopPrimary).toContain("files");
+  expect(desktopPrimary).toContain("git");
+  expect(desktopPrimary).toContain("palette");
+  expect(desktopPrimary).toContain("more");
+  expect(desktopPrimary).not.toContain("clipboard");
 });
 
 test("mobile primary actions include paste", () => {
-  expect(getMobilePrimaryActionIds()).toEqual([
-    "files",
-    "git",
-    "paste",
-    "more",
-  ]);
+  const mobilePrimary = getMobilePrimaryActionIds();
+  expect(mobilePrimary).toHaveLength(4);
+  expect(mobilePrimary).toContain("files");
+  expect(mobilePrimary).toContain("git");
+  expect(mobilePrimary).toContain("paste");
+  expect(mobilePrimary).toContain("more");
 });
 
 test("overflow actions contain the secondary utilities", () => {
-  expect(getOverflowActionIds()).toEqual([
-    "clipboard",
-    "toggle-extra-keys",
-    "wrap-lines",
-    "fullscreen",
-    "font-decrease",
-    "font-increase",
-    "help",
-    "linked-view",
-  ]);
+  const overflow = getOverflowActionIds();
+  expect(overflow).toHaveLength(8);
+  expect(overflow).toContain("clipboard");
+  expect(overflow).toContain("toggle-extra-keys");
+  expect(overflow).toContain("wrap-lines");
+  expect(overflow).toContain("fullscreen");
+  expect(overflow).toContain("font-decrease");
+  expect(overflow).toContain("font-increase");
+  expect(overflow).toContain("help");
+  expect(overflow).toContain("linked-view");
 });

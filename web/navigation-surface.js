@@ -2,30 +2,20 @@ function normalizeCwd(value) {
   return String(value || "").trim();
 }
 
-const DESKTOP_PRIMARY_ACTION_IDS = Object.freeze([
-  "files",
-  "git",
-  "palette",
-  "more",
-]);
-
-const MOBILE_PRIMARY_ACTION_IDS = Object.freeze([
-  "files",
-  "git",
-  "paste",
-  "more",
-]);
-
-const OVERFLOW_ACTION_IDS = Object.freeze([
-  "clipboard",
-  "toggle-extra-keys",
-  "wrap-lines",
-  "fullscreen",
-  "font-decrease",
-  "font-increase",
-  "help",
-  "linked-view",
-]);
+const NAVIGATION_SURFACE_HIERARCHY = Object.freeze({
+  desktopPrimary: Object.freeze(["files", "git", "palette", "more"]),
+  mobilePrimary: Object.freeze(["files", "git", "paste", "more"]),
+  overflow: Object.freeze([
+    "clipboard",
+    "toggle-extra-keys",
+    "wrap-lines",
+    "fullscreen",
+    "font-decrease",
+    "font-increase",
+    "help",
+    "linked-view",
+  ]),
+});
 
 function joinPath(basePath, childName) {
   const base = normalizeCwd(basePath);
@@ -101,16 +91,20 @@ function buildGitBranchActions(context = {}, handlers = {}) {
     }));
 }
 
+function cloneActionIds(group) {
+  return [...(NAVIGATION_SURFACE_HIERARCHY[group] || [])];
+}
+
 function getDesktopPrimaryActionIds() {
-  return [...DESKTOP_PRIMARY_ACTION_IDS];
+  return cloneActionIds("desktopPrimary");
 }
 
 function getMobilePrimaryActionIds() {
-  return [...MOBILE_PRIMARY_ACTION_IDS];
+  return cloneActionIds("mobilePrimary");
 }
 
 function getOverflowActionIds() {
-  return [...OVERFLOW_ACTION_IDS];
+  return cloneActionIds("overflow");
 }
 
 const NavigationSurfaceModule = {
