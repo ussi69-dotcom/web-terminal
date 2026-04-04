@@ -14,7 +14,7 @@ import {
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
-test.describe("Compact navigation surface on desktop", () => {
+test.describe("Shell action hierarchy on desktop", () => {
   let tempDirs: string[] = [];
 
   test.beforeEach(async ({ page }) => {
@@ -27,24 +27,23 @@ test.describe("Compact navigation surface on desktop", () => {
     await Promise.all(tempDirs.map((dir) => cleanupTempDir(dir)));
   });
 
-  test("replaces the dense utility strip with an activity rail", async ({
+  test("exposes primary actions in the top bar instead of a floating rail", async ({
     page,
   }) => {
-    await expect(page.locator("#activity-rail")).toBeVisible();
-    await expect(page.locator(".toolbar-row-2 #git-btn")).toHaveCount(0);
-    await expect(page.locator(".toolbar-row-2 #file-manager-btn")).toHaveCount(
-      0,
-    );
-    await expect(page.locator(".toolbar-row-2 #clipboard-btn")).toHaveCount(0);
+    await expect(page.locator("#activity-rail")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Files" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Palette" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
   });
 
-  test("opens Git and Files from the desktop activity rail", async ({
+  test("opens Git and Files from explicit top-bar actions", async ({
     page,
   }) => {
-    await page.click("#activity-rail-git");
+    await page.getByRole("button", { name: "Git" }).click();
     await expect(page.locator("#git-panel")).toBeVisible();
 
-    await page.click("#activity-rail-files");
+    await page.getByRole("button", { name: "Files" }).click();
     await expect(page.locator("#file-explorer")).toBeVisible();
     await expect(page.locator("#file-modal")).toHaveCount(0);
   });
@@ -105,7 +104,7 @@ test.describe("Compact navigation surface on desktop", () => {
   });
 });
 
-test.describe("Compact navigation surface on mobile", () => {
+test.describe("Shell action hierarchy on mobile", () => {
   test.use({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
@@ -116,12 +115,14 @@ test.describe("Compact navigation surface on mobile", () => {
     await waitForTerminal(page);
   });
 
-  test("opens a tools sheet with panel shortcuts", async ({ page }) => {
-    await page.click("#toolbar-toggle");
-
-    await expect(page.locator("#tools-sheet")).toBeVisible();
-    await expect(page.locator("#tools-sheet")).toContainText("Files");
-    await expect(page.locator("#tools-sheet")).toContainText("Clipboard");
-    await expect(page.locator("#tools-sheet")).toContainText("Git");
+  test("keeps the primary actions visible in a persistent bottom action bar", async ({
+    page,
+  }) => {
+    await expect(page.locator("#mobile-action-bar")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Files" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Paste" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
+    await expect(page.locator("#tools-sheet")).toHaveCount(0);
   });
 });
