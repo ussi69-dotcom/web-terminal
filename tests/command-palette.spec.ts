@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import {
   cleanupTempDir,
@@ -207,10 +208,10 @@ test.describe("Command palette navigation layer", () => {
     const repoDir = await createGitFixtureRepo();
     tempDirs.push(repoDir);
     const targetBranch = `palette-checkout-${Date.now()}`;
-
-    await page.evaluate((branchName) => {
-      window.prompt = () => branchName;
-    }, targetBranch);
+    execFileSync("git", ["branch", targetBranch], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
 
     await createWorkspaceInDir(page, repoDir);
 
@@ -232,14 +233,14 @@ test.describe("Command palette navigation layer", () => {
     await branchEntry.click();
 
     await expect
-      .poll(async () => {
-        return page.evaluate(() => {
-          const tm = (window as any).terminalManager;
-          const active = tm?.terminals?.get?.(tm?.activeId);
-          return active?.cwd || null;
-        });
-      })
-      .toBe(repoDir);
+      .poll(() =>
+        execFileSync("git", ["branch", "--show-current"], {
+          cwd: repoDir,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim(),
+      )
+      .toBe(targetBranch);
   });
 });
 
