@@ -22,6 +22,13 @@ export type RecoveredTmuxRuntimeState = {
   agentState: AgentState | null;
 };
 
+export type TmuxRuntimeState = {
+  running: boolean;
+  lastExitCode: number | null;
+  agentName: AgentName | null;
+  agentState: AgentState | null;
+};
+
 export type TerminalTelemetry = {
   busy: boolean;
   running: boolean;
@@ -218,6 +225,88 @@ export function inferPolledTmuxAgentState({
   const classifiedState = classifyAgentOutputPhase(agentName, changedChunk);
 
   return classifiedState || "thinking";
+}
+
+export function inferTmuxRuntimeState({
+  paneCurrentCommand,
+  processTree = [],
+  previousCapture = "",
+  capture = "",
+  previousState = {
+    running: false,
+    lastExitCode: null,
+    agentName: null,
+    agentState: null,
+  },
+  hasUserPrompted = false,
+}: {
+  paneCurrentCommand?: string | null;
+  processTree?: string[];
+  previousCapture?: string | null;
+  capture?: string | null;
+  previousState?: TmuxRuntimeState;
+  hasUserPrompted?: boolean;
+}): TmuxRuntimeState {
+  const safeCapture = capture || "";
+  const parsedCapture = parseShellIntegrationChunk(safeCapture);
+  const hasRunningMarkers = parsedCapture.events.some(
+    (event) =>
+      event.type === "running-start" || event.type === "running-done",
+  );
+  const hasAgentMarkers = parsedCapture.events.some(
+    (event) =>
+      event.type === "agent-start" || event.type === "agent-done",
+  );
+  const recoveredState = inferRecoveredTmuxRuntimeState({
+    paneCurrentCommand,
+    processTree,
+    capture: safeCapture,
+  });
+
+  const running = hasRunningMarkers
+    ? parsedCapture.state.running
+    : recoveredState.running;
+  const lastExitCode = hasRunningMarkers
+    ? parsedCapture.state.lastExitCode
+    : previousState.lastExitCode;
+  const agentName = hasAgentMarkers
+    ? parsedCapture.state.agentName
+    : recoveredState.agentName;
+  const baseAgentState = hasAgentMarkers
+    ? parsedCapture.state.agentState
+    : recoveredState.agentState;
+
+  if (!agentName) {
+    return {
+      running,
+      lastExitCode,
+      agentName: null,
+      agentState: null,
+    };
+  }
+
+  const classifiedState = inferPolledTmuxAgentState({
+    agentName,
+    previousCapture,
+    capture: safeCapture,
+  });
+  const currentAgentState =
+    previousState.agentName === agentName
+      ? previousState.agentState
+      : baseAgentState;
+  const agentState =
+    resolveAgentOutputState({
+      currentState: currentAgentState,
+      classifiedState,
+      hasUserPrompted: hasAgentMarkers ? hasUserPrompted : true,
+    }) || baseAgentState;
+
+  return {
+    running,
+    lastExitCode,
+    agentName,
+    agentState,
+  };
 }
 
 export async function getTerminalTelemetry(

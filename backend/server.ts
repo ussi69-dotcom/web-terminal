@@ -12,8 +12,7 @@ import {
   classifyAgentOutputPhase,
   createGitWorktreeDetector,
   getTerminalTelemetry,
-  inferPolledTmuxAgentState,
-  inferRecoveredTmuxRuntimeState,
+  inferTmuxRuntimeState,
   parseShellIntegrationChunk,
   resolveAgentOutputState,
 } from "./telemetry";
@@ -390,10 +389,18 @@ async function recoverTmuxSessions(): Promise<number> {
       const paneCapture = await captureTmuxPane(sessionName);
       const processTree =
         panePid > 0 ? await getProcessTreeArgs(panePid) : [];
-      const recoveredRuntimeState = inferRecoveredTmuxRuntimeState({
+      const recoveredRuntimeState = inferTmuxRuntimeState({
         paneCurrentCommand,
         processTree,
         capture: paneCapture,
+        previousCapture: "",
+        previousState: {
+          running: false,
+          lastExitCode: null,
+          agentName: null,
+          agentState: null,
+        },
+        hasUserPrompted: true,
       });
       await createManagedTerminal({
         id,
@@ -404,6 +411,7 @@ async function recoverTmuxSessions(): Promise<number> {
         ownerEmail: "recovered",
         sessionName,
         initialRuntimeState: recoveredRuntimeState,
+        initialLastExitCode: recoveredRuntimeState.lastExitCode,
         initialScrollback: paneCapture,
       });
 
@@ -1124,10 +1132,18 @@ async function syncTmuxRuntimeState(term: Terminal): Promise<void> {
     captureTmuxPane(term.sessionName).catch(() => ""),
     panePid > 0 ? getProcessTreeArgs(panePid).catch(() => []) : Promise.resolve([]),
   ]);
-  const nextRuntimeState = inferRecoveredTmuxRuntimeState({
+  const nextRuntimeState = inferTmuxRuntimeState({
     paneCurrentCommand,
     processTree,
     capture,
+    previousCapture: term.lastTmuxCapture,
+    previousState: {
+      running: term.running,
+      lastExitCode: term.lastExitCode,
+      agentName: term.agentName,
+      agentState: term.agentState,
+    },
+    hasUserPrompted: term.agentHasUserPrompt,
   });
 
   if (
@@ -1138,15 +1154,12 @@ async function syncTmuxRuntimeState(term: Terminal): Promise<void> {
   }
 
   term.running = nextRuntimeState.running;
+  term.lastExitCode = nextRuntimeState.lastExitCode;
   term.agentName = nextRuntimeState.agentName;
-  term.agentState = nextRuntimeState.agentName
-    ? inferPolledTmuxAgentState({
-        agentName: nextRuntimeState.agentName,
-        previousCapture: term.lastTmuxCapture,
-        capture,
-      })
-    : nextRuntimeState.agentState;
-  term.agentHasUserPrompt = Boolean(nextRuntimeState.agentName);
+  term.agentState = nextRuntimeState.agentState;
+  if (!nextRuntimeState.agentName) {
+    term.agentHasUserPrompt = false;
+  }
   term.lastTmuxCapture = capture;
 
   if (term.agentState === "responding") {
@@ -1166,6 +1179,7 @@ async function createManagedTerminal({
   sessionName,
   createTmuxSession = false,
   initialRuntimeState,
+  initialLastExitCode = null,
   initialScrollback = "",
 }: {
   id?: string;
@@ -1181,6 +1195,7 @@ async function createManagedTerminal({
     agentName: "codex" | "claude" | null;
     agentState: "thinking" | "responding" | null;
   };
+  initialLastExitCode?: number | null;
   initialScrollback?: string;
 }): Promise<Terminal> {
   const home = process.env.HOME || "/home/deploy";
@@ -1290,7 +1305,8 @@ async function createManagedTerminal({
     scrollbackBytes: 0,
     hadSocketConnection: false,
     running: initialRuntimeState?.running || false,
-    lastExitCode: null,
+    lastExitCode:
+      typeof initialLastExitCode === "number" ? initialLastExitCode : null,
     agentName: initialRuntimeState?.agentName || null,
     agentState: initialRuntimeState?.agentState || null,
     agentHasUserPrompt: Boolean(initialRuntimeState?.agentName),

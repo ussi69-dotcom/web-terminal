@@ -4531,8 +4531,8 @@ class TerminalManager {
     terminal.running = nextRunning;
     terminal.busy = nextRunning;
     terminal.lastExitCode = nextExitCode;
-    terminal.agentName = nextRunning ? nextAgentName : null;
-    terminal.agentState = nextRunning ? nextAgentState : null;
+    terminal.agentName = nextAgentName;
+    terminal.agentState = nextAgentState;
 
     if (prevRunning && !nextRunning) {
       this.maybeNotifyCommandFinished(terminal);
