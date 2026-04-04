@@ -4134,6 +4134,13 @@ class TerminalManager {
     );
   }
 
+  normalizeWorkspaceCwd(value) {
+    const cwd = String(value || "").trim();
+    if (!cwd) return "";
+    if (cwd === "/") return cwd;
+    return cwd.replace(/\/+$/, "");
+  }
+
   setDirectoryValue(value) {
     const next = String(value || "");
     if (this.directoryInput && this.directoryInput.value !== next) {
@@ -4683,6 +4690,96 @@ class TerminalManager {
     this.registerCommandPaletteActions();
   }
 
+  loadRecentWorkspaceEntries() {
+    const loadRecentWorkspaceEntries =
+      this.navigationSurface.loadRecentWorkspaceEntries;
+    if (typeof loadRecentWorkspaceEntries !== "function") {
+      return [];
+    }
+
+    return loadRecentWorkspaceEntries(window.localStorage);
+  }
+
+  saveRecentWorkspaceEntries(entries) {
+    const saveRecentWorkspaceEntries =
+      this.navigationSurface.saveRecentWorkspaceEntries;
+    if (typeof saveRecentWorkspaceEntries !== "function") {
+      return Array.isArray(entries) ? [...entries] : [];
+    }
+
+    return saveRecentWorkspaceEntries(window.localStorage, entries);
+  }
+
+  rememberRecentWorkspace({ cwd, label } = {}) {
+    const upsertRecentWorkspaceEntry =
+      this.navigationSurface.upsertRecentWorkspaceEntry;
+    if (typeof upsertRecentWorkspaceEntry !== "function") {
+      return [];
+    }
+
+    const normalizedCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!normalizedCwd) {
+      return this.loadRecentWorkspaceEntries();
+    }
+
+    const nextEntries = upsertRecentWorkspaceEntry(
+      this.loadRecentWorkspaceEntries(),
+      {
+        cwd: normalizedCwd,
+        label: String(label || "").trim() || this.formatCwdLabel(normalizedCwd),
+        lastUsedAt: Date.now(),
+      },
+    );
+
+    return this.saveRecentWorkspaceEntries(nextEntries);
+  }
+
+  rememberWorkspaceById(workspaceId, preferredCwd = null) {
+    if (!workspaceId) return [];
+    const snapshot = this.getWorkspaceSnapshot(workspaceId, preferredCwd);
+    return this.rememberRecentWorkspace({
+      cwd: preferredCwd || snapshot.cwd,
+      label: snapshot.label,
+    });
+  }
+
+  findWorkspaceIdByCwd(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return null;
+
+    for (const tab of this.tabs.querySelectorAll(".tab")) {
+      const workspaceId = tab.dataset.workspaceId;
+      if (!workspaceId) continue;
+
+      const snapshot = this.getWorkspaceSnapshot(workspaceId);
+      if (this.normalizeWorkspaceCwd(snapshot.cwd) === targetCwd) {
+        return workspaceId;
+      }
+    }
+
+    return null;
+  }
+
+  async switchOrCreateWorkspaceForCwd(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+
+    this.setDirectoryValue(targetCwd);
+
+    const existingWorkspaceId = this.findWorkspaceIdByCwd(targetCwd);
+    const existingTerminalId = existingWorkspaceId
+      ? this.resolveWorkspaceTerminalId(existingWorkspaceId)
+      : null;
+
+    if (existingTerminalId) {
+      this.switchTo(existingTerminalId);
+      return true;
+    }
+
+    await this.createTerminal(false);
+    return true;
+  }
+
   registerCommandPaletteActions() {
     if (!this.commandPaletteRegistry) return;
     const NavigationSurface = window.NavigationSurface || {};
@@ -4829,6 +4926,43 @@ class TerminalManager {
     });
 
     this.commandPaletteRegistry.registerProvider(() => {
+      return this.loadRecentWorkspaceEntries()
+        .map((entry) => {
+          const cwd = this.normalizeWorkspaceCwd(entry.cwd);
+          if (!cwd) return null;
+
+          const existingWorkspaceId = this.findWorkspaceIdByCwd(cwd);
+          const activeWorkspaceId = this.terminals.get(this.activeId)?.workspaceId;
+          const metadata = [entry.label];
+
+          if (entry.label !== cwd) {
+            metadata.push(cwd);
+          }
+          if (existingWorkspaceId === activeWorkspaceId) {
+            metadata.push("Active");
+          } else if (existingWorkspaceId) {
+            metadata.push("Open");
+          }
+
+          return {
+            id: `recent-workspace:${cwd}`,
+            title: "Recent Workspace",
+            group: "Workspaces",
+            keywords: [
+              entry.label,
+              cwd,
+              `recent ${entry.label}`,
+              "recent workspace",
+            ],
+            meta: metadata,
+            priority: 42,
+            run: () => this.switchOrCreateWorkspaceForCwd(cwd),
+          };
+        })
+        .filter(Boolean);
+    });
+
+    this.commandPaletteRegistry.registerProvider(() => {
       return Array.from(this.tabs.querySelectorAll(".tab"))
         .map((tab) => {
           const workspaceId = tab.dataset.workspaceId;
@@ -4847,6 +4981,9 @@ class TerminalManager {
           if (workspaceId === this.terminals.get(this.activeId)?.workspaceId) {
             metadata.push("Active");
           }
+          if (snapshot.cwd) {
+            metadata.push(snapshot.cwd);
+          }
           if (snapshot.count > 1) {
             metadata.push(`${snapshot.count} terminals`);
           }
@@ -4861,11 +4998,13 @@ class TerminalManager {
             keywords: [
               workspaceId,
               index,
+              label,
               `${index} ${label}`,
               `${index}${label}`,
               rawTabText,
               condensedTabText,
               snapshot.cwd,
+              this.formatCwdLabel(snapshot.cwd),
             ],
             meta: metadata,
             run: () => this.switchTo(targetId),
@@ -5449,7 +5588,9 @@ class TerminalManager {
       if (!t) return true;
       t.cwd = cwd;
       if (t.workspaceId && this.activeId === id) {
+        this.setDirectoryValue(cwd);
         this.updateWorkspaceLabel(t.workspaceId, cwd);
+        this.rememberWorkspaceById(t.workspaceId, cwd);
       }
       this.updateTabGroups();
       // Update session registry with new cwd
@@ -7211,7 +7352,9 @@ class TerminalManager {
     }
     this.tileManager.setActive(id);
     if (t?.workspaceId && t.cwd) {
+      this.setDirectoryValue(t.cwd);
       this.updateWorkspaceLabel(t.workspaceId, t.cwd);
+      this.rememberWorkspaceById(t.workspaceId, t.cwd);
     }
     if (DEBUG) {
       dbg("switchTo", {
