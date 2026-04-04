@@ -88,16 +88,17 @@
               <i data-lucide="more-horizontal"></i>
               <span>Palette</span>
             </button>
-            <button
-              id="desktop-more-btn"
-              class="toolbar-action-btn toolbar-action-btn-secondary"
-              title="More"
-              aria-label="More"
-            >
-              <i data-lucide="ellipsis"></i>
-              <span>More</span>
-            </button>
-          </div>
+          <button
+            id="desktop-more-btn"
+            class="toolbar-action-btn toolbar-action-btn-secondary"
+            title="More"
+            aria-label="More"
+            data-action="toggle-tools-sheet"
+          >
+            <i data-lucide="ellipsis"></i>
+            <span>More</span>
+          </button>
+        </div>
 
           <button
             id="linked-view-btn"
@@ -133,6 +134,17 @@
               aria-label="Close tools"
             >
               <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="tools-sheet-grid tools-sheet-grid-context">
+            <button
+              id="tools-sheet-browse"
+              class="tools-sheet-btn"
+              data-action="open-dir-picker"
+            >
+              <i data-lucide="folder-open"></i>
+              <span>Browse</span>
             </button>
           </div>
 
@@ -356,6 +368,49 @@
         <span id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</span>
       </div>
 
+      <nav id="mobile-action-bar" class="mobile-action-bar" aria-label="Primary actions">
+        <button
+          id="mobile-files-btn"
+          class="mobile-action-btn"
+          data-action="file-manager"
+          title="Open files explorer"
+          aria-label="Files"
+        >
+          <i data-lucide="folder-open"></i>
+          <span>Files</span>
+        </button>
+        <button
+          id="mobile-git-btn"
+          class="mobile-action-btn"
+          data-action="git"
+          title="Open git panel"
+          aria-label="Git"
+        >
+          <i data-lucide="git-branch"></i>
+          <span>Git</span>
+        </button>
+        <button
+          id="mobile-paste-btn"
+          class="mobile-action-btn"
+          data-action="paste"
+          title="Paste clipboard"
+          aria-label="Paste"
+        >
+          <i data-lucide="clipboard-paste"></i>
+          <span>Paste</span>
+        </button>
+        <button
+          id="mobile-more-btn"
+          class="mobile-action-btn"
+          data-action="toggle-tools-sheet"
+          title="More"
+          aria-label="More"
+        >
+          <i data-lucide="ellipsis"></i>
+          <span>More</span>
+        </button>
+      </nav>
+
       <!-- Debug Panel (debug=1 only) -->
       <div id="debug-panel" class="debug-panel">
         <div class="debug-panel-header">
@@ -511,8 +566,8 @@
 
               <h4>Surfaces</h4>
               <table class="help-table">
-                <tr><td>Desktop</td><td>Use the activity rail to open the docked Files explorer, Clipboard, and Git</td></tr>
-                <tr><td>Mobile menu</td><td>Opens the tools sheet, then Files expands into a full overlay explorer</td></tr>
+                <tr><td>Desktop</td><td>Use the top-bar actions to open Files, Git, Palette, and More</td></tr>
+                <tr><td>Mobile</td><td>Use the bottom action bar for Files, Git, Paste, and More</td></tr>
               </table>
             </div>
           </div>

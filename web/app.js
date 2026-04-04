@@ -3778,6 +3778,8 @@ class TerminalManager {
         if (action === "linked-view") this.createLinkedView();
         else if (action === "file-manager") await this.openFileExplorer();
         else if (action === "git") await this.openGitPanel();
+        else if (action === "toggle-tools-sheet") this.toggleToolsSheet();
+        else if (action === "open-dir-picker") this.openDirPicker();
         else if (action === "clipboard") this.clipboardManager.togglePanel();
         else if (action === "copy") this.copySelection();
         else if (action === "paste") this.pasteClipboard();
@@ -3808,18 +3810,26 @@ class TerminalManager {
       ?.addEventListener("click", close);
   }
 
+  setOverflowToggleState(isOpen) {
+    document
+      .querySelectorAll('[data-action="toggle-tools-sheet"], #toolbar-toggle')
+      .forEach((btn) => {
+        btn.classList.toggle("active", isOpen);
+      });
+  }
+
   openToolsSheet() {
     if (!this.toolsSheet) return;
     this.toolsSheet.classList.remove("hidden");
     this.toolsSheet.setAttribute("aria-hidden", "false");
-    document.getElementById("toolbar-toggle")?.classList.add("active");
+    this.setOverflowToggleState(true);
   }
 
   closeToolsSheet() {
     if (!this.toolsSheet) return;
     this.toolsSheet.classList.add("hidden");
     this.toolsSheet.setAttribute("aria-hidden", "true");
-    document.getElementById("toolbar-toggle")?.classList.remove("active");
+    this.setOverflowToggleState(false);
   }
 
   toggleToolsSheet() {

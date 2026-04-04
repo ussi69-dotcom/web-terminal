@@ -18,6 +18,7 @@
   --btn-green: #238636;
   --btn-green-hover: #2ea043;
   --toolbar-height: 48px;
+  --mobile-action-bar-height: 76px;
   --extra-keys-height: 52px;
   --tile-gap: 4px;
   --resize-handle: 12px;
@@ -863,6 +864,12 @@ body.touch-input-mode .xterm .composition-view.active {
   color: var(--text-primary);
 }
 
+.toolbar-action-btn.active {
+  border-color: rgba(88, 166, 255, 0.55);
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--text-primary);
+}
+
 .dir-input {
   display: flex;
   gap: 4px;
@@ -911,6 +918,16 @@ body.touch-input-mode .xterm .composition-view.active {
   background:
     linear-gradient(180deg, rgba(22, 27, 34, 0.98), rgba(13, 17, 23, 0.98));
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.tools-sheet-grid-context {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tools-sheet-grid-context .tools-sheet-btn {
+  flex: 1 1 0;
 }
 
 .tools-sheet-header {
@@ -974,6 +991,51 @@ body.touch-input-mode .xterm .composition-view.active {
 .tools-sheet-btn span {
   font-size: 13px;
   font-weight: 600;
+}
+
+.mobile-action-bar {
+  display: none;
+}
+
+.mobile-action-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 60px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease,
+    color 0.2s ease;
+}
+
+.mobile-action-btn:hover {
+  border-color: rgba(88, 166, 255, 0.35);
+  background: rgba(88, 166, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.mobile-action-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mobile-action-btn span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mobile-action-btn.active {
+  border-color: rgba(88, 166, 255, 0.55);
+  background: rgba(88, 166, 255, 0.15);
 }
 
 /* =============================================================================
@@ -2080,7 +2142,11 @@ body.virtual-keyboard-open .extra-keys {
 
   /* Mobile: keep the second row out of the primary shell */
   .toolbar-row-2 {
-    display: none;
+    display: flex;
+    width: 100%;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .btn-new .btn-label {
@@ -2099,6 +2165,25 @@ body.virtual-keyboard-open .extra-keys {
 
   .toolbar .status-dot {
     margin-left: auto;
+  }
+
+  .server-stats {
+    display: none;
+  }
+
+  .desktop-primary-actions {
+    display: none;
+  }
+
+  .dir-input {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .dir-input input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
   }
 
   .file-explorer {
@@ -2138,10 +2223,6 @@ body.virtual-keyboard-open .extra-keys {
     display: block;
   }
 
-  .desktop-primary-actions {
-    display: none;
-  }
-
   .tools-sheet-panel {
     top: auto;
     right: 0;
@@ -2156,6 +2237,17 @@ body.virtual-keyboard-open .extra-keys {
 
   .tools-sheet-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mobile-action-bar {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(22, 27, 34, 0.98), rgba(13, 17, 23, 0.98));
+    border-top: 1px solid var(--border-primary);
+    box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.28);
   }
 
   .btn-icon {
