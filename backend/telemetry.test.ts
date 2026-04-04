@@ -262,3 +262,25 @@ test("inferTmuxRuntimeState promotes explicit agent output to responding after u
     agentState: "responding",
   });
 });
+
+test("inferTmuxRuntimeState preserves explicit agent state across markerless tmux polls", () => {
+  const state = inferTmuxRuntimeState({
+    paneCurrentCommand: "bash",
+    capture: "OpenAI Codex\n",
+    previousCapture: "OpenAI Codex\n",
+    previousState: {
+      running: false,
+      lastExitCode: null,
+      agentName: "codex",
+      agentState: "thinking",
+    },
+    hasUserPrompted: false,
+  });
+
+  expect(state).toEqual({
+    running: false,
+    lastExitCode: null,
+    agentName: "codex",
+    agentState: "thinking",
+  });
+});

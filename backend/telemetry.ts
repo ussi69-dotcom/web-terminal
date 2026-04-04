@@ -265,16 +265,20 @@ export function inferTmuxRuntimeState({
 
   const running = hasRunningMarkers
     ? parsedCapture.state.running
-    : recoveredState.running;
+    : recoveredState.running || previousState.running;
   const lastExitCode = hasRunningMarkers
     ? parsedCapture.state.lastExitCode
     : previousState.lastExitCode;
+  const recoveredAgentName = recoveredState.agentName || previousState.agentName;
   const agentName = hasAgentMarkers
     ? parsedCapture.state.agentName
-    : recoveredState.agentName;
+    : recoveredAgentName;
   const baseAgentState = hasAgentMarkers
     ? parsedCapture.state.agentState
-    : recoveredState.agentState;
+    : recoveredState.agentState ||
+      (recoveredAgentName === previousState.agentName
+        ? previousState.agentState
+        : null);
 
   if (!agentName) {
     return {
