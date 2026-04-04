@@ -25,9 +25,10 @@ The current product is shaped by four influences:
 - Each top tab is a workspace
 - A workspace can contain one or more split terminals
 - Tabs can be merged by drag and drop
-- A command palette can switch workspaces and trigger common actions from one place
-- Desktop uses a compact top bar plus an activity rail for persistent tool surfaces
-- Mobile uses the same action model, rendered as a tools sheet behind the menu toggle
+- A command palette can switch workspaces and trigger advanced actions from one place
+- Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
+- Mobile uses a bottom action bar with Files, Git, Paste, and More
+- More opens the overflow surface for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
 - Workspace labels follow cwd
 - Workspace color is derived from cwd
 - Workspace signals can show:
@@ -50,11 +51,12 @@ The current product is shaped by four influences:
 - Mobile Files opens as a full overlay explorer
 - Explorer path and lightweight selection state are remembered per workspace
 - Files and Git coordinate as mutually exclusive right-side shell surfaces
+- Desktop Files and Git are surfaced directly from the top bar, while mobile keeps them in the bottom action bar
 - Browse directories inside allowed roots
 - Fallback to a valid root if a stored path becomes invalid
 - Upload files
 - Create folders
-- Create a folder in the active cwd directly from the actions palette
+- Create a folder in the active cwd directly from the command palette
 - Rename files
 - Delete files and directories
 - Download files
@@ -77,7 +79,7 @@ DeckTerm includes git-focused backend APIs and UI support for lightweight repo o
 - stage / unstage
 - commit
 - branches
-- branch switching from the actions palette
+- branch switching from the command palette
 - checkout
 - log
 - show
@@ -103,17 +105,17 @@ Primary toolbar actions in the current product:
 - workspace tabs
 - working directory input
 - directory browser
-- actions palette
+- desktop Files / Git / Palette / More actions
+- mobile Files / Git / Paste / More actions
 - linked tmux view
 - server CPU / RAM / disk stats
 
 Secondary navigation surfaces:
 
-- desktop activity rail for files, clipboard, and git
 - desktop files explorer as a persistent right-side sidebar
-- mobile tools sheet for files, clipboard, git, and utility actions
 - mobile files explorer as a full overlay
-- command palette for quick actions, workspace switching, folder creation, and branch switching
+- command palette for discovery, workspace switching, folder creation, and branch switching
+- overflow surface behind More for clipboard and utility actions
 
 Modal and support surfaces:
 
