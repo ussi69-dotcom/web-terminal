@@ -262,13 +262,6 @@ function applyParsedShellIntegrationState(
       stateChanged = true;
     }
   }
-  if (!term.running && (term.agentName || term.agentState)) {
-    clearAgentRespondingTimer(term);
-    term.agentName = null;
-    term.agentState = null;
-    term.agentHasUserPrompt = false;
-    stateChanged = true;
-  }
   if (stateChanged) {
     broadcastTerminalState(term);
   }
@@ -307,7 +300,7 @@ function scheduleAgentThinkingFallback(term: Terminal) {
     const current = terminals.get(term.id);
     if (!current || current !== term) return;
     term.agentRespondingTimer = null;
-    if (!term.running || !term.agentName || term.agentState !== "responding") {
+    if (!term.agentName || term.agentState !== "responding") {
       return;
     }
     term.agentState = "thinking";
