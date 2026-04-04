@@ -3,6 +3,9 @@ import {
   buildGitBranchActions,
   createNewFolderAction,
   createOpenGitBranchesAction,
+  getDesktopPrimaryActionIds,
+  getMobilePrimaryActionIds,
+  getOverflowActionIds,
   joinPath,
 } from "./navigation-surface";
 
@@ -59,5 +62,37 @@ test("buildGitBranchActions excludes current branch and switches selected branch
   actions[0]?.run();
   expect(calls).toEqual([
     { cwd: "/tmp/repo", branch: "feature/compact-shell" },
+  ]);
+});
+
+test("desktop primary actions exclude clipboard and include palette + more", () => {
+  expect(getDesktopPrimaryActionIds()).toEqual([
+    "files",
+    "git",
+    "palette",
+    "more",
+  ]);
+  expect(getDesktopPrimaryActionIds()).not.toContain("clipboard");
+});
+
+test("mobile primary actions include paste", () => {
+  expect(getMobilePrimaryActionIds()).toEqual([
+    "files",
+    "git",
+    "paste",
+    "more",
+  ]);
+});
+
+test("overflow actions contain the secondary utilities", () => {
+  expect(getOverflowActionIds()).toEqual([
+    "clipboard",
+    "toggle-extra-keys",
+    "wrap-lines",
+    "fullscreen",
+    "font-decrease",
+    "font-increase",
+    "help",
+    "linked-view",
   ]);
 });

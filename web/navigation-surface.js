@@ -2,6 +2,31 @@ function normalizeCwd(value) {
   return String(value || "").trim();
 }
 
+const DESKTOP_PRIMARY_ACTION_IDS = Object.freeze([
+  "files",
+  "git",
+  "palette",
+  "more",
+]);
+
+const MOBILE_PRIMARY_ACTION_IDS = Object.freeze([
+  "files",
+  "git",
+  "paste",
+  "more",
+]);
+
+const OVERFLOW_ACTION_IDS = Object.freeze([
+  "clipboard",
+  "toggle-extra-keys",
+  "wrap-lines",
+  "fullscreen",
+  "font-decrease",
+  "font-increase",
+  "help",
+  "linked-view",
+]);
+
 function joinPath(basePath, childName) {
   const base = normalizeCwd(basePath);
   const child = String(childName || "")
@@ -76,10 +101,25 @@ function buildGitBranchActions(context = {}, handlers = {}) {
     }));
 }
 
+function getDesktopPrimaryActionIds() {
+  return [...DESKTOP_PRIMARY_ACTION_IDS];
+}
+
+function getMobilePrimaryActionIds() {
+  return [...MOBILE_PRIMARY_ACTION_IDS];
+}
+
+function getOverflowActionIds() {
+  return [...OVERFLOW_ACTION_IDS];
+}
+
 const NavigationSurfaceModule = {
   buildGitBranchActions,
   createNewFolderAction,
   createOpenGitBranchesAction,
+  getDesktopPrimaryActionIds,
+  getMobilePrimaryActionIds,
+  getOverflowActionIds,
   joinPath,
 };
 
@@ -95,5 +135,8 @@ if (typeof exports !== "undefined") {
   exports.buildGitBranchActions = buildGitBranchActions;
   exports.createNewFolderAction = createNewFolderAction;
   exports.createOpenGitBranchesAction = createOpenGitBranchesAction;
+  exports.getDesktopPrimaryActionIds = getDesktopPrimaryActionIds;
+  exports.getMobilePrimaryActionIds = getMobilePrimaryActionIds;
+  exports.getOverflowActionIds = getOverflowActionIds;
   exports.joinPath = joinPath;
 }
