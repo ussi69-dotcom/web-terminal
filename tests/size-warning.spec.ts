@@ -17,7 +17,7 @@ import {
 } from "./fixtures";
 
 // Test constants
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const NORMAL_WIDTH = 1200;
 const NORMAL_HEIGHT = 800;
 const SMALL_WIDTH = 400;
@@ -118,5 +118,26 @@ test.describe("Size Warning Feature", () => {
     // Verify the warning text includes the minimum dimensions (80x24)
     const warningText = await sizeWarning.textContent();
     expect(warningText).toContain(`${MIN_COLS}x${MIN_ROWS}`);
+  });
+
+  test.describe("mobile chrome", () => {
+    test.use({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+    });
+
+    test("keeps the bottom action bar visible without a warning", async ({
+      page,
+    }) => {
+      await page.goto(APP_URL);
+      await resizeWindow(page, 390, 844);
+      await waitForTerminal(page);
+
+      await expect(page.locator("#mobile-action-bar")).toBeVisible();
+      await expect(page.locator(".toolbar-row-2")).not.toBeVisible();
+
+      const sizeWarning = await getSizeWarning(page);
+      await expect(sizeWarning).not.toHaveClass(/visible/);
+    });
   });
 });

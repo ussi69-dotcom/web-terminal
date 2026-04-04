@@ -3467,6 +3467,10 @@ class TerminalManager {
     this.container = document.getElementById("terminal-container");
     this.tabs = document.getElementById("terminals-tabs");
     this.directoryInput = document.getElementById("directory");
+    this.toolsSheetDirectoryInput = document.getElementById(
+      "tools-sheet-directory",
+    );
+    this.toolbar = document.querySelector(".toolbar");
     this.connectionStatus = document.getElementById("connection-status");
     this.toolsSheet = document.getElementById("tools-sheet");
 
@@ -3493,7 +3497,7 @@ class TerminalManager {
 
   init() {
     const lastDir = localStorage.getItem("opencode-web-dir");
-    if (lastDir) this.directoryInput.value = lastDir;
+    if (lastDir) this.setDirectoryValue(lastDir);
 
     // Button handlers
     document
@@ -3512,8 +3516,17 @@ class TerminalManager {
       .getElementById("dir-select")
       ?.addEventListener("click", () => this.selectDir());
 
-    this.directoryInput?.addEventListener("change", () => {
-      localStorage.setItem("opencode-web-dir", this.directoryInput.value);
+    this.directoryInput?.addEventListener("input", (event) => {
+      this.setDirectoryValue(event.target.value);
+    });
+    this.directoryInput?.addEventListener("change", (event) => {
+      this.setDirectoryValue(event.target.value);
+    });
+    this.toolsSheetDirectoryInput?.addEventListener("input", (event) => {
+      this.setDirectoryValue(event.target.value);
+    });
+    this.toolsSheetDirectoryInput?.addEventListener("change", (event) => {
+      this.setDirectoryValue(event.target.value);
     });
 
     // Toolbar action buttons
@@ -3797,6 +3810,28 @@ class TerminalManager {
     });
   }
 
+  getCurrentDirectoryValue() {
+    return (
+      this.directoryInput?.value.trim() ||
+      this.toolsSheetDirectoryInput?.value.trim() ||
+      ""
+    );
+  }
+
+  setDirectoryValue(value) {
+    const next = String(value || "");
+    if (this.directoryInput && this.directoryInput.value !== next) {
+      this.directoryInput.value = next;
+    }
+    if (
+      this.toolsSheetDirectoryInput &&
+      this.toolsSheetDirectoryInput.value !== next
+    ) {
+      this.toolsSheetDirectoryInput.value = next;
+    }
+    localStorage.setItem("opencode-web-dir", next);
+  }
+
   setupToolsSheet() {
     if (!this.toolsSheet) return;
 
@@ -4074,7 +4109,7 @@ class TerminalManager {
 
   getCommandPaletteContext() {
     const activeTerminal = this.getActiveTerminal();
-    const cwd = activeTerminal?.cwd || this.directoryInput?.value || "";
+    const cwd = activeTerminal?.cwd || this.getCurrentDirectoryValue() || "";
     const gitContext = this.commandPaletteGitCache.get(cwd) || {
       isGitRepo: false,
       gitBranches: [],
@@ -4151,7 +4186,8 @@ class TerminalManager {
   }
 
   async buildCommandPaletteContext() {
-    const cwd = this.getActiveTerminal()?.cwd || this.directoryInput?.value || "";
+    const cwd =
+      this.getActiveTerminal()?.cwd || this.getCurrentDirectoryValue() || "";
     await this.ensureCommandPaletteGitContext(cwd);
     return this.getCommandPaletteContext();
   }
@@ -4712,7 +4748,7 @@ class TerminalManager {
     const active = this.getActiveTerminal();
     return {
       workspaceId: active?.workspaceId || null,
-      cwd: active?.cwd || this.directoryInput?.value || "/",
+      cwd: active?.cwd || this.getCurrentDirectoryValue() || "/",
     };
   }
 
@@ -5966,7 +6002,7 @@ class TerminalManager {
     }
     await this.waitForFontMetrics();
 
-    const cwd = this.directoryInput?.value.trim() || undefined;
+    const cwd = this.getCurrentDirectoryValue() || undefined;
     const { cols, rows } = this.estimateInitialTerminalSize(split);
 
     try {
@@ -6545,6 +6581,13 @@ class TerminalManager {
     const keyboardHeight = windowHeight - viewportHeight - viewport.offsetTop;
 
     const extraKeys = document.getElementById("extra-keys");
+    const mobileActionBar = document.getElementById("mobile-action-bar");
+    const toolbarHeight = this.toolbar?.offsetHeight || 0;
+    const extraKeysHeight = extraKeys?.offsetHeight || 0;
+    const mobileActionBarHeight =
+      mobileActionBar && getComputedStyle(mobileActionBar).display !== "none"
+        ? mobileActionBar.offsetHeight || 0
+        : 0;
     const isKeyboardOpen = keyboardHeight > 100;
 
     if (isKeyboardOpen) {
@@ -6555,7 +6598,7 @@ class TerminalManager {
       extraKeys.style.left = "0";
       extraKeys.style.right = "0";
       extraKeys.style.zIndex = "1000";
-      this.container.style.height = `calc(${viewportHeight}px - var(--toolbar-height, 50px) - var(--extra-keys-height, 52px))`;
+      this.container.style.height = `calc(${viewportHeight}px - ${toolbarHeight}px - ${extraKeysHeight}px - ${mobileActionBarHeight}px)`;
       document.body.classList.add("virtual-keyboard-open");
     } else {
       // Hide extra keys when keyboard closes (mobile only)
@@ -6621,7 +6664,7 @@ class TerminalManager {
 
   async openDirPicker() {
     document.getElementById("dir-modal")?.classList.remove("hidden");
-    await this.loadDir(this.directoryInput?.value || "/");
+    await this.loadDir(this.getCurrentDirectoryValue() || "/");
   }
 
   closeDirPicker() {
@@ -6697,8 +6740,7 @@ class TerminalManager {
   selectDir() {
     const dir = this.selectedDir || this.currentDirPath;
     if (dir) {
-      this.directoryInput.value = dir;
-      localStorage.setItem("opencode-web-dir", dir);
+      this.setDirectoryValue(dir);
     }
     this.closeDirPicker();
   }

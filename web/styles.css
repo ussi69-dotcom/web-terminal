@@ -959,6 +959,34 @@ body.touch-input-mode .xterm .composition-view.active {
   gap: 10px;
 }
 
+.tools-sheet-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tools-sheet-directory {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.tools-sheet-directory:focus {
+  outline: none;
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.tools-sheet-browse {
+  flex: 0 0 auto;
+}
+
 .tools-sheet-btn {
   display: flex;
   align-items: center;
@@ -2142,11 +2170,7 @@ body.virtual-keyboard-open .extra-keys {
 
   /* Mobile: keep the second row out of the primary shell */
   .toolbar-row-2 {
-    display: flex;
-    width: 100%;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
+    display: none;
   }
 
   .btn-new .btn-label {
@@ -2165,10 +2189,6 @@ body.virtual-keyboard-open .extra-keys {
 
   .toolbar .status-dot {
     margin-left: auto;
-  }
-
-  .server-stats {
-    display: none;
   }
 
   .desktop-primary-actions {

@@ -1,5 +1,11 @@
 import path from "node:path";
-import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+import {
+  test,
+  expect,
+  resetAppState,
+  waitForTerminal,
+  resizeWindow,
+} from "./fixtures";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const DEFAULT_ROOT = process.env.HOME || "/home/deploy";
@@ -31,10 +37,10 @@ test.describe("Mobile regressions", () => {
     expect(apiResponse.ok()).toBe(true);
     const apiData = await apiResponse.json();
 
-    await page.fill("#directory", "/tmp/does-not-exist/child");
-    await page.evaluate(() => {
-      window.terminalManager.openDirPicker();
-    });
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await page.fill("#tools-sheet-directory", "/tmp/does-not-exist/child");
+    await page.locator("#tools-sheet-browse").click();
 
     await page.waitForSelector("#dir-modal:not(.hidden)", { timeout: 5000 });
     await page.waitForFunction(() => {
@@ -76,6 +82,17 @@ test.describe("Mobile regressions", () => {
     await expect(toolbar.getByRole("button", { name: "Git" })).toHaveCount(0);
     await expect(toolbar.getByRole("button", { name: "Paste" })).toHaveCount(0);
     await expect(toolbar.getByRole("button", { name: "More" })).toHaveCount(0);
+  });
+
+  test("mobile chrome keeps the bottom action bar visible without a size warning", async ({
+    page,
+  }) => {
+    await resizeWindow(page, 390, 844);
+
+    await expect(page.locator("#mobile-action-bar")).toBeVisible();
+    await expect(page.locator(".toolbar-row-2")).not.toBeVisible();
+    const sizeWarning = page.locator(".size-warning");
+    await expect(sizeWarning).not.toHaveClass(/visible/);
   });
 
   test("touch input helpers stay visually hidden at the cursor", async ({
