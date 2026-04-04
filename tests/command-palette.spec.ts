@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
+import path from "node:path";
 import {
+  cleanupTempDir,
+  createExplorerFixtureDir,
+  createGitFixtureRepo,
+  createWorkspaceInDir,
   test,
   expect,
   openCommandPalette,
@@ -19,10 +24,25 @@ async function ensureSecondWorkspace(page: Page) {
   });
 }
 
+async function getActiveTerminalCwd(page: Page) {
+  return page.evaluate(() => {
+    const tm = (window as any).terminalManager;
+    const active = tm?.terminals?.get?.(tm?.activeId);
+    return active?.cwd || null;
+  });
+}
+
 test.describe("Command palette navigation layer", () => {
+  let tempDirs: string[] = [];
+
   test.beforeEach(async ({ page }) => {
+    tempDirs = [];
     await resetAppState(page, APP_URL);
     await waitForTerminal(page);
+  });
+
+  test.afterEach(async () => {
+    await Promise.all(tempDirs.map((dir) => cleanupTempDir(dir)));
   });
 
   test("opens via keyboard shortcut and focuses the input", async ({ page }) => {
@@ -84,6 +104,142 @@ test.describe("Command palette navigation layer", () => {
 
     await expect(secondTab).toHaveClass(/active/);
     await expect(firstTab).not.toHaveClass(/active/);
+  });
+
+  test("surfaces a recent workspace entry that restores the original cwd", async ({
+    page,
+  }) => {
+    const workspaceA = await createExplorerFixtureDir(["alpha"]);
+    const workspaceB = await createExplorerFixtureDir(["beta"]);
+    tempDirs.push(workspaceA.root, workspaceB.root);
+
+    await createWorkspaceInDir(page, workspaceA.root);
+    const workspaceAId = await page
+      .locator("#terminals-tabs .tab.active")
+      .getAttribute("data-workspace-id");
+    const workspaceALabel = path.basename(workspaceA.root);
+
+    await createWorkspaceInDir(page, workspaceB.root);
+    await expect(page.locator("#terminals-tabs .tab.active")).toContainText(
+      path.basename(workspaceB.root),
+    );
+
+    await openCommandPalette(page);
+    await page.locator("#command-palette-input").fill(workspaceALabel);
+
+    const recentWorkspaceEntry = page
+      .getByRole("button", { name: /Recent Workspace/i })
+      .first();
+    await expect(recentWorkspaceEntry).toBeVisible();
+
+    await recentWorkspaceEntry.click();
+
+    await expect
+      .poll(() =>
+        page.locator("#terminals-tabs .tab.active").getAttribute("data-workspace-id"),
+      )
+      .toBe(workspaceAId);
+    await expect(page.locator("#directory")).toHaveValue(workspaceA.root);
+    await expect.poll(() => getActiveTerminalCwd(page)).toBe(workspaceA.root);
+  });
+
+  test("offers Go to Directory for absolute paths and activates the target cwd", async ({
+    page,
+  }) => {
+    const workspace = await createExplorerFixtureDir(["target"]);
+    tempDirs.push(workspace.root);
+
+    await openCommandPalette(page);
+    await page.locator("#command-palette-input").fill(workspace.root);
+
+    const goToDirectory = page
+      .getByRole("button", { name: "Go to Directory..." })
+      .first();
+    await expect(goToDirectory).toBeVisible();
+
+    await goToDirectory.click();
+
+    await expect(page.locator("#terminals-tabs .tab.active")).toContainText(
+      path.basename(workspace.root),
+    );
+    await expect(page.locator("#directory")).toHaveValue(workspace.root);
+    await expect.poll(() => getActiveTerminalCwd(page)).toBe(workspace.root);
+  });
+
+  test("reveals the current cwd in Files from the palette", async ({ page }) => {
+    const workspace = await createExplorerFixtureDir(["files"]);
+    tempDirs.push(workspace.root);
+
+    await createWorkspaceInDir(page, workspace.root);
+    const workspaceId = await page
+      .locator("#terminals-tabs .tab.active")
+      .getAttribute("data-workspace-id");
+
+    await openCommandPalette(page);
+    await page
+      .locator("#command-palette-input")
+      .fill("Reveal Current CWD in Files");
+
+    const revealFiles = page
+      .getByRole("button", { name: "Reveal Current CWD in Files" })
+      .first();
+    await expect(revealFiles).toBeVisible();
+
+    await revealFiles.click();
+
+    await expect(page.locator("#file-explorer")).toBeVisible();
+    await expect(page.locator("#file-explorer")).toHaveAttribute(
+      "data-workspace-id",
+      workspaceId,
+    );
+    await expect(page.locator("#file-explorer-list")).toHaveAttribute(
+      "data-path",
+      workspace.root,
+    );
+    await expect(page.locator("#file-explorer-breadcrumb")).toContainText(
+      path.basename(workspace.root),
+    );
+  });
+
+  test("exposes an explicit Checkout Git Branch entry before switching branches", async ({
+    page,
+  }) => {
+    const repoDir = await createGitFixtureRepo();
+    tempDirs.push(repoDir);
+    const targetBranch = `palette-checkout-${Date.now()}`;
+
+    await page.evaluate((branchName) => {
+      window.prompt = () => branchName;
+    }, targetBranch);
+
+    await createWorkspaceInDir(page, repoDir);
+
+    await openCommandPalette(page);
+    await page.locator("#command-palette-input").fill("Checkout Git Branch");
+
+    const checkoutEntry = page
+      .getByRole("button", { name: "Checkout Git Branch" })
+      .first();
+    await expect(checkoutEntry).toBeVisible();
+
+    await checkoutEntry.click();
+
+    const branchEntry = page
+      .getByRole("button", { name: targetBranch })
+      .first();
+    await expect(branchEntry).toBeVisible();
+
+    await branchEntry.click();
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          const tm = (window as any).terminalManager;
+          const active = tm?.terminals?.get?.(tm?.activeId);
+          return active?.cwd || null;
+        });
+      })
+      .toBe(repoDir);
   });
 });
 
