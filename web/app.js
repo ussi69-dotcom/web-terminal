@@ -103,6 +103,7 @@ const TERMINAL_PADDING_Y = 16;
 const FONT_METRIC_WAIT_MS = 350;
 const DESKTOP_MAX_TERMINAL_COLS = 240;
 const DESKTOP_MAX_TERMINAL_ROWS = 60;
+const DIRECTORY_DRAFT_LOCK_MS = 800;
 const APP_DEFAULT_TERMINAL_COLS =
   window.TerminalSizing?.DEFAULT_TERMINAL_COLS || 120;
 const APP_DEFAULT_TERMINAL_ROWS =
@@ -3636,16 +3637,28 @@ class TerminalManager {
       ?.addEventListener("click", () => this.selectDir());
 
     this.directoryInput?.addEventListener("input", (event) => {
-      this.setDirectoryValue(event.target.value);
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
     });
     this.directoryInput?.addEventListener("change", (event) => {
-      this.setDirectoryValue(event.target.value);
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
     });
     this.toolsSheetDirectoryInput?.addEventListener("input", (event) => {
-      this.setDirectoryValue(event.target.value);
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
     });
     this.toolsSheetDirectoryInput?.addEventListener("change", (event) => {
-      this.setDirectoryValue(event.target.value);
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
     });
 
     // Toolbar action buttons
@@ -4134,6 +4147,26 @@ class TerminalManager {
     );
   }
 
+  markDirectoryDraftEdited() {
+    this.directoryDraftEditedAt = Date.now();
+  }
+
+  shouldPreserveDirectoryDraft(nextValue) {
+    const activeElement = document.activeElement;
+    const directoryFocused =
+      activeElement === this.directoryInput ||
+      activeElement === this.toolsSheetDirectoryInput;
+    const hasRecentDraft =
+      Date.now() - (this.directoryDraftEditedAt || 0) < DIRECTORY_DRAFT_LOCK_MS;
+    const currentValue = this.getCurrentDirectoryValue();
+
+    return (
+      (directoryFocused || hasRecentDraft) &&
+      Boolean(currentValue) &&
+      currentValue !== nextValue
+    );
+  }
+
   normalizeWorkspaceCwd(value) {
     const cwd = String(value || "").trim();
     if (!cwd) return "";
@@ -4141,8 +4174,14 @@ class TerminalManager {
     return cwd.replace(/\/+$/, "");
   }
 
-  setDirectoryValue(value) {
+  setDirectoryValue(value, { force = false, userDraft = false } = {}) {
     const next = String(value || "");
+    if (userDraft) {
+      this.markDirectoryDraftEdited();
+    } else if (!force && this.shouldPreserveDirectoryDraft(next)) {
+      return this.getCurrentDirectoryValue();
+    }
+
     if (this.directoryInput && this.directoryInput.value !== next) {
       this.directoryInput.value = next;
     }
@@ -4764,7 +4803,7 @@ class TerminalManager {
     const targetCwd = this.normalizeWorkspaceCwd(cwd);
     if (!targetCwd) return false;
 
-    this.setDirectoryValue(targetCwd);
+    this.setDirectoryValue(targetCwd, { force: true });
 
     const existingWorkspaceId = this.findWorkspaceIdByCwd(targetCwd);
     const existingTerminalId = existingWorkspaceId
@@ -4820,8 +4859,27 @@ class TerminalManager {
   async revealCurrentCwdInFilesFromPalette(cwd) {
     const targetCwd = this.normalizeWorkspaceCwd(cwd);
     if (!targetCwd) return false;
-    this.setDirectoryValue(targetCwd);
-    await this.openFileExplorer();
+
+    const { workspaceId } = this.getActiveWorkspaceContext();
+    if (!workspaceId || !this.fileExplorer) return false;
+
+    this.setDirectoryValue(targetCwd, { force: true });
+
+    if (
+      window.gitManager &&
+      !window.gitManager.panel?.classList.contains("hidden")
+    ) {
+      window.gitManager.hide();
+    }
+
+    const targetPath = this.fileExplorer.openForWorkspace(workspaceId, targetCwd);
+    this.rightSurface = "files";
+
+    if (targetPath) {
+      await this.fileExplorer.loadDir(targetPath, workspaceId);
+    }
+
+    this.syncSurfaceButtonState();
     return true;
   }
 
@@ -7465,7 +7523,7 @@ class TerminalManager {
     }
     this.tileManager.setActive(id);
     if (t?.workspaceId && t.cwd) {
-      this.setDirectoryValue(t.cwd);
+      this.setDirectoryValue(t.cwd, { force: true });
       this.updateWorkspaceLabel(t.workspaceId, t.cwd);
       this.rememberWorkspaceById(t.workspaceId, t.cwd);
     }
@@ -7771,7 +7829,7 @@ class TerminalManager {
   selectDir() {
     const dir = this.selectedDir || this.currentDirPath;
     if (dir) {
-      this.setDirectoryValue(dir);
+      this.setDirectoryValue(dir, { force: true });
     }
     this.closeDirPicker();
   }
