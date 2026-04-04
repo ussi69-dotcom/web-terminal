@@ -27,7 +27,7 @@ test.describe("File explorer surface on desktop", () => {
   test("opens Files as a docked explorer instead of the legacy modal", async ({
     page,
   }) => {
-    await page.click("#activity-rail-files");
+    await page.click("#desktop-files-btn");
 
     await expect(page.locator("#file-explorer")).toBeVisible();
     await expect(page.locator("#file-explorer")).toHaveAttribute(
@@ -48,7 +48,7 @@ test.describe("File explorer surface on desktop", () => {
     const workspaceAId = await page
       .locator("#terminals-tabs .tab.active")
       .getAttribute("data-workspace-id");
-    await page.click("#activity-rail-files");
+    await page.click("#desktop-files-btn");
     await expect(page.locator("#file-explorer")).toBeVisible();
     await page
       .locator("#file-explorer .file-item")
@@ -63,7 +63,7 @@ test.describe("File explorer surface on desktop", () => {
     const workspaceBId = await page
       .locator("#terminals-tabs .tab.active")
       .getAttribute("data-workspace-id");
-    await page.click("#activity-rail-files");
+    await page.click("#desktop-files-btn");
     await page
       .locator("#file-explorer .file-item")
       .filter({ hasText: "beta" })
@@ -73,11 +73,11 @@ test.describe("File explorer surface on desktop", () => {
       "beta",
     );
 
-    await page.click("#activity-rail-git");
+    await page.click("#desktop-git-btn");
     await expect(page.locator("#git-panel")).toBeVisible();
     await expect(page.locator("#file-explorer")).not.toBeVisible();
 
-    await page.click("#activity-rail-files");
+    await page.click("#desktop-files-btn");
     await expect(page.locator("#file-explorer")).toBeVisible();
     await expect(page.locator("#git-panel")).not.toBeVisible();
 
