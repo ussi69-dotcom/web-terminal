@@ -5962,22 +5962,19 @@ class TerminalManager {
         try {
           this.fitTerminalState(t);
 
-          // Check terminal size - be lenient on mobile
+          // Match compact chrome behavior to the same width-based breakpoint as CSS.
+          // A narrow layout should not inherit desktop-only minimum-size warnings
+          // just because the device lacks touch input.
           const cols = t.terminal.cols;
           const rows = t.terminal.rows;
-
-          // On mobile, accept much smaller terminals (40x12 minimum)
-          // On desktop, prefer 80x24 but still allow smaller
-          const minCols = platformDetector.isMobile ? 40 : 60;
-          const minRows = platformDetector.isMobile ? 12 : 16;
+          const usesCompactLayout = platformDetector.smallScreen;
+          const minCols = usesCompactLayout ? 40 : 60;
+          const minRows = usesCompactLayout ? 12 : 16;
           const isTooSmall = cols < minCols || rows < minRows;
 
-          // Hide size warning on mobile entirely, show on desktop only for very small
+          // Hide the warning for compact layouts where the bottom action bar is expected.
           if (t.sizeWarning) {
-            t.sizeWarning.classList.toggle(
-              "visible",
-              isTooSmall && !platformDetector.isMobile,
-            );
+            t.sizeWarning.classList.toggle("visible", isTooSmall && !usesCompactLayout);
           }
 
           // Always send resize - terminal will work even if small
