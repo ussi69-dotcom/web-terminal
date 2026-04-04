@@ -2,7 +2,9 @@ import path from "node:path";
 import {
   test,
   expect,
-  expectExactButtons,
+  expectButtonLabelsExactly,
+  dragLayoutEditorItem,
+  LAYOUT_EDITOR_TEST_IDS,
   resetAppState,
   openLayoutEditor,
   waitForTerminal,
@@ -74,7 +76,7 @@ test.describe("Mobile regressions", () => {
     const mobileBar = page.locator("#mobile-action-bar");
 
     await expect(mobileBar).toBeVisible();
-    await expectExactButtons(mobileBar, ["Files", "Git", "Paste", "More"]);
+    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste", "More"]);
   });
 
   test("customizes the mobile pinned actions from More and moves them back to More", async ({
@@ -82,26 +84,45 @@ test.describe("Mobile regressions", () => {
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
 
-    const toolsSheet = await openLayoutEditor(page, "Mobile");
+    const layoutEditor = await openLayoutEditor(page, "Mobile");
     await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Available in More" }),
     ).toBeVisible();
 
-    const clipboardAction = toolsSheet.getByRole("button", { name: "Clipboard" });
-    const pinnedZone = toolsSheet.locator("[data-layout-dropzone='pinned']");
-    const availableZone = toolsSheet.locator("[data-layout-dropzone='available']");
+    const pinnedZone = layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned);
+    const availableZone = layoutEditor.getByTestId(
+      LAYOUT_EDITOR_TEST_IDS.available,
+    );
 
-    await clipboardAction.dragTo(pinnedZone);
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+      pinnedZone,
+    );
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
 
-    await toolsSheet.getByRole("button", { name: "Clipboard" }).dragTo(availableZone);
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned)
+        .getByRole("button", { name: "Clipboard" }),
+      availableZone,
+    );
     await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
-    await expect(toolsSheet.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Done" }).click();
     await page.getByRole("button", { name: "More" }).click();
-    await expect(page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
   });
 
   test("mobile chrome keeps the bottom action bar visible without a size warning", async ({

@@ -6,7 +6,9 @@ import {
   createWorkspaceInDir,
   createGitFixtureRepo,
   expect,
-  expectExactButtons,
+  expectButtonLabelsExactly,
+  dragLayoutEditorItem,
+  LAYOUT_EDITOR_TEST_IDS,
   openLayoutEditor,
   openCommandPalette,
   resetAppState,
@@ -111,16 +113,20 @@ test.describe("Shell action hierarchy on desktop", () => {
   }) => {
     const toolbar = page.locator(".toolbar");
 
-    const toolsSheet = await openLayoutEditor(page, "Desktop");
+    const layoutEditor = await openLayoutEditor(page, "Desktop");
     await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Available in More" }),
     ).toBeVisible();
 
-    const clipboardAction = toolsSheet.getByRole("button", { name: "Clipboard" });
-    const pinnedZone = toolsSheet.locator("[data-layout-dropzone='pinned']");
+    const clipboardAction = layoutEditor
+      .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+      .getByRole("button", { name: "Clipboard" });
+    const pinnedZone = layoutEditor.getByTestId(
+      LAYOUT_EDITOR_TEST_IDS.pinned,
+    );
 
-    await clipboardAction.dragTo(pinnedZone);
+    await dragLayoutEditorItem(page, clipboardAction, pinnedZone);
     await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
 
     await page.reload();
@@ -133,20 +139,24 @@ test.describe("Shell action hierarchy on desktop", () => {
   }) => {
     const desktopPrimaryActions = page.locator(".desktop-primary-actions");
 
-    const toolsSheet = await openLayoutEditor(page, "Desktop");
+    const layoutEditor = await openLayoutEditor(page, "Desktop");
     await expect(
       page.getByRole("heading", { name: "Available in More" }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset defaults" })).toBeVisible();
 
-    await toolsSheet
-      .getByRole("button", { name: "Clipboard" })
-      .dragTo(toolsSheet.locator("[data-layout-dropzone='pinned']"));
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+      layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned),
+    );
     await expect(desktopPrimaryActions.getByRole("button", { name: "Clipboard" })).toBeVisible();
 
     await page.getByRole("button", { name: "Reset defaults" }).click();
 
-    await expectExactButtons(desktopPrimaryActions, [
+    await expectButtonLabelsExactly(desktopPrimaryActions, [
       "Files",
       "Git",
       "Palette",
@@ -156,7 +166,7 @@ test.describe("Shell action hierarchy on desktop", () => {
     await resizeWindow(page, 390, 844);
     const mobileBar = page.locator("#mobile-action-bar");
     await expect(mobileBar).toBeVisible();
-    await expectExactButtons(mobileBar, ["Files", "Git", "Paste", "More"]);
+    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste", "More"]);
   });
 });
 

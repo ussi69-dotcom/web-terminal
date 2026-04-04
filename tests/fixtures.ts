@@ -344,27 +344,61 @@ export async function openToolsSheet(page: Page) {
   await expect(page.locator("#tools-sheet")).toBeVisible();
 }
 
+export const LAYOUT_EDITOR_TEST_IDS = {
+  root: "layout-editor",
+  pinned: "layout-editor-pinned-actions",
+  available: "layout-editor-available-actions",
+} as const;
+
 export async function openLayoutEditor(
   page: Page,
   mode: "Desktop" | "Mobile",
 ) {
-  const toolsSheet = page.locator("#tools-sheet");
-
   await page.getByRole("button", { name: "More" }).click();
-  await expect(toolsSheet).toBeVisible();
+  await expect(page.locator("#tools-sheet")).toBeVisible();
   await page.getByRole("button", { name: "Edit layout" }).click();
   await page.getByRole("button", { name: mode }).click();
 
-  return toolsSheet;
+  const layoutEditor = page.getByTestId(LAYOUT_EDITOR_TEST_IDS.root);
+  await expect(layoutEditor).toBeVisible();
+  return layoutEditor;
 }
 
-export async function expectExactButtons(
+export async function expectButtonLabelsExactly(
   container: Locator,
   labels: string[],
 ) {
   const buttons = container.getByRole("button");
   await expect(buttons).toHaveCount(labels.length);
   await expect(buttons).toHaveText(labels);
+}
+
+export async function dragLayoutEditorItem(
+  page: Page,
+  source: Locator,
+  target: Locator,
+) {
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
+
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox) throw new Error("Missing source bounding box for layout drag");
+  if (!targetBox) throw new Error("Missing target bounding box for layout drag");
+
+  const sourceCenter = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const targetCenter = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height / 2,
+  };
+
+  await page.mouse.move(sourceCenter.x, sourceCenter.y);
+  await page.mouse.down();
+  await page.mouse.move(targetCenter.x, targetCenter.y, { steps: 12 });
+  await page.mouse.up();
 }
 
 /**
