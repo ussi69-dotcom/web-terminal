@@ -47,7 +47,7 @@
           <span id="connection-status" class="status-dot" title="Connected">●</span>
         </div>
 
-        <!-- ROW 2: Desktop always visible, Mobile hidden with toggle -->
+        <!-- ROW 2: Desktop primary actions and context -->
         <div class="toolbar-row-2">
           <div class="dir-input">
             <input id="directory" placeholder="Working directory..." />
@@ -56,16 +56,48 @@
             </button>
           </div>
 
-          <button
-            id="command-palette-trigger"
-            class="btn-icon btn-icon-action-palette"
-            title="Actions (Ctrl+Shift+P)"
-            aria-label="Open actions palette"
-            aria-haspopup="dialog"
-            aria-controls="command-palette"
-          >
-            <i data-lucide="more-horizontal"></i>
-          </button>
+          <div class="desktop-primary-actions" aria-label="Primary actions">
+            <button
+              id="desktop-files-btn"
+              class="toolbar-action-btn toolbar-action-btn-primary"
+              data-action="file-manager"
+              title="Open files explorer"
+              aria-label="Files"
+            >
+              <i data-lucide="folder-open"></i>
+              <span>Files</span>
+            </button>
+            <button
+              id="desktop-git-btn"
+              class="toolbar-action-btn toolbar-action-btn-primary"
+              data-action="git"
+              title="Open git panel"
+              aria-label="Git"
+            >
+              <i data-lucide="git-branch"></i>
+              <span>Git</span>
+            </button>
+            <button
+              id="command-palette-trigger"
+              class="toolbar-action-btn toolbar-action-btn-secondary"
+              title="Actions (Ctrl+Shift+P)"
+              aria-label="Palette"
+              aria-haspopup="dialog"
+              aria-controls="command-palette"
+            >
+              <i data-lucide="more-horizontal"></i>
+              <span>Palette</span>
+            </button>
+            <button
+              id="desktop-more-btn"
+              class="toolbar-action-btn toolbar-action-btn-secondary"
+              title="More"
+              aria-label="More"
+            >
+              <i data-lucide="ellipsis"></i>
+              <span>More</span>
+            </button>
+          </div>
 
           <button
             id="linked-view-btn"
@@ -85,40 +117,6 @@
           </div>
         </div>
       </header>
-
-      <aside
-        id="activity-rail"
-        class="activity-rail"
-        aria-label="Workspace tools"
-      >
-        <button
-          id="activity-rail-files"
-          class="activity-rail-btn"
-          data-action="file-manager"
-          title="Open files explorer"
-          aria-label="Open files explorer"
-        >
-          <i data-lucide="folder-open"></i>
-        </button>
-        <button
-          id="activity-rail-clipboard"
-          class="activity-rail-btn"
-          data-action="clipboard"
-          title="Open clipboard history"
-          aria-label="Open clipboard history"
-        >
-          <i data-lucide="clipboard"></i>
-        </button>
-        <button
-          id="activity-rail-git"
-          class="activity-rail-btn"
-          data-action="git"
-          title="Open git panel"
-          aria-label="Open git panel"
-        >
-          <i data-lucide="git-branch"></i>
-        </button>
-      </aside>
 
       <div id="tools-sheet" class="tools-sheet hidden" aria-hidden="true">
         <div class="tools-sheet-backdrop"></div>
