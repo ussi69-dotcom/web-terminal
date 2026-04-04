@@ -35,6 +35,17 @@ function getOverflowActionIds() {
   return cloneActionIds("overflow");
 }
 
+function getDefaultPinnedActionIds(mode) {
+  const normalizedMode = normalizeCwd(mode).toLowerCase();
+  if (normalizedMode === "desktop") {
+    return getDesktopPrimaryActionIds().filter((actionId) => actionId !== "more");
+  }
+  if (normalizedMode === "mobile") {
+    return getMobilePrimaryActionIds().filter((actionId) => actionId !== "more");
+  }
+  throw new Error(`Unknown layout mode: ${mode}`);
+}
+
 function uniqueActionIds(actionIds = []) {
   const seen = new Set();
   const normalized = [];
@@ -50,8 +61,8 @@ function uniqueActionIds(actionIds = []) {
 }
 
 const ACTION_LAYOUT_DEFAULTS = Object.freeze({
-  desktopPinned: Object.freeze(["files", "git", "palette"]),
-  mobilePinned: Object.freeze(["files", "git", "paste"]),
+  desktopPinned: Object.freeze(getDefaultPinnedActionIds("desktop")),
+  mobilePinned: Object.freeze(getDefaultPinnedActionIds("mobile")),
 });
 
 const ACTION_LAYOUT_CUSTOMIZABLE_ACTION_IDS = Object.freeze({
@@ -120,12 +131,33 @@ function validateActionLayoutState(value = {}) {
   };
 }
 
-function loadActionLayoutState(storage) {
+function readStorageValue(storage, key) {
   if (!storage || typeof storage.getItem !== "function") {
-    return getDefaultActionLayoutState();
+    return null;
   }
 
-  const raw = storage.getItem(ACTION_LAYOUT_STORAGE_KEY);
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageValue(storage, key, value) {
+  if (!storage || typeof storage.setItem !== "function") {
+    return false;
+  }
+
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadActionLayoutState(storage) {
+  const raw = readStorageValue(storage, ACTION_LAYOUT_STORAGE_KEY);
   if (!raw) {
     return getDefaultActionLayoutState();
   }
@@ -139,9 +171,7 @@ function loadActionLayoutState(storage) {
 
 function saveActionLayoutState(storage, value) {
   const next = validateActionLayoutState(value);
-  if (storage && typeof storage.setItem === "function") {
-    storage.setItem(ACTION_LAYOUT_STORAGE_KEY, JSON.stringify(next));
-  }
+  writeStorageValue(storage, ACTION_LAYOUT_STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
