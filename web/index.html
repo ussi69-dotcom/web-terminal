@@ -47,7 +47,7 @@
           <span id="connection-status" class="status-dot" title="Connected">●</span>
         </div>
 
-        <!-- ROW 2: Desktop always visible, Mobile hidden with toggle -->
+        <!-- ROW 2: Desktop primary actions and context -->
         <div class="toolbar-row-2">
           <div class="dir-input">
             <input id="directory" placeholder="Working directory..." />
@@ -55,6 +55,12 @@
               <i data-lucide="folder"></i>
             </button>
           </div>
+
+          <div
+            id="desktop-primary-actions"
+            class="desktop-primary-actions"
+            aria-label="Primary actions"
+          ></div>
 
           <button
             id="linked-view-btn"
@@ -67,57 +73,217 @@
             <i data-lucide="copy-plus"></i>
           </button>
 
-          <button id="file-manager-btn" class="btn-icon" data-action="file-manager" title="File Manager">
-            <i data-lucide="folder-open"></i>
-          </button>
-
-          <button id="clipboard-btn" class="btn-icon" data-action="clipboard" title="Clipboard History">
-            <i data-lucide="clipboard"></i>
-          </button>
-
-          <button id="git-btn" class="btn-icon" data-action="git" title="Git">
-            <i data-lucide="git-branch"></i>
-          </button>
-
-          <button id="copy-btn" class="btn-icon" data-action="copy" title="Copy">
-            <i data-lucide="copy"></i>
-          </button>
-
-          <button id="paste-btn" class="btn-icon" data-action="paste" title="Paste">
-            <i data-lucide="clipboard-paste"></i>
-          </button>
-
-          <button id="font-decrease-btn" class="btn-icon" data-action="font-decrease" title="Font -">
-            <i data-lucide="zoom-out"></i>
-          </button>
-
-          <button id="font-increase-btn" class="btn-icon" data-action="font-increase" title="Font +">
-            <i data-lucide="zoom-in"></i>
-          </button>
-
-          <button id="extra-keys-toggle-btn" class="btn-icon" data-action="toggle-extra-keys" title="Extra Keys (Ctrl+.)">
-            <i data-lucide="keyboard"></i>
-          </button>
-
-          <button id="wrap-lines-btn" class="btn-icon" data-action="wrap-lines" title="Line wrap: off">
-            <i data-lucide="wrap-text"></i>
-          </button>
-
-          <button id="fullscreen-btn" class="btn-icon" data-action="fullscreen" title="Fullscreen">
-            <i data-lucide="maximize-2"></i>
-          </button>
-
           <div id="server-stats" class="server-stats">
             <span class="stat" id="stat-cpu" title="CPU">--%</span>
             <span class="stat" id="stat-ram" title="RAM">--%</span>
             <span class="stat" id="stat-disk" title="Disk">--%</span>
           </div>
-
-          <button id="help-btn" class="btn-icon" title="Help (F1)">
-            <i data-lucide="help-circle"></i>
-          </button>
         </div>
       </header>
+
+      <div id="tools-sheet" class="tools-sheet hidden" aria-hidden="true">
+        <div class="tools-sheet-backdrop"></div>
+        <div class="tools-sheet-panel">
+          <div class="tools-sheet-header">
+            <div>
+              <div class="tools-sheet-kicker">Compact Navigation</div>
+              <h2>Tools</h2>
+            </div>
+            <button
+              id="tools-sheet-close"
+              class="btn-icon"
+              title="Close tools"
+              aria-label="Close tools"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="tools-sheet-context">
+            <input
+              id="tools-sheet-directory"
+              class="tools-sheet-directory"
+              placeholder="Working directory..."
+            />
+            <button
+              id="tools-sheet-browse"
+              class="btn-icon tools-sheet-browse"
+              title="Browse"
+              aria-label="Browse"
+              data-action="open-dir-picker"
+            >
+              <i data-lucide="folder"></i>
+            </button>
+          </div>
+
+          <button
+            id="tools-sheet-edit-layout"
+            class="tools-sheet-edit-layout"
+            type="button"
+          >
+            <i data-lucide="sliders-horizontal"></i>
+            <span>Edit layout</span>
+          </button>
+
+          <div
+            id="layout-editor"
+            class="tools-sheet-layout-editor hidden"
+            data-testid="layout-editor"
+            aria-hidden="true"
+          >
+            <div class="tools-sheet-layout-toolbar">
+              <div class="tools-sheet-layout-toggle" role="group" aria-label="Layout mode">
+                <button
+                  id="layout-editor-mode-desktop"
+                  class="tools-sheet-layout-toggle-btn"
+                  type="button"
+                  aria-pressed="true"
+                >
+                  Desktop
+                </button>
+                <button
+                  id="layout-editor-mode-mobile"
+                  class="tools-sheet-layout-toggle-btn"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  Mobile
+                </button>
+              </div>
+              <div class="tools-sheet-layout-actions">
+                <button
+                  id="layout-editor-reset"
+                  class="tools-sheet-layout-action-btn"
+                  type="button"
+                >
+                  Reset defaults
+                </button>
+                <button
+                  id="layout-editor-done"
+                  class="tools-sheet-layout-action-btn"
+                  type="button"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+
+            <section class="tools-sheet-layout-section">
+              <div class="tools-sheet-layout-section-header">
+                <h3>Pinned</h3>
+              </div>
+              <div
+                id="layout-editor-pinned-actions"
+                class="tools-sheet-layout-chips"
+                data-testid="layout-editor-pinned-actions"
+              ></div>
+            </section>
+
+            <section class="tools-sheet-layout-section">
+              <div class="tools-sheet-layout-section-header">
+                <h3>Available in More</h3>
+              </div>
+              <div
+                id="layout-editor-available-actions"
+                class="tools-sheet-layout-chips"
+                data-testid="layout-editor-available-actions"
+              ></div>
+            </section>
+          </div>
+
+          <div
+            id="tools-sheet-grid"
+            class="tools-sheet-grid"
+            aria-label="More actions"
+          ></div>
+        </div>
+      </div>
+
+      <div
+        id="file-explorer"
+        class="file-explorer hidden"
+        data-mode="docked"
+        aria-hidden="true"
+      >
+        <div class="file-explorer-backdrop"></div>
+        <section
+          class="file-explorer-shell"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="file-explorer-title"
+        >
+          <div class="file-explorer-header">
+            <div>
+              <div class="file-explorer-kicker">Workspace Surface</div>
+              <h3 id="file-explorer-title">Files</h3>
+            </div>
+            <div class="file-explorer-header-actions">
+              <span class="file-explorer-path-hint">Active workspace</span>
+              <button
+                id="file-explorer-close"
+                class="btn-icon"
+                title="Close file explorer"
+                aria-label="Close file explorer"
+              >
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+          </div>
+
+          <div
+            id="file-explorer-breadcrumb"
+            class="breadcrumb file-explorer-breadcrumb"
+          >
+            <span>Open Files to browse the current workspace.</span>
+          </div>
+
+          <div class="file-toolbar file-explorer-toolbar">
+            <button id="file-explorer-upload-btn" class="btn">
+              <i data-lucide="upload"></i>
+              <span>Upload</span>
+            </button>
+            <button id="file-explorer-mkdir-btn" class="btn">
+              <i data-lucide="folder-plus"></i>
+              <span>New Folder</span>
+            </button>
+            <button
+              id="file-explorer-refresh-btn"
+              class="btn-icon"
+              title="Refresh explorer"
+            >
+              <i data-lucide="refresh-cw"></i>
+            </button>
+            <input type="file" id="file-explorer-upload-input" multiple hidden />
+          </div>
+
+          <div id="file-explorer-list" class="file-list file-explorer-list">
+            <div class="file-explorer-empty">
+              <strong>Explorer shell ready.</strong>
+              <span>
+                This surface keeps file state pinned to the active workspace and
+                shares the right-side shell with Git.
+              </span>
+            </div>
+          </div>
+
+          <div
+            id="file-explorer-drop-zone"
+            class="file-drop-zone file-explorer-drop-zone hidden"
+          >
+            <span>Drop files here to upload</span>
+          </div>
+
+          <div class="file-explorer-footer">
+            <button
+              id="file-explorer-mobile-close"
+              class="btn btn-secondary"
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+        </section>
+      </div>
 
       <!-- Terminal container - tiles created dynamically by TileManager -->
       <div id="terminal-container">
@@ -160,6 +326,8 @@
         <span id="extra-keys-toggle" class="ek-toggle" title="More keys">⋯</span>
       </div>
 
+      <nav id="mobile-action-bar" class="mobile-action-bar" aria-label="Primary actions"></nav>
+
       <!-- Debug Panel (debug=1 only) -->
       <div id="debug-panel" class="debug-panel">
         <div class="debug-panel-header">
@@ -184,6 +352,48 @@
         </button>
       </div>
 
+      <!-- Command Palette -->
+      <div
+        id="command-palette"
+        class="command-palette hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="command-palette-input"
+      >
+        <div class="command-palette-panel">
+          <div class="command-palette-header">
+            <div class="command-palette-title-row">
+              <span class="command-palette-kicker">Navigation Layer</span>
+              <span class="command-palette-shortcut">Ctrl+Shift+P</span>
+            </div>
+            <input
+              id="command-palette-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Search actions, workspaces, and views..."
+            />
+          </div>
+          <div
+            id="command-palette-results"
+            class="command-palette-results"
+            role="listbox"
+            aria-label="Command palette results"
+          >
+            <div class="command-palette-section">
+              <div class="command-palette-section-label">Actions</div>
+              <div class="command-palette-empty">
+                Start typing to filter actions, workspaces, and view toggles.
+              </div>
+            </div>
+          </div>
+          <div class="command-palette-footer">
+            <span>Enter to run</span>
+            <span>Esc to close</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Fullscreen exit button -->
       <button id="fullscreen-exit" class="fullscreen-exit hidden" title="Exit fullscreen (Esc)">
         <i data-lucide="minimize-2"></i>
@@ -202,38 +412,6 @@
         <div class="modal-actions">
           <button id="dir-cancel" class="btn">Cancel</button>
           <button id="dir-select" class="btn btn-primary">Select</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- File Manager Modal -->
-    <div id="file-modal" class="modal hidden">
-      <div class="modal-content modal-large">
-        <div class="modal-header">
-          <h3>File Manager</h3>
-          <button class="modal-close" id="file-close">&times;</button>
-        </div>
-        <div id="file-breadcrumb" class="breadcrumb"></div>
-        <div class="file-toolbar">
-          <button id="file-upload-btn" class="btn">
-            <i data-lucide="upload"></i>
-            <span>Upload</span>
-          </button>
-          <button id="file-mkdir-btn" class="btn">
-            <i data-lucide="folder-plus"></i>
-            <span>New Folder</span>
-          </button>
-          <button id="file-refresh-btn" class="btn-icon" title="Refresh">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-          <input type="file" id="file-upload-input" multiple hidden />
-        </div>
-        <div id="file-list" class="file-list"></div>
-        <div id="file-drop-zone" class="file-drop-zone hidden">
-          <span>Drop files here to upload</span>
-        </div>
-        <div class="modal-actions">
-          <button id="file-modal-close" class="btn">Close</button>
         </div>
       </div>
     </div>
@@ -296,10 +474,17 @@
 
               <h4>General</h4>
               <table class="help-table">
+                <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></td><td>Open actions palette</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>F</kbd></td><td>Search</td></tr>
                 <tr><td><kbd>F11</kbd></td><td>Toggle fullscreen</td></tr>
                 <tr><td><kbd>Ctrl</kbd> + <kbd>+</kbd>/<kbd>-</kbd></td><td>Font size</td></tr>
                 <tr><td><kbd>F1</kbd> or <kbd>?</kbd></td><td>Show this help</td></tr>
+              </table>
+
+              <h4>Surfaces</h4>
+              <table class="help-table">
+                <tr><td>Desktop</td><td>Use the top-bar actions to open Files, Git, Palette, and More</td></tr>
+                <tr><td>Mobile</td><td>Use the bottom action bar for Files, Git, Paste, and More</td></tr>
               </table>
             </div>
           </div>
@@ -329,6 +514,10 @@
     <script src="/terminal-colors.js?v=20260112g"></script>
     <script src="/bootstrap-routing.js?v=20260401b"></script>
     <script src="/terminal-sizing.js?v=20260401a"></script>
+    <script src="/action-registry.js?v=20260403a"></script>
+    <script src="/command-palette.js?v=20260403a"></script>
+    <script src="/navigation-surface.js?v=20260403a"></script>
+    <script src="/file-explorer.js?v=20260403a"></script>
     <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html.min.js"></script>
     <script src="/app.js?v=20260401b"></script>
   </body>

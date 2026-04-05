@@ -3,6 +3,7 @@ import {
   expect,
   waitForTerminal,
   createGitFixtureRepo,
+  createWorkspaceInDir,
   cleanupTempDir,
   resetAppState,
 } from "./fixtures";
@@ -16,8 +17,8 @@ test.describe("Git Explorer - VS Code style", () => {
     repoDir = await createGitFixtureRepo();
     await resetAppState(page, APP_URL);
     await waitForTerminal(page);
-    await page.fill("#directory", repoDir);
-    await page.click('[data-action="git"]');
+    await createWorkspaceInDir(page, repoDir);
+    await page.getByRole("button", { name: "Git" }).click();
     await page.waitForSelector("#git-panel:not(.hidden)");
     await page.waitForTimeout(400);
   });

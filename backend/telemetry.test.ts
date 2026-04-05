@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   classifyAgentOutputPhase,
   inferRecoveredTmuxRuntimeState,
+  inferTmuxRuntimeState,
   inferPolledTmuxAgentState,
   parseShellIntegrationChunk,
   resolveAgentOutputState,
@@ -193,4 +194,93 @@ test("inferPolledTmuxAgentState marks codex responding only when new output appe
   });
 
   expect(state).toBe("responding");
+});
+
+test("inferTmuxRuntimeState recovers last exit code from tmux capture markers after prompt returns", () => {
+  const state = inferTmuxRuntimeState({
+    paneCurrentCommand: "bash",
+    capture: `prompt\n${START}printf 'listening on port 4174'\n${DONE(0)}prompt`,
+    previousCapture: "",
+    previousState: {
+      running: true,
+      lastExitCode: null,
+      agentName: null,
+      agentState: null,
+    },
+    hasUserPrompted: false,
+  });
+
+  expect(state).toEqual({
+    running: false,
+    lastExitCode: 0,
+    agentName: null,
+    agentState: null,
+  });
+});
+
+test("inferTmuxRuntimeState keeps explicit agent markers active even when tmux reports idle bash", () => {
+  const state = inferTmuxRuntimeState({
+    paneCurrentCommand: "bash",
+    capture: `${AGENT_START("codex")}OpenAI Codex\n\x1b]0;\u280b deckterm_dev\x07`,
+    previousCapture: "",
+    previousState: {
+      running: false,
+      lastExitCode: null,
+      agentName: "codex",
+      agentState: "thinking",
+    },
+    hasUserPrompted: false,
+  });
+
+  expect(state).toEqual({
+    running: false,
+    lastExitCode: null,
+    agentName: "codex",
+    agentState: "thinking",
+  });
+});
+
+test("inferTmuxRuntimeState promotes explicit agent output to responding after user prompt", () => {
+  const previousCapture = `${AGENT_START("codex")}Waiting for input\n`;
+  const state = inferTmuxRuntimeState({
+    paneCurrentCommand: "bash",
+    capture: `${previousCapture}Hello from agent`,
+    previousCapture,
+    previousState: {
+      running: false,
+      lastExitCode: null,
+      agentName: "codex",
+      agentState: "thinking",
+    },
+    hasUserPrompted: true,
+  });
+
+  expect(state).toEqual({
+    running: false,
+    lastExitCode: null,
+    agentName: "codex",
+    agentState: "responding",
+  });
+});
+
+test("inferTmuxRuntimeState preserves explicit agent state across markerless tmux polls", () => {
+  const state = inferTmuxRuntimeState({
+    paneCurrentCommand: "bash",
+    capture: "OpenAI Codex\n",
+    previousCapture: "OpenAI Codex\n",
+    previousState: {
+      running: false,
+      lastExitCode: null,
+      agentName: "codex",
+      agentState: "thinking",
+    },
+    hasUserPrompted: false,
+  });
+
+  expect(state).toEqual({
+    running: false,
+    lastExitCode: null,
+    agentName: "codex",
+    agentState: "thinking",
+  });
 });

@@ -25,6 +25,10 @@ The current product is shaped by four influences:
 - Each top tab is a workspace
 - A workspace can contain one or more split terminals
 - Tabs can be merged by drag and drop
+- A command palette acts as a jump layer for workspace switching, recent workspace reopen, directory jumps, cwd reveal in Files, and branch checkout
+- Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
+- Mobile uses a bottom action bar with Files, Git, Paste, and More
+- More opens the overflow surface for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
 - Workspace labels follow cwd
 - Workspace color is derived from cwd
 - Workspace signals can show:
@@ -43,10 +47,16 @@ The current product is shaped by four influences:
 
 ### 4. Built-in file operations
 
+- Desktop Files opens as a persistent right-side explorer sidebar
+- Mobile Files opens as a full overlay explorer
+- Explorer path and lightweight selection state are remembered per workspace
+- Files and Git coordinate as mutually exclusive right-side shell surfaces
+- Desktop Files and Git are surfaced directly from the top bar, while mobile keeps them in the bottom action bar
 - Browse directories inside allowed roots
 - Fallback to a valid root if a stored path becomes invalid
 - Upload files
 - Create folders
+- Create a folder in the active cwd directly from the command palette
 - Rename files
 - Delete files and directories
 - Download files
@@ -69,11 +79,12 @@ DeckTerm includes git-focused backend APIs and UI support for lightweight repo o
 - stage / unstage
 - commit
 - branches
+- explicit branch checkout from the command palette
 - checkout
 - log
 - show
 
-This is intended as a terminal-adjacent helper, not a full graphical git client.
+This is intended as a terminal-adjacent helper, not a full graphical git client. When Git opens, it takes over the same right-side shell slot used by Files.
 
 ### 7. Agent-aware workspace state
 
@@ -91,27 +102,28 @@ The state model is driven by shell integration markers plus agent output heurist
 Primary toolbar actions in the current product:
 
 - new workspace terminal
+- workspace tabs
 - working directory input
 - directory browser
+- desktop Files / Git / Palette / More actions
+- mobile Files / Git / Paste / More actions
 - linked tmux view
-- file manager
-- clipboard history
-- git panel
-- copy and paste actions
-- font size controls
-- extra keys toggle
-- line wrap toggle
-- fullscreen
 - server CPU / RAM / disk stats
-- help
+
+Secondary navigation surfaces:
+
+- desktop files explorer as a persistent right-side sidebar
+- mobile files explorer as a full overlay
+- command palette for jump-layer navigation, folder creation, cwd reveal in Files, and branch checkout
+- overflow surface behind More for clipboard and utility actions
 
 Modal and support surfaces:
 
 - directory picker
-- file manager
 - large paste confirmation
 - search bar
 - clipboard panel
+- git panel
 - debug panel
 
 ## API Surface

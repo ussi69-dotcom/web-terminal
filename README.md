@@ -9,7 +9,7 @@ It combines persistent tmux-backed shells, workspace tabs, split tiles, mobile-f
 - Persistent tmux-backed terminal sessions that survive browser reconnects and service restarts
 - Workspace tabs with split terminals, drag-to-merge behavior, linked views, and cwd-based color signals
 - Mobile-friendly terminal controls with extra keys, viewport-aware focus recovery, and image/text clipboard handling
-- Built-in file manager for browse, upload, download, mkdir, rename, and delete inside allowed roots
+- Workspace-aware file explorer for browse, upload, download, mkdir, rename, and delete inside allowed roots
 - Built-in git panel and git APIs for status, diff, stage, unstage, commit, branch, checkout, log, and show
 - Agent-aware workspace badges such as `Codex` and `Codex Responding`
 - Release-based production deployment from `main` with CI verification and atomic rollout
@@ -62,6 +62,12 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - Up to 10 concurrent terminals by default
 - New workspace tabs and split terminals inside a workspace
 - Drag one workspace tab onto another to merge them
+- Command palette for workspace switching, reopening recent workspaces, directory jumps, cwd reveal in Files, and branch checkout via `Ctrl+Shift+P`
+- Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
+- Mobile uses a bottom action bar for Files, Git, Paste, and More
+- More opens overflow actions for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
+- Desktop Files opens as a persistent right-side explorer while mobile Files opens as an overlay
+- Command palette stays focused on jump-layer and advanced commands rather than basic visible navigation
 - Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
 - Linked view for tmux-backed sessions
 
@@ -77,7 +83,7 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - OSC52 clipboard capture
 - Clipboard history panel
 - Large-paste warning flow
-- File browser and file manager under allowed filesystem roots
+- File explorer under allowed filesystem roots with per-workspace path memory
 
 ### Git workflow
 

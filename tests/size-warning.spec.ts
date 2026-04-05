@@ -17,10 +17,10 @@ import {
 } from "./fixtures";
 
 // Test constants
-const APP_URL = "http://localhost:4174";
+const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const NORMAL_WIDTH = 1200;
 const NORMAL_HEIGHT = 800;
-const SMALL_WIDTH = 400;
+const SMALL_WIDTH = 820;
 const SMALL_HEIGHT = 300;
 const MIN_COLS = 80;
 const MIN_ROWS = 24;
@@ -118,5 +118,46 @@ test.describe("Size Warning Feature", () => {
     // Verify the warning text includes the minimum dimensions (80x24)
     const warningText = await sizeWarning.textContent();
     expect(warningText).toContain(`${MIN_COLS}x${MIN_ROWS}`);
+  });
+
+  test.describe("narrow mobile layout without touch emulation", () => {
+    test.use({
+      viewport: { width: 393, height: 852 },
+      hasTouch: false,
+    });
+
+    test("narrow layout without touch emulation does not show the desktop size warning", async ({
+      page,
+    }) => {
+      await resizeWindow(page, 393, 852);
+      await page.goto(APP_URL);
+      await waitForTerminal(page);
+
+      await expect(page.locator("#mobile-action-bar")).toBeVisible();
+
+      const sizeWarning = await getSizeWarning(page);
+      await expect(sizeWarning).not.toHaveClass(/visible/);
+    });
+  });
+
+  test.describe("mobile chrome", () => {
+    test.use({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+    });
+
+    test("keeps the bottom action bar visible without a warning", async ({
+      page,
+    }) => {
+      await page.goto(APP_URL);
+      await resizeWindow(page, 390, 844);
+      await waitForTerminal(page);
+
+      await expect(page.locator("#mobile-action-bar")).toBeVisible();
+      await expect(page.locator(".toolbar-row-2")).not.toBeVisible();
+
+      const sizeWarning = await getSizeWarning(page);
+      await expect(sizeWarning).not.toHaveClass(/visible/);
+    });
   });
 });

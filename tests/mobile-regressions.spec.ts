@@ -1,5 +1,15 @@
 import path from "node:path";
-import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+import {
+  test,
+  expect,
+  expectButtonLabelsExactly,
+  dragLayoutEditorItem,
+  LAYOUT_EDITOR_TEST_IDS,
+  resetAppState,
+  openLayoutEditor,
+  waitForTerminal,
+  resizeWindow,
+} from "./fixtures";
 
 const BASE_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const DEFAULT_ROOT = process.env.HOME || "/home/deploy";
@@ -31,9 +41,10 @@ test.describe("Mobile regressions", () => {
     expect(apiResponse.ok()).toBe(true);
     const apiData = await apiResponse.json();
 
-    await page.locator("#toolbar-toggle").click();
-    await page.fill("#directory", "/tmp/does-not-exist/child");
-    await page.locator("#browse").click();
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await page.fill("#tools-sheet-directory", "/tmp/does-not-exist/child");
+    await page.locator("#tools-sheet-browse").click();
 
     await page.waitForSelector("#dir-modal:not(.hidden)", { timeout: 5000 });
     await page.waitForFunction(() => {
@@ -57,6 +68,72 @@ test.describe("Mobile regressions", () => {
     expect(state.breadcrumb).toContain("home");
     expect(state.breadcrumb).toContain(DEFAULT_ROOT_LABEL);
     expect(state.hasEntries).toBe(true);
+  });
+
+  test("keeps primary actions in a dedicated bottom action bar", async ({
+    page,
+  }) => {
+    const mobileBar = page.locator("#mobile-action-bar");
+
+    await expect(mobileBar).toBeVisible();
+    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste", "More"]);
+  });
+
+  test("customizes the mobile pinned actions from More and moves them back to More", async ({
+    page,
+  }) => {
+    const mobileBar = page.locator("#mobile-action-bar");
+
+    const layoutEditor = await openLayoutEditor(page, "Mobile");
+    await expect(page.getByRole("heading", { name: "Pinned" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Available in More" }),
+    ).toBeVisible();
+
+    const pinnedZone = layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned);
+    const availableZone = layoutEditor.getByTestId(
+      LAYOUT_EDITOR_TEST_IDS.available,
+    );
+
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+      pinnedZone,
+    );
+    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned)
+        .getByRole("button", { name: "Clipboard" }),
+      availableZone,
+    );
+    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
+    await expect(
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Done" }).click();
+    await page.getByRole("button", { name: "More" }).click();
+    await expect(
+      page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
+  });
+
+  test("mobile chrome keeps the bottom action bar visible without a size warning", async ({
+    page,
+  }) => {
+    await resizeWindow(page, 390, 844);
+
+    await expect(page.locator("#mobile-action-bar")).toBeVisible();
+    await expect(page.locator(".toolbar-row-2")).not.toBeVisible();
+    const sizeWarning = page.locator(".size-warning");
+    await expect(sizeWarning).not.toHaveClass(/visible/);
   });
 
   test("touch input helpers stay visually hidden at the cursor", async ({

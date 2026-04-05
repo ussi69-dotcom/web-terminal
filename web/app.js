@@ -103,6 +103,7 @@ const TERMINAL_PADDING_Y = 16;
 const FONT_METRIC_WAIT_MS = 350;
 const DESKTOP_MAX_TERMINAL_COLS = 240;
 const DESKTOP_MAX_TERMINAL_ROWS = 60;
+const DIRECTORY_DRAFT_LOCK_MS = 800;
 const APP_DEFAULT_TERMINAL_COLS =
   window.TerminalSizing?.DEFAULT_TERMINAL_COLS || 120;
 const APP_DEFAULT_TERMINAL_ROWS =
@@ -311,6 +312,116 @@ const normalizeWorkspacePorts = (ports) => {
     ),
   ].sort((left, right) => left - right);
 };
+
+const ACTION_BUTTON_CONFIG = Object.freeze({
+  files: Object.freeze({
+    label: "Files",
+    icon: "folder-open",
+    action: "file-manager",
+    desktopId: "desktop-files-btn",
+    mobileId: "mobile-files-btn",
+    toolsId: "tools-sheet-files",
+    desktopTone: "primary",
+  }),
+  git: Object.freeze({
+    label: "Git",
+    icon: "git-branch",
+    action: "git",
+    desktopId: "desktop-git-btn",
+    mobileId: "mobile-git-btn",
+    toolsId: "tools-sheet-git",
+    desktopTone: "primary",
+  }),
+  palette: Object.freeze({
+    label: "Palette",
+    icon: "more-horizontal",
+    action: "palette",
+    desktopId: "command-palette-trigger",
+    toolsId: "tools-sheet-palette",
+    desktopTone: "secondary",
+  }),
+  clipboard: Object.freeze({
+    label: "Clipboard",
+    icon: "clipboard",
+    action: "clipboard",
+    toolsId: "tools-sheet-clipboard",
+    desktopTone: "secondary",
+  }),
+  "toggle-extra-keys": Object.freeze({
+    label: "Extra Keys",
+    icon: "keyboard",
+    action: "toggle-extra-keys",
+    toolsId: "tools-sheet-extra-keys",
+    desktopTone: "secondary",
+  }),
+  "wrap-lines": Object.freeze({
+    label: "Wrap",
+    icon: "wrap-text",
+    action: "wrap-lines",
+    toolsId: "tools-sheet-wrap",
+    desktopTone: "secondary",
+  }),
+  fullscreen: Object.freeze({
+    label: "Fullscreen",
+    icon: "maximize-2",
+    action: "fullscreen",
+    toolsId: "tools-sheet-fullscreen",
+    desktopTone: "secondary",
+  }),
+  "font-decrease": Object.freeze({
+    label: "Font -",
+    icon: "zoom-out",
+    action: "font-decrease",
+    toolsId: "tools-sheet-font-decrease",
+    desktopTone: "secondary",
+  }),
+  "font-increase": Object.freeze({
+    label: "Font +",
+    icon: "zoom-in",
+    action: "font-increase",
+    toolsId: "tools-sheet-font-increase",
+    desktopTone: "secondary",
+  }),
+  help: Object.freeze({
+    label: "Help",
+    icon: "help-circle",
+    action: "help",
+    toolsId: "tools-sheet-help",
+    desktopTone: "secondary",
+  }),
+  "linked-view": Object.freeze({
+    label: "Linked View",
+    icon: "copy-plus",
+    action: "linked-view",
+    toolsId: "tools-sheet-linked-view",
+    desktopTone: "secondary",
+  }),
+  paste: Object.freeze({
+    label: "Paste",
+    icon: "clipboard-paste",
+    action: "paste",
+    mobileId: "mobile-paste-btn",
+    toolsId: "tools-sheet-paste",
+    desktopTone: "secondary",
+  }),
+  copy: Object.freeze({
+    label: "Copy",
+    icon: "copy",
+    action: "copy",
+    toolsId: "tools-sheet-copy",
+    desktopTone: "secondary",
+  }),
+  more: Object.freeze({
+    label: "More",
+    icon: "ellipsis",
+    action: "toggle-tools-sheet",
+    desktopId: "desktop-more-btn",
+    mobileId: "mobile-more-btn",
+    desktopTone: "secondary",
+  }),
+});
+
+const FIXED_TOOLS_SHEET_ACTION_IDS = Object.freeze(["copy"]);
 
 // =============================================================================
 // RECONNECTING WEBSOCKET
@@ -1949,245 +2060,6 @@ class ExtraKeysManager {
 }
 
 // =============================================================================
-// FILE MANAGER
-// =============================================================================
-
-class FileManager {
-  constructor() {
-    this.currentPath = "/";
-    this.init();
-  }
-
-  init() {
-    document
-      .querySelector('[data-action="file-manager"]')
-      ?.addEventListener("click", () => this.open());
-    document
-      .getElementById("file-close")
-      ?.addEventListener("click", () => this.close());
-    document
-      .getElementById("file-modal-close")
-      ?.addEventListener("click", () => this.close());
-    document
-      .getElementById("file-upload-btn")
-      ?.addEventListener("click", () => {
-        document.getElementById("file-upload-input")?.click();
-      });
-    document
-      .getElementById("file-upload-input")
-      ?.addEventListener("change", (e) => this.handleUpload(e));
-    document
-      .getElementById("file-mkdir-btn")
-      ?.addEventListener("click", () => this.createFolder());
-    document
-      .getElementById("file-refresh-btn")
-      ?.addEventListener("click", () => this.loadDir(this.currentPath));
-
-    const modal = document.getElementById("file-modal");
-    const dropZone = document.getElementById("file-drop-zone");
-    if (modal && dropZone) {
-      modal.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("hidden");
-      });
-      modal.addEventListener("dragleave", (e) => {
-        if (!modal.contains(e.relatedTarget)) dropZone.classList.add("hidden");
-      });
-      modal.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("hidden");
-        this.handleDrop(e.dataTransfer.files);
-      });
-    }
-  }
-
-  open() {
-    document.getElementById("file-modal")?.classList.remove("hidden");
-    const dir = document.getElementById("directory")?.value || "/";
-    this.loadDir(dir);
-  }
-
-  close() {
-    document.getElementById("file-modal")?.classList.add("hidden");
-  }
-
-  async loadDir(path) {
-    try {
-      const res = await fetch(
-        `/api/browse?path=${encodeURIComponent(path)}&files=true`,
-      );
-      const data = await res.json();
-      if (data.error) return alert(data.error);
-
-      this.currentPath = data.path;
-      this.renderBreadcrumb(data.path);
-      this.renderFileList(data);
-    } catch (err) {
-      console.error("Failed to load directory:", err);
-    }
-  }
-
-  renderBreadcrumb(path) {
-    const parts = path.split("/").filter(Boolean);
-    let html = '<a data-path="/">/</a>';
-    let currentPath = "";
-    for (const part of parts) {
-      currentPath += "/" + part;
-      html += ` / <a data-path="${currentPath}">${part}</a>`;
-    }
-
-    const breadcrumb = document.getElementById("file-breadcrumb");
-    if (breadcrumb) {
-      breadcrumb.innerHTML = html;
-      breadcrumb.querySelectorAll("a").forEach((a) => {
-        a.addEventListener("click", () => this.loadDir(a.dataset.path));
-      });
-    }
-  }
-
-  renderFileList(data) {
-    const list = document.getElementById("file-list");
-    if (!list) return;
-    list.innerHTML = "";
-
-    if (data.path !== "/") {
-      const parent = data.path.split("/").slice(0, -1).join("/") || "/";
-      list.appendChild(
-        this.createItem({ name: "..", isDir: true, path: parent }),
-      );
-    }
-
-    const dirs = (data.dirs || []).map((name) => ({
-      name,
-      isDir: true,
-      path: data.path + "/" + name,
-    }));
-    const files = (data.files || []).map((f) => ({
-      ...f,
-      isDir: false,
-      path: data.path + "/" + f.name,
-    }));
-
-    dirs.forEach((item) => list.appendChild(this.createItem(item)));
-    files.forEach((item) => list.appendChild(this.createItem(item)));
-  }
-
-  createItem(item) {
-    const el = document.createElement("div");
-    el.className = "file-item";
-
-    const icons = {
-      js: "📜",
-      ts: "📜",
-      json: "📋",
-      md: "📝",
-      txt: "📝",
-      html: "🌐",
-      css: "🎨",
-      png: "🖼",
-      jpg: "🖼",
-      pdf: "📕",
-      zip: "📦",
-      sh: "⚙️",
-      py: "🐍",
-    };
-    const ext = item.name.split(".").pop()?.toLowerCase() || "";
-    const icon = item.isDir ? "📁" : icons[ext] || "📄";
-    const size = item.size ? this.formatSize(item.size) : "";
-
-    el.innerHTML = `
-      <span class="file-icon">${icon}</span>
-      <span class="file-name">${item.name}</span>
-      <span class="file-size">${size}</span>
-      <div class="file-actions">
-        ${!item.isDir ? `<button class="download" title="Download">⬇</button>` : ""}
-        ${item.name !== ".." ? `<button class="delete danger" title="Delete">🗑</button>` : ""}
-      </div>
-    `;
-
-    el.addEventListener("click", () => item.isDir && this.loadDir(item.path));
-    el.querySelector(".download")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.downloadFile(item.path);
-    });
-    el.querySelector(".delete")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.deleteItem(item.path, item.isDir);
-    });
-
-    return el;
-  }
-
-  formatSize(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  }
-
-  downloadFile(path) {
-    window.open(
-      `/api/files/download?path=${encodeURIComponent(path)}`,
-      "_blank",
-    );
-  }
-
-  async deleteItem(path, isDir) {
-    if (!confirm(`Delete ${isDir ? "folder" : "file"}?\n${path}`)) return;
-    try {
-      const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`, {
-        method: "DELETE",
-      });
-      if (res.ok) this.loadDir(this.currentPath);
-      else alert((await res.json()).error || "Failed to delete");
-    } catch (err) {
-      alert("Failed: " + err.message);
-    }
-  }
-
-  async createFolder() {
-    const name = prompt("Folder name:");
-    if (!name) return;
-    try {
-      const res = await fetch(
-        `/api/files/mkdir?path=${encodeURIComponent(this.currentPath + "/" + name)}`,
-        { method: "POST" },
-      );
-      if (res.ok) this.loadDir(this.currentPath);
-      else alert((await res.json()).error || "Failed");
-    } catch (err) {
-      alert("Failed: " + err.message);
-    }
-  }
-
-  async handleUpload(e) {
-    const files = e.target.files;
-    if (files?.length) await this.uploadFiles(files);
-    e.target.value = "";
-  }
-
-  handleDrop(files) {
-    if (files?.length) this.uploadFiles(files);
-  }
-
-  async uploadFiles(files) {
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append("file", file);
-      try {
-        const res = await fetch(
-          `/api/files/upload?path=${encodeURIComponent(this.currentPath)}`,
-          { method: "POST", body: formData },
-        );
-        if (!res.ok) alert(`Upload failed: ${(await res.json()).error}`);
-      } catch (err) {
-        alert(`Upload failed: ${err.message}`);
-      }
-    }
-    this.loadDir(this.currentPath);
-  }
-}
-
-// =============================================================================
 // STATS MANAGER
 // =============================================================================
 
@@ -2748,9 +2620,6 @@ class GitManager {
 
   init() {
     this.createPanel();
-    document
-      .querySelector('[data-action="git"]')
-      ?.addEventListener("click", () => this.toggle());
     this.setupKeyboardShortcuts();
   }
 
@@ -3700,6 +3569,8 @@ class TerminalManager {
     this.viewportFocusTimer = null;
     this.notificationsEnabled = true;
     this.clientInstanceId = this.getOrCreateClientInstanceId();
+    this.commandPaletteGitCache = new Map();
+    this.rightSurface = "none";
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3707,10 +3578,26 @@ class TerminalManager {
     this.container = document.getElementById("terminal-container");
     this.tabs = document.getElementById("terminals-tabs");
     this.directoryInput = document.getElementById("directory");
+    this.toolsSheetDirectoryInput = document.getElementById(
+      "tools-sheet-directory",
+    );
+    this.toolbar = document.querySelector(".toolbar");
     this.connectionStatus = document.getElementById("connection-status");
+    this.toolsSheet = document.getElementById("tools-sheet");
+    this.navigationSurface = window.NavigationSurface || {};
+    this.actionLayoutState = null;
+    this.layoutEditorMode = "desktop";
+    this.layoutEditorOpen = false;
+    this.layoutDragState = null;
+    this.handleSurfaceActionClick = this.handleSurfaceActionClick.bind(this);
+    this.handleLayoutDragMove = this.handleLayoutDragMove.bind(this);
+    this.handleLayoutDragEnd = this.handleLayoutDragEnd.bind(this);
+    this.handleLayoutDragCancel = this.handleLayoutDragCancel.bind(this);
 
     this.tileManager = new TileManager(this.container);
     this.clipboardManager = new ClipboardManager();
+    this.commandPaletteRegistry = null;
+    this.commandPalette = null;
 
     this.init();
   }
@@ -3730,7 +3617,7 @@ class TerminalManager {
 
   init() {
     const lastDir = localStorage.getItem("opencode-web-dir");
-    if (lastDir) this.directoryInput.value = lastDir;
+    if (lastDir) this.setDirectoryValue(lastDir);
 
     // Button handlers
     document
@@ -3749,12 +3636,34 @@ class TerminalManager {
       .getElementById("dir-select")
       ?.addEventListener("click", () => this.selectDir());
 
-    this.directoryInput?.addEventListener("change", () => {
-      localStorage.setItem("opencode-web-dir", this.directoryInput.value);
+    this.directoryInput?.addEventListener("input", (event) => {
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
+    });
+    this.directoryInput?.addEventListener("change", (event) => {
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
+    });
+    this.toolsSheetDirectoryInput?.addEventListener("input", (event) => {
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
+    });
+    this.toolsSheetDirectoryInput?.addEventListener("change", (event) => {
+      this.setDirectoryValue(event.target.value, {
+        force: true,
+        userDraft: true,
+      });
     });
 
     // Toolbar action buttons
     this.setupToolbarActions();
+    this.setupCommandPalette();
     this.updateWrapButton();
     this.updateLinkedViewButton();
 
@@ -3766,11 +3675,10 @@ class TerminalManager {
     // Mobile toolbar toggle
     const toolbarToggle = document.getElementById("toolbar-toggle");
     if (toolbarToggle) {
-      toolbarToggle.addEventListener("click", () => {
-        document.querySelector(".toolbar").classList.toggle("expanded");
-        toolbarToggle.classList.toggle("active");
-      });
+      toolbarToggle.addEventListener("click", () => this.toggleToolsSheet());
     }
+    this.setupToolsSheet();
+    this.setupLayoutEditor();
 
     // Help modal
     this.setupHelpModal();
@@ -3803,7 +3711,14 @@ class TerminalManager {
 
     // Initialize sub-managers
     this.extraKeys = new ExtraKeysManager(this);
-    this.fileManager = new FileManager();
+    const FileExplorerCtor =
+      window.FileExplorerController?.FileExplorerController;
+    this.fileExplorer = FileExplorerCtor ? new FileExplorerCtor() : null;
+    platformDetector.onChange(() => {
+      this.renderActionSurfaces();
+      this.syncSurfaceButtonState();
+    });
+    this.renderActionSurfaces();
 
     // Mobile swipe support
     this.setupMobileSwipe();
@@ -4007,21 +3922,1431 @@ class TerminalManager {
   }
 
   setupToolbarActions() {
-    // Handle all buttons with data-action attribute (visible toolbar buttons)
-    document.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const action = btn.dataset.action;
-        if (action === "linked-view") this.createLinkedView();
-        if (action === "file-manager") this.fileManager.open();
-        else if (action === "clipboard") this.clipboardManager.togglePanel();
-        else if (action === "copy") this.copySelection();
-        else if (action === "paste") this.pasteClipboard();
-        else if (action === "font-decrease") this.changeFontSize(-1);
-        else if (action === "font-increase") this.changeFontSize(1);
-        else if (action === "fullscreen") this.toggleFullscreen();
-        else if (action === "wrap-lines") this.toggleWrapLines();
-      });
+    document.addEventListener("click", this.handleSurfaceActionClick);
+  }
+
+  getActiveChromeMode() {
+    return platformDetector.smallScreen ? "mobile" : "desktop";
+  }
+
+  getActionButtonConfig(actionId) {
+    return ACTION_BUTTON_CONFIG[actionId] || null;
+  }
+
+  getLayoutPinnedActionIds(mode) {
+    const normalizedMode = mode === "mobile" ? "mobile" : "desktop";
+    const state = this.getActionLayoutState();
+    const key = normalizedMode === "mobile" ? "mobilePinned" : "desktopPinned";
+    return Array.isArray(state[key]) ? [...state[key]] : [];
+  }
+
+  getToolsSheetActionIds(mode = this.getActiveChromeMode()) {
+    const available =
+      this.navigationSurface.getAvailableActionIds?.(
+        mode,
+        this.getLayoutPinnedActionIds(mode),
+      ) || [];
+    const actionIds = [...available];
+
+    FIXED_TOOLS_SHEET_ACTION_IDS.forEach((actionId) => {
+      if (!actionIds.includes(actionId)) {
+        actionIds.push(actionId);
+      }
     });
+
+    return actionIds.filter((actionId) => this.getActionButtonConfig(actionId));
+  }
+
+  getPrimaryActionIds(mode) {
+    return [...this.getLayoutPinnedActionIds(mode), "more"].filter((actionId) =>
+      this.getActionButtonConfig(actionId),
+    );
+  }
+
+  getActionButtonId(actionId, surface) {
+    const config = this.getActionButtonConfig(actionId);
+    if (!config) return null;
+    if (surface === "desktop-primary") return config.desktopId || null;
+    if (surface === "mobile-primary") return config.mobileId || null;
+    if (surface === "tools-sheet") return config.toolsId || null;
+    return null;
+  }
+
+  createActionButton(actionId, surface, density = "normal") {
+    const config = this.getActionButtonConfig(actionId);
+    if (!config) return null;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = config.action;
+    button.dataset.actionId = actionId;
+    button.dataset.actionSurface = surface;
+    button.dataset.density = density;
+
+    const elementId = this.getActionButtonId(actionId, surface);
+    if (elementId) {
+      button.id = elementId;
+    }
+
+    const label = config.label;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+
+    if (surface === "desktop-primary") {
+      const toneClass =
+        config.desktopTone === "primary"
+          ? "toolbar-action-btn-primary"
+          : "toolbar-action-btn-secondary";
+      button.className = `toolbar-action-btn ${toneClass}`;
+      if (actionId === "palette") {
+        button.setAttribute("aria-haspopup", "dialog");
+        button.setAttribute("aria-controls", "command-palette");
+      }
+    } else if (surface === "mobile-primary") {
+      button.className = "mobile-action-btn";
+    } else {
+      button.className = "tools-sheet-btn";
+    }
+
+    const icon = document.createElement("i");
+    icon.dataset.lucide = config.icon;
+    button.appendChild(icon);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.appendChild(text);
+
+    return button;
+  }
+
+  renderPrimaryActionBar(root, mode, surface) {
+    if (!root) return;
+
+    const actionIds = this.getPrimaryActionIds(mode);
+    const density =
+      this.navigationSurface.getActionDensityTier?.(
+        mode,
+        Math.max(0, actionIds.length - 1),
+      ) || "normal";
+
+    root.replaceChildren();
+    root.dataset.density = density;
+
+    if (surface === "mobile-primary") {
+      root.style.setProperty("--mobile-action-bar-columns", String(actionIds.length || 1));
+    }
+
+    actionIds.forEach((actionId) => {
+      const button = this.createActionButton(actionId, surface, density);
+      if (button) {
+        root.appendChild(button);
+      }
+    });
+  }
+
+  renderToolsSheetGrid() {
+    const grid = this.toolsSheet?.querySelector("#tools-sheet-grid");
+    if (!grid) return;
+
+    const mode = this.getActiveChromeMode();
+    const actionIds = this.getToolsSheetActionIds(mode);
+    grid.replaceChildren();
+    grid.dataset.mode = mode;
+    grid.dataset.empty = actionIds.length > 0 ? "false" : "true";
+
+    actionIds.forEach((actionId) => {
+      const button = this.createActionButton(actionId, "tools-sheet");
+      if (button) {
+        grid.appendChild(button);
+      }
+    });
+  }
+
+  renderActionSurfaces() {
+    this.renderPrimaryActionBar(
+      document.getElementById("desktop-primary-actions"),
+      "desktop",
+      "desktop-primary",
+    );
+    this.renderPrimaryActionBar(
+      document.getElementById("mobile-action-bar"),
+      "mobile",
+      "mobile-primary",
+    );
+    this.renderToolsSheetGrid();
+    initLucideIcons();
+    this.syncSurfaceButtonState();
+    this.updateWrapButton();
+    this.updateLinkedViewButton();
+  }
+
+  syncSurfaceButtonState() {
+    const surface = this.getRightSurface();
+    const moreOpen = Boolean(
+      this.toolsSheet && !this.toolsSheet.classList.contains("hidden"),
+    );
+    const paletteOpen = this.isCommandPaletteOpen();
+
+    document.querySelectorAll("[data-action-id]").forEach((button) => {
+      const actionId = button.dataset.actionId;
+      if (actionId === "files") {
+        button.classList.toggle("active", surface === "files");
+      } else if (actionId === "git") {
+        button.classList.toggle("active", surface === "git");
+      } else if (actionId === "more") {
+        button.classList.toggle("active", moreOpen);
+      } else if (actionId === "palette") {
+        button.classList.toggle("active", paletteOpen);
+      }
+    });
+  }
+
+  async handleSurfaceAction(action, button) {
+    if (action === "linked-view") this.createLinkedView();
+    else if (action === "file-manager") await this.openFileExplorer();
+    else if (action === "git") await this.openGitPanel();
+    else if (action === "toggle-tools-sheet") this.toggleToolsSheet();
+    else if (action === "open-dir-picker") this.openDirPicker();
+    else if (action === "clipboard") this.clipboardManager.togglePanel();
+    else if (action === "copy") this.copySelection();
+    else if (action === "paste") await this.pasteClipboard();
+    else if (action === "font-decrease") this.changeFontSize(-1);
+    else if (action === "font-increase") this.changeFontSize(1);
+    else if (action === "toggle-extra-keys") this.extraKeys?.toggle();
+    else if (action === "fullscreen") this.toggleFullscreen();
+    else if (action === "wrap-lines") this.toggleWrapLines();
+    else if (action === "help") this.openHelp();
+    else if (action === "palette") this.toggleCommandPalette();
+
+    if (
+      button?.closest("#tools-sheet") &&
+      action !== "toggle-tools-sheet" &&
+      action !== "palette"
+    ) {
+      this.closeToolsSheet();
+    }
+
+    if (button?.closest("#tools-sheet") && action === "palette") {
+      this.closeToolsSheet();
+    }
+
+    this.syncSurfaceButtonState();
+  }
+
+  handleSurfaceActionClick(event) {
+    const button = event.target.closest("[data-action]");
+    if (!button || button.disabled) return;
+    void this.handleSurfaceAction(button.dataset.action, button);
+  }
+
+  getCurrentDirectoryValue() {
+    return (
+      this.directoryInput?.value.trim() ||
+      this.toolsSheetDirectoryInput?.value.trim() ||
+      ""
+    );
+  }
+
+  markDirectoryDraftEdited() {
+    this.directoryDraftEditedAt = Date.now();
+  }
+
+  shouldPreserveDirectoryDraft(nextValue) {
+    const activeElement = document.activeElement;
+    const directoryFocused =
+      activeElement === this.directoryInput ||
+      activeElement === this.toolsSheetDirectoryInput;
+    const hasRecentDraft =
+      Date.now() - (this.directoryDraftEditedAt || 0) < DIRECTORY_DRAFT_LOCK_MS;
+    const currentValue = this.getCurrentDirectoryValue();
+
+    return (
+      (directoryFocused || hasRecentDraft) &&
+      Boolean(currentValue) &&
+      currentValue !== nextValue
+    );
+  }
+
+  normalizeWorkspaceCwd(value) {
+    const cwd = String(value || "").trim();
+    if (!cwd) return "";
+    if (cwd === "/") return cwd;
+    return cwd.replace(/\/+$/, "");
+  }
+
+  setDirectoryValue(value, { force = false, userDraft = false } = {}) {
+    const next = String(value || "");
+    if (userDraft) {
+      this.markDirectoryDraftEdited();
+    } else if (!force && this.shouldPreserveDirectoryDraft(next)) {
+      return this.getCurrentDirectoryValue();
+    }
+
+    if (this.directoryInput && this.directoryInput.value !== next) {
+      this.directoryInput.value = next;
+    }
+    if (
+      this.toolsSheetDirectoryInput &&
+      this.toolsSheetDirectoryInput.value !== next
+    ) {
+      this.toolsSheetDirectoryInput.value = next;
+    }
+    localStorage.setItem("opencode-web-dir", next);
+  }
+
+  setupToolsSheet() {
+    if (!this.toolsSheet) return;
+
+    const close = () => this.closeToolsSheet();
+
+    this.toolsSheet
+      .querySelector(".tools-sheet-backdrop")
+      ?.addEventListener("click", close);
+    this.toolsSheet
+      .querySelector("#tools-sheet-close")
+      ?.addEventListener("click", close);
+  }
+
+  setupLayoutEditor() {
+    if (!this.toolsSheet) return;
+
+    this.toolsSheet
+      .querySelector("#tools-sheet-edit-layout")
+      ?.addEventListener("click", () => this.openLayoutEditor());
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.addEventListener("click", () => this.setLayoutEditorMode("desktop"));
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.addEventListener("click", () => this.setLayoutEditorMode("mobile"));
+
+    this.toolsSheet
+      .querySelector("#layout-editor-reset")
+      ?.addEventListener("click", () => this.resetLayoutEditorDefaults());
+
+    this.toolsSheet
+      .querySelector("#layout-editor-done")
+      ?.addEventListener("click", () => this.closeToolsSheet());
+
+    this.toolsSheet
+      .querySelector("#layout-editor")
+      ?.addEventListener("pointerdown", (event) =>
+        this.handleLayoutChipPointerDown(event),
+      );
+
+    this.renderToolsSheetView();
+  }
+
+  setOverflowToggleState(isOpen) {
+    document
+      .querySelectorAll('[data-action="toggle-tools-sheet"], #toolbar-toggle')
+      .forEach((btn) => {
+        btn.classList.toggle("active", isOpen);
+      });
+  }
+
+  openToolsSheet({ preserveLayoutEditor = false } = {}) {
+    if (!this.toolsSheet) return;
+    if (!preserveLayoutEditor) {
+      this.layoutEditorOpen = false;
+    }
+    this.toolsSheet.classList.remove("hidden");
+    this.toolsSheet.setAttribute("aria-hidden", "false");
+    this.setOverflowToggleState(true);
+    this.renderToolsSheetView();
+    this.syncSurfaceButtonState();
+  }
+
+  closeToolsSheet() {
+    if (!this.toolsSheet) return;
+    this.cleanupLayoutDrag({ rerender: false });
+    this.layoutEditorOpen = false;
+    this.toolsSheet.classList.add("hidden");
+    this.toolsSheet.setAttribute("aria-hidden", "true");
+    this.setOverflowToggleState(false);
+    this.renderToolsSheetView();
+    this.syncSurfaceButtonState();
+  }
+
+  toggleToolsSheet() {
+    if (!this.toolsSheet) return;
+    if (this.toolsSheet.classList.contains("hidden")) {
+      this.openToolsSheet();
+    } else {
+      this.closeToolsSheet();
+    }
+  }
+
+  getLayoutActionLabel(actionId) {
+    return (
+      this.getActionButtonConfig(actionId)?.label ||
+      actionId.replace(/-/g, " ")
+    );
+  }
+
+  getDefaultLayoutEditorState() {
+    const desktopPinned =
+      this.navigationSurface.getDesktopPrimaryActionIds?.() || [];
+    const mobilePinned =
+      this.navigationSurface.getMobilePrimaryActionIds?.() || [];
+
+    return {
+      desktopPinned: desktopPinned.filter((actionId) => actionId !== "more"),
+      mobilePinned: mobilePinned.filter((actionId) => actionId !== "more"),
+    };
+  }
+
+  getActionLayoutState() {
+    if (!this.actionLayoutState) {
+      this.actionLayoutState =
+        this.navigationSurface.loadActionLayoutState?.(localStorage) ||
+        this.getDefaultLayoutEditorState();
+    }
+    return this.actionLayoutState;
+  }
+
+  setActionLayoutState(nextState, { persist = true } = {}) {
+    const next =
+      this.navigationSurface.validateActionLayoutState?.(nextState) ||
+      nextState ||
+      this.getDefaultLayoutEditorState();
+    this.actionLayoutState = persist
+      ? this.navigationSurface.saveActionLayoutState?.(localStorage, next) ||
+        next
+      : next;
+    this.renderActionSurfaces();
+    return this.actionLayoutState;
+  }
+
+  resetActionLayoutState() {
+    this.actionLayoutState =
+      this.navigationSurface.resetActionLayoutState?.(localStorage) ||
+      this.getDefaultLayoutEditorState();
+    this.renderActionSurfaces();
+    return this.actionLayoutState;
+  }
+
+  getLayoutEditorMode() {
+    return this.layoutEditorMode === "mobile" ? "mobile" : "desktop";
+  }
+
+  getLayoutEditorPinnedKey() {
+    return this.getLayoutEditorMode() === "mobile"
+      ? "mobilePinned"
+      : "desktopPinned";
+  }
+
+  openLayoutEditor(mode = this.layoutEditorMode) {
+    if (!this.toolsSheet) return;
+    this.layoutEditorMode = mode === "mobile" ? "mobile" : "desktop";
+    this.layoutEditorOpen = true;
+    this.openToolsSheet({ preserveLayoutEditor: true });
+    this.renderLayoutEditor();
+  }
+
+  setLayoutEditorMode(mode) {
+    this.layoutEditorMode = mode === "mobile" ? "mobile" : "desktop";
+    this.layoutEditorOpen = true;
+    if (this.toolsSheet?.classList.contains("hidden")) {
+      this.openToolsSheet({ preserveLayoutEditor: true });
+    } else {
+      this.renderToolsSheetView();
+    }
+    this.renderLayoutEditor();
+  }
+
+  renderLayoutEditorChips(container, actionIds, bucket) {
+    if (!container) return;
+    container.replaceChildren();
+    container.dataset.layoutBucket = bucket;
+
+    actionIds.forEach((actionId) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tools-sheet-layout-chip";
+      chip.dataset.layoutActionId = actionId;
+      chip.dataset.layoutBucket = bucket;
+      chip.textContent = this.getLayoutActionLabel(actionId);
+      chip.title = this.getLayoutActionLabel(actionId);
+      container.appendChild(chip);
+    });
+  }
+
+  renderLayoutEditor() {
+    if (!this.toolsSheet) return;
+    const root = this.toolsSheet.querySelector("#layout-editor");
+    const mode = this.getLayoutEditorMode();
+    const state = this.getActionLayoutState();
+    const pinnedKey = this.getLayoutEditorPinnedKey();
+    const pinned = Array.isArray(state[pinnedKey]) ? state[pinnedKey] : [];
+    const available =
+      this.navigationSurface.getAvailableActionIds?.(mode, pinned) || [];
+
+    if (root) {
+      root.dataset.mode = mode;
+      root.setAttribute("aria-hidden", this.layoutEditorOpen ? "false" : "true");
+      root.classList.toggle("hidden", !this.layoutEditorOpen);
+    }
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.classList.toggle("active", mode === "desktop");
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.classList.toggle("active", mode === "mobile");
+
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-desktop")
+      ?.setAttribute("aria-pressed", mode === "desktop" ? "true" : "false");
+    this.toolsSheet
+      .querySelector("#layout-editor-mode-mobile")
+      ?.setAttribute("aria-pressed", mode === "mobile" ? "true" : "false");
+
+    this.renderLayoutEditorChips(
+      this.toolsSheet.querySelector("#layout-editor-pinned-actions"),
+      pinned,
+      "pinned",
+    );
+    this.renderLayoutEditorChips(
+      this.toolsSheet.querySelector("#layout-editor-available-actions"),
+      available,
+      "available",
+    );
+    this.renderToolsSheetView();
+  }
+
+  renderToolsSheetView() {
+    if (!this.toolsSheet) return;
+    const editing = this.layoutEditorOpen;
+    this.toolsSheet.classList.toggle("tools-sheet-editing", editing);
+    this.renderToolsSheetGrid();
+
+    const editButton = this.toolsSheet.querySelector("#tools-sheet-edit-layout");
+    if (editButton) {
+      editButton.hidden = editing;
+      editButton.setAttribute("aria-hidden", editing ? "true" : "false");
+    }
+
+    const grid = this.toolsSheet.querySelector(".tools-sheet-grid");
+    if (grid) {
+      grid.hidden = editing;
+      grid.setAttribute("aria-hidden", editing ? "true" : "false");
+    }
+
+    const editorRoot = this.toolsSheet.querySelector("#layout-editor");
+    if (editorRoot) {
+      editorRoot.hidden = !editing;
+      editorRoot.setAttribute("aria-hidden", editing ? "false" : "true");
+    }
+  }
+
+  resetLayoutEditorDefaults() {
+    this.resetActionLayoutState();
+    this.renderLayoutEditor();
+  }
+
+  handleLayoutChipPointerDown(event) {
+    if (!this.layoutEditorOpen) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    const chip = event.target.closest(".tools-sheet-layout-chip");
+    if (!chip) return;
+
+    const actionId = chip.dataset.layoutActionId;
+    const sourceBucket = chip.dataset.layoutBucket;
+    if (!actionId || !sourceBucket) return;
+
+    event.preventDefault();
+    this.cleanupLayoutDrag({ rerender: false });
+
+    const ghost = document.createElement("div");
+    ghost.className = "tools-sheet-layout-ghost";
+    ghost.textContent = this.getLayoutActionLabel(actionId);
+    document.body.appendChild(ghost);
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "tools-sheet-layout-placeholder";
+    placeholder.setAttribute("aria-hidden", "true");
+
+    chip.classList.add("is-dragging", "drag-source-hidden");
+    chip.insertAdjacentElement("afterend", placeholder);
+
+    this.layoutDragState = {
+      actionId,
+      sourceBucket,
+      mode: this.getLayoutEditorMode(),
+      sourceChip: chip,
+      placeholder,
+      ghost,
+      dropBucket: sourceBucket,
+      dropIndex: null,
+    };
+
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+    document.addEventListener("pointermove", this.handleLayoutDragMove);
+    document.addEventListener("pointerup", this.handleLayoutDragEnd);
+    document.addEventListener("pointercancel", this.handleLayoutDragCancel);
+  }
+
+  getLayoutEditorBucket(bucket) {
+    const suffix = bucket === "available" ? "available" : "pinned";
+    return this.toolsSheet?.querySelector(`#layout-editor-${suffix}-actions`) || null;
+  }
+
+  updateLayoutDragGhostPosition(clientX, clientY) {
+    const ghost = this.layoutDragState?.ghost;
+    if (!ghost) return;
+    ghost.style.left = `${clientX}px`;
+    ghost.style.top = `${clientY}px`;
+  }
+
+  getLayoutDropIndex(container, clientX, clientY) {
+    const chips = Array.from(
+      container.querySelectorAll(".tools-sheet-layout-chip"),
+    ).filter((chip) => !chip.classList.contains("drag-source-hidden"));
+
+    if (chips.length === 0) {
+      return 0;
+    }
+
+    for (let index = 0; index < chips.length; index++) {
+      const rect = chips[index].getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const isAboveRow = clientY < rect.top;
+      const isWithinRow = clientY >= rect.top && clientY <= rect.bottom;
+      if (isAboveRow) {
+        return index;
+      }
+      if (isWithinRow && clientX < midX) {
+        return index;
+      }
+    }
+
+    return chips.length;
+  }
+
+  getLayoutDropContext(clientX, clientY) {
+    const buckets = [
+      { bucket: "pinned", element: this.getLayoutEditorBucket("pinned") },
+      { bucket: "available", element: this.getLayoutEditorBucket("available") },
+    ].filter((entry) => entry.element);
+
+    for (const entry of buckets) {
+      const rect = entry.element.getBoundingClientRect();
+      const inset = 18;
+      const withinBounds =
+        clientX >= rect.left - inset &&
+        clientX <= rect.right + inset &&
+        clientY >= rect.top - inset &&
+        clientY <= rect.bottom + inset;
+
+      if (!withinBounds) continue;
+
+      return {
+        bucket: entry.bucket,
+        element: entry.element,
+        index:
+          entry.bucket === "pinned"
+            ? this.getLayoutDropIndex(entry.element, clientX, clientY)
+            : entry.element.querySelectorAll(".tools-sheet-layout-chip").length,
+      };
+    }
+
+    return null;
+  }
+
+  moveLayoutPlaceholder(container, index) {
+    const placeholder = this.layoutDragState?.placeholder;
+    if (!placeholder || !container) return;
+
+    const chips = Array.from(
+      container.querySelectorAll(".tools-sheet-layout-chip"),
+    ).filter((chip) => !chip.classList.contains("drag-source-hidden"));
+    const target = chips[Math.max(0, Math.min(index, chips.length - 1))];
+
+    if (!target) {
+      container.appendChild(placeholder);
+      return;
+    }
+
+    if (index >= chips.length) {
+      container.appendChild(placeholder);
+    } else {
+      container.insertBefore(placeholder, target);
+    }
+  }
+
+  updateLayoutDragTarget(clientX, clientY) {
+    if (!this.layoutDragState) return;
+
+    this.updateLayoutDragGhostPosition(clientX, clientY);
+
+    const pinnedBucket = this.getLayoutEditorBucket("pinned");
+    const availableBucket = this.getLayoutEditorBucket("available");
+    [pinnedBucket, availableBucket].forEach((bucket) => {
+      bucket?.classList.add("is-drop-target");
+      bucket?.classList.remove("is-drop-active");
+    });
+
+    const dropContext = this.getLayoutDropContext(clientX, clientY);
+    if (!dropContext) {
+      this.layoutDragState.dropBucket = null;
+      this.layoutDragState.dropIndex = null;
+      return;
+    }
+
+    dropContext.element.classList.add("is-drop-active");
+    this.layoutDragState.dropBucket = dropContext.bucket;
+    this.layoutDragState.dropIndex = dropContext.index;
+    this.moveLayoutPlaceholder(dropContext.element, dropContext.index);
+  }
+
+  layoutStatesEqual(left, right) {
+    const leftDesktop = Array.isArray(left?.desktopPinned) ? left.desktopPinned : [];
+    const leftMobile = Array.isArray(left?.mobilePinned) ? left.mobilePinned : [];
+    const rightDesktop = Array.isArray(right?.desktopPinned) ? right.desktopPinned : [];
+    const rightMobile = Array.isArray(right?.mobilePinned) ? right.mobilePinned : [];
+
+    return (
+      leftDesktop.join("\n") === rightDesktop.join("\n") &&
+      leftMobile.join("\n") === rightMobile.join("\n")
+    );
+  }
+
+  applyLayoutDragResult() {
+    if (!this.layoutDragState) return false;
+
+    const { actionId, sourceBucket, dropBucket, dropIndex, mode } =
+      this.layoutDragState;
+    const state = this.getActionLayoutState();
+    let nextState = state;
+
+    if (sourceBucket === "available" && dropBucket === "pinned") {
+      nextState =
+        this.navigationSurface.pinLayoutAction?.(
+          state,
+          mode,
+          actionId,
+          dropIndex,
+        ) || state;
+    } else if (sourceBucket === "pinned" && dropBucket === "available") {
+      nextState =
+        this.navigationSurface.unpinLayoutAction?.(state, mode, actionId) || state;
+    } else if (sourceBucket === "pinned" && dropBucket === "pinned") {
+      nextState =
+        this.navigationSurface.reorderLayoutAction?.(
+          state,
+          mode,
+          actionId,
+          dropIndex,
+        ) || state;
+    }
+
+    if (this.layoutStatesEqual(state, nextState)) {
+      return false;
+    }
+
+    this.setActionLayoutState(nextState);
+    return true;
+  }
+
+  cleanupLayoutDrag({ rerender = true } = {}) {
+    if (!this.layoutDragState) return;
+
+    document.removeEventListener("pointermove", this.handleLayoutDragMove);
+    document.removeEventListener("pointerup", this.handleLayoutDragEnd);
+    document.removeEventListener("pointercancel", this.handleLayoutDragCancel);
+
+    const { sourceChip, placeholder, ghost } = this.layoutDragState;
+    sourceChip?.classList.remove("is-dragging", "drag-source-hidden");
+    placeholder?.remove();
+    ghost?.remove();
+
+    [this.getLayoutEditorBucket("pinned"), this.getLayoutEditorBucket("available")].forEach(
+      (bucket) => {
+        bucket?.classList.remove("is-drop-target", "is-drop-active");
+      },
+    );
+
+    this.layoutDragState = null;
+
+    if (rerender && this.layoutEditorOpen) {
+      this.renderLayoutEditor();
+    }
+  }
+
+  handleLayoutDragMove(event) {
+    if (!this.layoutDragState) return;
+    event.preventDefault();
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+  }
+
+  handleLayoutDragEnd(event) {
+    if (!this.layoutDragState) return;
+    this.updateLayoutDragTarget(event.clientX, event.clientY);
+    this.applyLayoutDragResult();
+    this.cleanupLayoutDrag({ rerender: true });
+  }
+
+  handleLayoutDragCancel() {
+    this.cleanupLayoutDrag({ rerender: true });
+  }
+
+  setupCommandPalette() {
+    const ActionRegistryCtor = window.ActionRegistry?.ActionRegistry;
+    const CommandPaletteCtor =
+      window.CommandPaletteController?.CommandPaletteController;
+    const root = document.getElementById("command-palette");
+    const input = document.getElementById("command-palette-input");
+    const results = document.getElementById("command-palette-results");
+
+    if (
+      !ActionRegistryCtor ||
+      !CommandPaletteCtor ||
+      !root ||
+      !input ||
+      !results
+    ) {
+      return;
+    }
+
+    this.commandPaletteRegistry = new ActionRegistryCtor();
+    this.commandPalette = new CommandPaletteCtor({
+      root,
+      input,
+      results,
+      registry: this.commandPaletteRegistry,
+    });
+
+    root.addEventListener("click", (event) => {
+      if (event.target === root) {
+        this.closeCommandPalette();
+      }
+    });
+
+    this.registerCommandPaletteActions();
+  }
+
+  loadRecentWorkspaceEntries() {
+    const loadRecentWorkspaceEntries =
+      this.navigationSurface.loadRecentWorkspaceEntries;
+    if (typeof loadRecentWorkspaceEntries !== "function") {
+      return [];
+    }
+
+    return loadRecentWorkspaceEntries(window.localStorage);
+  }
+
+  saveRecentWorkspaceEntries(entries) {
+    const saveRecentWorkspaceEntries =
+      this.navigationSurface.saveRecentWorkspaceEntries;
+    if (typeof saveRecentWorkspaceEntries !== "function") {
+      return Array.isArray(entries) ? [...entries] : [];
+    }
+
+    return saveRecentWorkspaceEntries(window.localStorage, entries);
+  }
+
+  rememberRecentWorkspace({ cwd, label } = {}) {
+    const upsertRecentWorkspaceEntry =
+      this.navigationSurface.upsertRecentWorkspaceEntry;
+    if (typeof upsertRecentWorkspaceEntry !== "function") {
+      return [];
+    }
+
+    const normalizedCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!normalizedCwd) {
+      return this.loadRecentWorkspaceEntries();
+    }
+
+    const nextEntries = upsertRecentWorkspaceEntry(
+      this.loadRecentWorkspaceEntries(),
+      {
+        cwd: normalizedCwd,
+        label: String(label || "").trim() || this.formatCwdLabel(normalizedCwd),
+        lastUsedAt: Date.now(),
+      },
+    );
+
+    return this.saveRecentWorkspaceEntries(nextEntries);
+  }
+
+  rememberWorkspaceById(workspaceId, preferredCwd = null) {
+    if (!workspaceId) return [];
+    const snapshot = this.getWorkspaceSnapshot(workspaceId, preferredCwd);
+    return this.rememberRecentWorkspace({
+      cwd: preferredCwd || snapshot.cwd,
+      label: snapshot.label,
+    });
+  }
+
+  findWorkspaceIdByCwd(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return null;
+
+    for (const tab of this.tabs.querySelectorAll(".tab")) {
+      const workspaceId = tab.dataset.workspaceId;
+      if (!workspaceId) continue;
+
+      const snapshot = this.getWorkspaceSnapshot(workspaceId);
+      if (this.normalizeWorkspaceCwd(snapshot.cwd) === targetCwd) {
+        return workspaceId;
+      }
+    }
+
+    return null;
+  }
+
+  async switchOrCreateWorkspaceForCwd(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+
+    this.setDirectoryValue(targetCwd, { force: true });
+
+    const existingWorkspaceId = this.findWorkspaceIdByCwd(targetCwd);
+    const existingTerminalId = existingWorkspaceId
+      ? this.resolveWorkspaceTerminalId(existingWorkspaceId)
+      : null;
+
+    if (existingTerminalId) {
+      this.switchTo(existingTerminalId);
+      return true;
+    }
+
+    await this.createTerminal(false);
+    return true;
+  }
+
+  getCommandPaletteQuery() {
+    return String(this.commandPalette?.input?.value || "").trim();
+  }
+
+  isPaletteDirectoryQuery(query) {
+    const value = String(query || "").trim();
+    return value.startsWith("/") || value.startsWith("~/");
+  }
+
+  async resolvePaletteDirectory(path) {
+    const targetPath = String(path || "").trim();
+    if (!targetPath) return null;
+
+    try {
+      const res = await fetch(
+        `/api/browse?path=${encodeURIComponent(targetPath)}&files=true`,
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.error) {
+        throw new Error(payload.error || "Cannot open directory");
+      }
+
+      return this.normalizeWorkspaceCwd(payload.path || targetPath);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Cannot open directory";
+      alert(message);
+      return null;
+    }
+  }
+
+  async goToDirectoryFromPalette(path) {
+    const resolvedPath = await this.resolvePaletteDirectory(path);
+    if (!resolvedPath) return false;
+    return this.switchOrCreateWorkspaceForCwd(resolvedPath);
+  }
+
+  async revealCurrentCwdInFilesFromPalette(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+
+    const { workspaceId } = this.getActiveWorkspaceContext();
+    if (!workspaceId || !this.fileExplorer) return false;
+
+    this.setDirectoryValue(targetCwd, { force: true });
+
+    if (
+      window.gitManager &&
+      !window.gitManager.panel?.classList.contains("hidden")
+    ) {
+      window.gitManager.hide();
+    }
+
+    const targetPath = this.fileExplorer.openForWorkspace(workspaceId, targetCwd);
+    this.rightSurface = "files";
+
+    if (targetPath) {
+      await this.fileExplorer.loadDir(targetPath, workspaceId);
+    }
+
+    this.syncSurfaceButtonState();
+    return true;
+  }
+
+  async focusGitBranchCheckoutFromPalette(cwd) {
+    const targetCwd = this.normalizeWorkspaceCwd(cwd);
+    if (!targetCwd) return false;
+
+    const gitContext = await this.ensureCommandPaletteGitContext(targetCwd);
+
+    requestAnimationFrame(async () => {
+      if (!this.commandPalette) return;
+      this.closeToolsSheet();
+      this.commandPalette.open({
+        ...this.getCommandPaletteContext(),
+        cwd: targetCwd,
+        gitBranches: gitContext.gitBranches || [],
+        currentGitBranch: gitContext.currentGitBranch || "",
+        isGitRepo: Boolean(gitContext.isGitRepo),
+      });
+      this.commandPalette?.setQuery("branch");
+      this.syncSurfaceButtonState();
+    });
+
+    return true;
+  }
+
+  registerCommandPaletteActions() {
+    if (!this.commandPaletteRegistry) return;
+    const NavigationSurface = window.NavigationSurface || {};
+    const createNewFolderAction =
+      NavigationSurface.createNewFolderAction || (() => null);
+    const createOpenGitBranchesAction =
+      NavigationSurface.createOpenGitBranchesAction || (() => null);
+    const buildGitBranchActions =
+      NavigationSurface.buildGitBranchActions || (() => []);
+
+    const actions = [
+      {
+        id: "new-terminal",
+        title: "New Terminal",
+        group: "Actions",
+        keywords: ["workspace", "shell", "tab"],
+        priority: 50,
+        run: () => this.createTerminal(),
+      },
+      {
+        id: "split-workspace",
+        title: "Split Workspace",
+        group: "Actions",
+        keywords: ["split", "pane", "terminal"],
+        priority: 45,
+        run: () => this.splitWorkspace(),
+      },
+      {
+        id: "open-git",
+        title: "Open Git",
+        group: "Actions",
+        keywords: ["repo", "branch", "diff"],
+        priority: 40,
+        run: () => this.openGitPanel(),
+      },
+      {
+        id: "open-file-manager",
+        title: "Open File Manager",
+        group: "Actions",
+        keywords: ["files", "explorer", "browse"],
+        priority: 40,
+        run: () => this.openFileExplorer(),
+      },
+      {
+        id: "open-clipboard",
+        title: "Open Clipboard",
+        group: "Actions",
+        keywords: ["paste", "copy", "history"],
+        priority: 30,
+        run: () => this.clipboardManager.togglePanel(),
+      },
+      {
+        id: "search-terminal",
+        title: "Search in Terminal",
+        group: "Views",
+        keywords: ["find", "search", "terminal"],
+        run: () => this.toggleSearch(),
+      },
+      {
+        id: "toggle-line-wrap",
+        title: "Toggle Line Wrap",
+        group: "Views",
+        keywords: ["wrap", "lines", "overflow"],
+        run: () => this.toggleWrapLines(),
+      },
+      {
+        id: "toggle-fullscreen",
+        title: "Toggle Fullscreen",
+        group: "Views",
+        keywords: ["fullscreen", "focus", "zen"],
+        run: () => this.toggleFullscreen(),
+      },
+      {
+        id: "font-increase",
+        title: "Increase Font Size",
+        group: "Views",
+        keywords: ["zoom", "font", "larger"],
+        run: () => this.changeFontSize(1),
+      },
+      {
+        id: "font-decrease",
+        title: "Decrease Font Size",
+        group: "Views",
+        keywords: ["zoom", "font", "smaller"],
+        run: () => this.changeFontSize(-1),
+      },
+      {
+        id: "open-help",
+        title: "Open Help",
+        group: "Views",
+        keywords: ["shortcuts", "docs", "help"],
+        run: () => this.openHelp(),
+      },
+    ];
+
+    actions.forEach((action) => this.commandPaletteRegistry.register(action));
+
+    this.commandPaletteRegistry.registerProvider(() => {
+      const query = this.getCommandPaletteQuery();
+      if (!this.isPaletteDirectoryQuery(query)) {
+        return [];
+      }
+
+      return [
+        {
+          id: `go-to-directory:${query}`,
+          title: "Go to Directory...",
+          group: "Actions",
+          keywords: [query, "directory", "cwd", "jump", "open path"],
+          meta: [query],
+          priority: 48,
+          run: () => this.goToDirectoryFromPalette(query),
+        },
+      ];
+    });
+
+    this.commandPaletteRegistry.registerProvider((context = {}) => {
+      const contextualActions = [];
+      const newFolderAction = createNewFolderAction(context, {
+        createFolder: (cwd) => this.createFolderFromPalette(cwd),
+      });
+
+      if (newFolderAction) {
+        contextualActions.push(newFolderAction);
+      }
+
+      if (context.canCreateLinkedView) {
+        contextualActions.push({
+          id: "open-linked-view",
+          title: "Open Linked View",
+          group: "Contextual",
+          keywords: ["tmux", "linked", "shared"],
+          run: () => this.createLinkedView(),
+        });
+      }
+
+      if (context.hasExtraKeys) {
+        contextualActions.push({
+          id: "toggle-extra-keys",
+          title: "Toggle Extra Keys",
+          group: "Contextual",
+          keywords: ["keyboard", "modifiers", "mobile"],
+          meta: context.extraKeysVisible ? ["Visible"] : ["Hidden"],
+          run: () => this.extraKeys?.toggle(),
+        });
+      }
+
+      if (context.cwd) {
+        contextualActions.push({
+          id: `reveal-cwd:${context.cwd}`,
+          title: "Reveal Current CWD in Files",
+          group: "Contextual",
+          keywords: ["files", "explorer", "cwd", "reveal", context.cwd],
+          meta: [context.cwd],
+          priority: 38,
+          run: () => this.revealCurrentCwdInFilesFromPalette(context.cwd),
+        });
+      }
+
+      if (context.isGitRepo && context.cwd) {
+        contextualActions.push({
+          id: `checkout-git-branch:${context.cwd}`,
+          title: "Checkout Git Branch",
+          group: "Contextual",
+          keywords: ["checkout", "branch", "git", context.cwd],
+          meta: context.currentGitBranch
+            ? [`Current: ${context.currentGitBranch}`]
+            : null,
+          priority: 37,
+          run: () => this.focusGitBranchCheckoutFromPalette(context.cwd),
+        });
+      }
+
+      const openGitBranchesAction = createOpenGitBranchesAction(context, {
+        openGitBranches: (cwd) => this.openGitBranchesFromPalette(cwd),
+      });
+      if (openGitBranchesAction) {
+        contextualActions.push(openGitBranchesAction);
+      }
+
+      contextualActions.push(
+        ...buildGitBranchActions(context, {
+          switchBranch: (cwd, branch) =>
+            this.switchGitBranchFromPalette(cwd, branch),
+        }),
+      );
+
+      return contextualActions;
+    });
+
+    this.commandPaletteRegistry.registerProvider(() => {
+      return this.loadRecentWorkspaceEntries()
+        .map((entry) => {
+          const cwd = this.normalizeWorkspaceCwd(entry.cwd);
+          if (!cwd) return null;
+
+          const existingWorkspaceId = this.findWorkspaceIdByCwd(cwd);
+          const activeWorkspaceId = this.terminals.get(this.activeId)?.workspaceId;
+          const metadata = [entry.label];
+
+          if (entry.label !== cwd) {
+            metadata.push(cwd);
+          }
+          if (existingWorkspaceId === activeWorkspaceId) {
+            metadata.push("Active");
+          } else if (existingWorkspaceId) {
+            metadata.push("Open");
+          }
+
+          return {
+            id: `recent-workspace:${cwd}`,
+            title: "Recent Workspace",
+            group: "Workspaces",
+            keywords: [
+              entry.label,
+              cwd,
+              `recent ${entry.label}`,
+              "recent workspace",
+            ],
+            meta: metadata,
+            priority: 42,
+            run: () => this.switchOrCreateWorkspaceForCwd(cwd),
+          };
+        })
+        .filter(Boolean);
+    });
+
+    this.commandPaletteRegistry.registerProvider(() => {
+      return Array.from(this.tabs.querySelectorAll(".tab"))
+        .map((tab) => {
+          const workspaceId = tab.dataset.workspaceId;
+          if (!workspaceId) return null;
+
+          const snapshot = this.getWorkspaceSnapshot(workspaceId);
+          const targetId = this.resolveWorkspaceTerminalId(workspaceId);
+          if (!targetId) return null;
+
+          const rawTabText = tab.textContent?.trim() || "";
+          const condensedTabText = rawTabText.replace(/\s+/g, "");
+          const index = tab.dataset.index || "";
+          const label = snapshot.label || "Workspace";
+          const metadata = [];
+
+          if (workspaceId === this.terminals.get(this.activeId)?.workspaceId) {
+            metadata.push("Active");
+          }
+          if (snapshot.cwd) {
+            metadata.push(snapshot.cwd);
+          }
+          if (snapshot.count > 1) {
+            metadata.push(`${snapshot.count} terminals`);
+          }
+          snapshot.descriptors.forEach((descriptor) => {
+            metadata.push(descriptor.label);
+          });
+
+          return {
+            id: `workspace:${workspaceId}`,
+            title: label,
+            group: "Workspaces",
+            keywords: [
+              workspaceId,
+              index,
+              label,
+              `${index} ${label}`,
+              `${index}${label}`,
+              rawTabText,
+              condensedTabText,
+              snapshot.cwd,
+              this.formatCwdLabel(snapshot.cwd),
+            ],
+            meta: metadata,
+            run: () => this.switchTo(targetId),
+          };
+        })
+        .filter(Boolean);
+    });
+  }
+
+  getCommandPaletteContext() {
+    const activeTerminal = this.getActiveTerminal();
+    const cwd = activeTerminal?.cwd || this.getCurrentDirectoryValue() || "";
+    const gitContext = this.commandPaletteGitCache.get(cwd) || {
+      isGitRepo: false,
+      gitBranches: [],
+      currentGitBranch: "",
+    };
+
+    return {
+      activeId: this.activeId,
+      cwd,
+      canCreateLinkedView: this.canCreateLinkedView(activeTerminal),
+      hasExtraKeys: Boolean(this.extraKeys),
+      extraKeysVisible: Boolean(this.extraKeys?.visible),
+      gitBranches: gitContext.gitBranches || [],
+      currentGitBranch: gitContext.currentGitBranch || "",
+      isGitRepo: Boolean(gitContext.isGitRepo),
+      wrapLines: this.wrapLines,
+    };
+  }
+
+  isCommandPaletteOpen() {
+    return Boolean(
+      this.commandPalette &&
+        !document
+          .getElementById("command-palette")
+          ?.classList.contains("hidden"),
+    );
+  }
+
+  refreshCommandPalette() {
+    if (!this.commandPalette || !this.isCommandPaletteOpen()) return;
+    this.commandPalette.context = this.getCommandPaletteContext();
+    this.commandPalette.refreshResults();
+  }
+
+  async ensureCommandPaletteGitContext(cwd) {
+    const nextCwd = String(cwd || "").trim();
+    if (!nextCwd || this.commandPaletteGitCache.has(nextCwd)) {
+      return this.commandPaletteGitCache.get(nextCwd) || {
+        isGitRepo: false,
+        gitBranches: [],
+        currentGitBranch: "",
+      };
+    }
+
+    try {
+      const res = await fetch(
+        `/api/git/branches?cwd=${encodeURIComponent(nextCwd)}`,
+      );
+      const data = await res.json().catch(() => ({}));
+      const payload =
+        res.ok && !data.error
+          ? {
+              isGitRepo: true,
+              gitBranches: Array.isArray(data.branches) ? data.branches : [],
+              currentGitBranch: String(data.current || ""),
+            }
+          : {
+              isGitRepo: false,
+              gitBranches: [],
+              currentGitBranch: "",
+            };
+
+      this.commandPaletteGitCache.set(nextCwd, payload);
+      return payload;
+    } catch {
+      const payload = {
+        isGitRepo: false,
+        gitBranches: [],
+        currentGitBranch: "",
+      };
+      this.commandPaletteGitCache.set(nextCwd, payload);
+      return payload;
+    }
+  }
+
+  async buildCommandPaletteContext() {
+    const cwd =
+      this.getActiveTerminal()?.cwd || this.getCurrentDirectoryValue() || "";
+    await this.ensureCommandPaletteGitContext(cwd);
+    return this.getCommandPaletteContext();
+  }
+
+  async openCommandPalette() {
+    if (!this.commandPalette) return;
+    this.closeToolsSheet();
+    this.commandPalette.open(await this.buildCommandPaletteContext());
+    this.syncSurfaceButtonState();
+  }
+
+  closeCommandPalette() {
+    this.commandPalette?.close();
+    this.syncSurfaceButtonState();
+  }
+
+  async toggleCommandPalette() {
+    if (!this.commandPalette) return;
+    if (this.isCommandPaletteOpen()) {
+      this.closeCommandPalette();
+      return;
+    }
+    await this.openCommandPalette();
+  }
+
+  async createFolderFromPalette(cwd) {
+    const nextCwd = String(cwd || "").trim();
+    if (!nextCwd) return;
+
+    if (this.fileExplorer?.createFolder) {
+      const { workspaceId } = this.getActiveWorkspaceContext();
+      await this.fileExplorer.createFolder(nextCwd, null, workspaceId);
+    }
+  }
+
+  async openGitBranchesFromPalette(cwd) {
+    await this.openGitPanel();
+    if (window.gitManager?.panel?.classList.contains("hidden")) return;
+    const branchesEl = window.gitManager.panel.querySelector("#git-branches");
+    if (branchesEl?.classList.contains("hidden")) {
+      window.gitManager.toggleBranches();
+    } else {
+      await window.gitManager.loadBranches();
+    }
+  }
+
+  async switchGitBranchFromPalette(cwd, branch) {
+    const nextCwd = String(cwd || "").trim();
+    const nextBranch = String(branch || "").trim();
+    if (!nextCwd || !nextBranch) return;
+
+    try {
+      const res = await fetch("/api/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: nextCwd, branch: nextBranch }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.error) {
+        alert(payload.error || "Checkout failed");
+        return;
+      }
+
+      const cached = this.commandPaletteGitCache.get(nextCwd);
+      this.commandPaletteGitCache.set(nextCwd, {
+        isGitRepo: true,
+        gitBranches: cached?.gitBranches || [],
+        currentGitBranch: nextBranch,
+      });
+
+      if (
+        window.gitManager &&
+        !window.gitManager.panel?.classList.contains("hidden") &&
+        (window.gitManager.state.cwd || window.gitManager.currentCwd) === nextCwd
+      ) {
+        await window.gitManager.refresh();
+      }
+    } catch (err) {
+      alert("Failed to switch branch");
+      console.error("Switch branch error:", err);
+    }
   }
 
   getTerminalTextarea(terminalState) {
@@ -4120,12 +5445,15 @@ class TerminalManager {
   }
 
   updateLinkedViewButton() {
-    const button = document.getElementById("linked-view-btn");
-    if (!button) return;
     const isAvailable = this.canCreateLinkedView();
-    button.hidden = !isAvailable;
-    button.disabled = !isAvailable;
-    button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+    document
+      .querySelectorAll('#linked-view-btn, [data-action="linked-view"]')
+      .forEach((button) => {
+        button.hidden = !isAvailable;
+        button.disabled = !isAvailable;
+        button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
+      });
+    this.refreshCommandPalette();
   }
 
   updateWorkspaceLabel(workspaceId, cwd) {
@@ -4331,8 +5659,8 @@ class TerminalManager {
     terminal.running = nextRunning;
     terminal.busy = nextRunning;
     terminal.lastExitCode = nextExitCode;
-    terminal.agentName = nextRunning ? nextAgentName : null;
-    terminal.agentState = nextRunning ? nextAgentState : null;
+    terminal.agentName = nextAgentName;
+    terminal.agentState = nextAgentState;
 
     if (prevRunning && !nextRunning) {
       this.maybeNotifyCommandFinished(terminal);
@@ -4431,7 +5759,9 @@ class TerminalManager {
       if (!t) return true;
       t.cwd = cwd;
       if (t.workspaceId && this.activeId === id) {
+        this.setDirectoryValue(cwd);
         this.updateWorkspaceLabel(t.workspaceId, cwd);
+        this.rememberWorkspaceById(t.workspaceId, cwd);
       }
       this.updateTabGroups();
       // Update session registry with new cwd
@@ -4442,10 +5772,11 @@ class TerminalManager {
   }
 
   updateWrapButton() {
-    const btn = document.getElementById("wrap-lines-btn");
-    if (!btn) return;
-    btn.classList.toggle("active", this.wrapLines);
-    btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+    document.querySelectorAll('[data-action="wrap-lines"]').forEach((btn) => {
+      btn.classList.toggle("active", this.wrapLines);
+      btn.title = this.wrapLines ? "Line wrap: on" : "Line wrap: off";
+    });
+    this.refreshCommandPalette();
   }
 
   toggleWrapLines() {
@@ -4489,15 +5820,128 @@ class TerminalManager {
   }
 
   openHelp() {
+    this.closeToolsSheet();
     document.getElementById("help-modal")?.classList.remove("hidden");
+    this.syncSurfaceButtonState();
   }
 
   closeHelp() {
     document.getElementById("help-modal")?.classList.add("hidden");
   }
 
+  getActiveWorkspaceContext() {
+    const active = this.getActiveTerminal();
+    return {
+      workspaceId: active?.workspaceId || null,
+      cwd: active?.cwd || this.getCurrentDirectoryValue() || "/",
+    };
+  }
+
+  getRightSurface() {
+    const filesOpen = Boolean(this.fileExplorer?.isOpen);
+    const gitOpen = Boolean(
+      window.gitManager &&
+        !window.gitManager.panel?.classList.contains("hidden"),
+    );
+    const nextSurface = filesOpen ? "files" : gitOpen ? "git" : "none";
+    this.rightSurface = nextSurface;
+    return nextSurface;
+  }
+
+  async openFileExplorer() {
+    if (!this.fileExplorer) return null;
+
+    const { workspaceId, cwd } = this.getActiveWorkspaceContext();
+    if (!workspaceId) return null;
+
+    if (
+      window.gitManager &&
+      !window.gitManager.panel?.classList.contains("hidden")
+    ) {
+      window.gitManager.hide();
+    }
+
+    const targetPath = this.fileExplorer.openForWorkspace(workspaceId, cwd);
+    this.rightSurface = "files";
+
+    if (targetPath) {
+      await this.fileExplorer.loadDir(targetPath, workspaceId);
+    }
+
+    this.syncSurfaceButtonState();
+    return targetPath;
+  }
+
+  closeFileExplorer() {
+    this.fileExplorer?.close();
+    this.getRightSurface();
+    this.syncSurfaceButtonState();
+  }
+
+  async toggleFileExplorer() {
+    if (this.getRightSurface() === "files") {
+      this.closeFileExplorer();
+      return;
+    }
+    await this.openFileExplorer();
+  }
+
+  async openGitPanel() {
+    const { cwd } = this.getActiveWorkspaceContext();
+    if (!cwd) return null;
+
+    if (this.fileExplorer?.isOpen) {
+      this.fileExplorer.close();
+    }
+
+    this.rightSurface = "git";
+    const result = await window.gitManager?.show(cwd);
+    this.syncSurfaceButtonState();
+    return result;
+  }
+
+  closeGitPanel() {
+    window.gitManager?.hide();
+    this.getRightSurface();
+    this.syncSurfaceButtonState();
+  }
+
+  async toggleGitPanel() {
+    if (this.getRightSurface() === "git") {
+      this.closeGitPanel();
+      return;
+    }
+    await this.openGitPanel();
+  }
+
+  async syncRightSurfaceForWorkspace() {
+    const surface = this.getRightSurface();
+    const { workspaceId, cwd } = this.getActiveWorkspaceContext();
+    if (!workspaceId) return;
+
+    if (surface === "files") {
+      const targetPath = this.fileExplorer?.openForWorkspace(workspaceId, cwd);
+      if (targetPath) {
+        await this.fileExplorer.loadDir(targetPath, workspaceId);
+      }
+      return;
+    }
+
+    if (surface === "git") {
+      await window.gitManager?.show(cwd);
+    }
+  }
+
   setupKeyboardShortcuts() {
     document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        this.toggleCommandPalette();
+        return;
+      }
+      if (this.isCommandPaletteOpen()) {
+        return;
+      }
       if (e.ctrlKey && e.key === "n") {
         e.preventDefault();
         this.createTerminal();
@@ -5608,22 +7052,19 @@ class TerminalManager {
         try {
           this.fitTerminalState(t);
 
-          // Check terminal size - be lenient on mobile
+          // Match compact chrome behavior to the same width-based breakpoint as CSS.
+          // A narrow layout should not inherit desktop-only minimum-size warnings
+          // just because the device lacks touch input.
           const cols = t.terminal.cols;
           const rows = t.terminal.rows;
-
-          // On mobile, accept much smaller terminals (40x12 minimum)
-          // On desktop, prefer 80x24 but still allow smaller
-          const minCols = platformDetector.isMobile ? 40 : 60;
-          const minRows = platformDetector.isMobile ? 12 : 16;
+          const usesCompactLayout = platformDetector.smallScreen;
+          const minCols = usesCompactLayout ? 40 : 60;
+          const minRows = usesCompactLayout ? 12 : 16;
           const isTooSmall = cols < minCols || rows < minRows;
 
-          // Hide size warning on mobile entirely, show on desktop only for very small
+          // Hide the warning for compact layouts where the bottom action bar is expected.
           if (t.sizeWarning) {
-            t.sizeWarning.classList.toggle(
-              "visible",
-              isTooSmall && !platformDetector.isMobile,
-            );
+            t.sizeWarning.classList.toggle("visible", isTooSmall && !usesCompactLayout);
           }
 
           // Always send resize - terminal will work even if small
@@ -5648,7 +7089,7 @@ class TerminalManager {
     }
     await this.waitForFontMetrics();
 
-    const cwd = this.directoryInput?.value.trim() || undefined;
+    const cwd = this.getCurrentDirectoryValue() || undefined;
     const { cols, rows } = this.estimateInitialTerminalSize(split);
 
     try {
@@ -5972,6 +7413,7 @@ class TerminalManager {
     this.tabs.querySelectorAll(".tab").forEach((tab) => {
       this.renderWorkspaceTab(tab);
     });
+    this.refreshCommandPalette();
   }
 
   groupWithPrevious() {
@@ -6081,7 +7523,9 @@ class TerminalManager {
     }
     this.tileManager.setActive(id);
     if (t?.workspaceId && t.cwd) {
+      this.setDirectoryValue(t.cwd, { force: true });
       this.updateWorkspaceLabel(t.workspaceId, t.cwd);
+      this.rememberWorkspaceById(t.workspaceId, t.cwd);
     }
     if (DEBUG) {
       dbg("switchTo", {
@@ -6111,6 +7555,8 @@ class TerminalManager {
       );
     }
     this.updateLinkedViewButton();
+    this.refreshCommandPalette();
+    void this.syncRightSurfaceForWorkspace();
   }
 
   switchToIndex(index) {
@@ -6224,6 +7670,13 @@ class TerminalManager {
     const keyboardHeight = windowHeight - viewportHeight - viewport.offsetTop;
 
     const extraKeys = document.getElementById("extra-keys");
+    const mobileActionBar = document.getElementById("mobile-action-bar");
+    const toolbarHeight = this.toolbar?.offsetHeight || 0;
+    const extraKeysHeight = extraKeys?.offsetHeight || 0;
+    const mobileActionBarHeight =
+      mobileActionBar && getComputedStyle(mobileActionBar).display !== "none"
+        ? mobileActionBar.offsetHeight || 0
+        : 0;
     const isKeyboardOpen = keyboardHeight > 100;
 
     if (isKeyboardOpen) {
@@ -6234,7 +7687,7 @@ class TerminalManager {
       extraKeys.style.left = "0";
       extraKeys.style.right = "0";
       extraKeys.style.zIndex = "1000";
-      this.container.style.height = `calc(${viewportHeight}px - var(--toolbar-height, 50px) - var(--extra-keys-height, 52px))`;
+      this.container.style.height = `calc(${viewportHeight}px - ${toolbarHeight}px - ${extraKeysHeight}px - ${mobileActionBarHeight}px)`;
       document.body.classList.add("virtual-keyboard-open");
     } else {
       // Hide extra keys when keyboard closes (mobile only)
@@ -6300,7 +7753,7 @@ class TerminalManager {
 
   async openDirPicker() {
     document.getElementById("dir-modal")?.classList.remove("hidden");
-    await this.loadDir(this.directoryInput?.value || "/");
+    await this.loadDir(this.getCurrentDirectoryValue() || "/");
   }
 
   closeDirPicker() {
@@ -6376,8 +7829,7 @@ class TerminalManager {
   selectDir() {
     const dir = this.selectedDir || this.currentDirPath;
     if (dir) {
-      this.directoryInput.value = dir;
-      localStorage.setItem("opencode-web-dir", dir);
+      this.setDirectoryValue(dir, { force: true });
     }
     this.closeDirPicker();
   }
@@ -6428,6 +7880,7 @@ document.addEventListener("DOMContentLoaded", () => {
           x: "×",
           copy: "📋",
           "clipboard-paste": "📥",
+          "sliders-horizontal": "⚙",
           "zoom-in": "+",
           "zoom-out": "-",
           "maximize-2": "⛶",
