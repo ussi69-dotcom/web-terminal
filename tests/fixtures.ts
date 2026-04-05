@@ -523,8 +523,32 @@ export async function createWorkspaceInDir(page: Page, cwd: string) {
 }
 
 export async function openToolsSheet(page: Page) {
-  await page.click("#toolbar-toggle");
-  await expect(page.locator("#tools-sheet")).toBeVisible();
+  const desktopMore = page
+    .locator("#desktop-primary-actions")
+    .getByRole("button", { name: "More" });
+  if (await desktopMore.isVisible().catch(() => false)) {
+    await desktopMore.click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    return;
+  }
+
+  const mobileMore = page
+    .locator("#mobile-action-bar")
+    .getByRole("button", { name: "More" });
+  if (await mobileMore.isVisible().catch(() => false)) {
+    await mobileMore.click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    return;
+  }
+
+  const toolbarToggle = page.locator("#toolbar-toggle");
+  if (await toolbarToggle.isVisible().catch(() => false)) {
+    await toolbarToggle.click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    return;
+  }
+
+  throw new Error("No visible tools sheet trigger found");
 }
 
 export const LAYOUT_EDITOR_TEST_IDS = {

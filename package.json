@@ -12,7 +12,7 @@
     "test:e2e:navigation": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test command-palette.spec.ts --workers=1 --reporter=line",
     "test:e2e:navigation-surface": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test navigation-surface.spec.ts --workers=1 --reporter=line",
     "test:e2e:file-explorer": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test file-explorer-surface.spec.ts --workers=1 --reporter=line",
-    "test:e2e": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test",
+    "test:e2e": "cd tests && PW_BASE_URL=${PW_BASE_URL:-http://localhost:4174} npx playwright test --workers=1",
     "test:all": "bun run test:unit && bun run test:e2e"
   },
   "dependencies": {

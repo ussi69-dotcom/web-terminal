@@ -14,11 +14,13 @@ test.describe("Tmux Rich Mode", () => {
     ).json()) as Array<{
       id?: string;
       backendMode?: string;
+      supportsLinkedView?: boolean;
     }>;
 
     test.skip(
-      serverTerminals[0]?.backendMode !== "tmux",
-      "TMUX_BACKEND=1 is required for tmux rich mode coverage",
+      serverTerminals[0]?.backendMode !== "tmux" ||
+        !serverTerminals[0]?.supportsLinkedView,
+      "TMUX_BACKEND=1 with linked-view support is required for tmux rich mode coverage",
     );
 
     const linkedViewButton = page.locator("#linked-view-btn");

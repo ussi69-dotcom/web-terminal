@@ -1,6 +1,19 @@
-import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
+import type { Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  openToolsSheet,
+  resetAppState,
+  waitForTerminal,
+} from "./fixtures";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
+
+async function openClipboardPanel(page: Page) {
+  await openToolsSheet(page);
+  await page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" }).click();
+  await expect(page.locator("#clipboard-panel")).toBeVisible();
+}
 
 test.describe("Phase 3: Clipboard Overhaul", () => {
   test.beforeEach(async ({ page, context }, testInfo) => {
@@ -52,8 +65,7 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
   });
 
   test("auto-copy setting persists", async ({ page }) => {
-    // Open clipboard panel
-    await page.locator("#clipboard-btn").click();
+    await openClipboardPanel(page);
 
     // Toggle auto-copy on
     const checkbox = page.locator("#auto-copy-toggle");
@@ -63,7 +75,7 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
     // Reload and verify
     await page.reload();
     await waitForTerminal(page);
-    await page.locator("#clipboard-btn").click();
+    await openClipboardPanel(page);
 
     await expect(page.locator("#auto-copy-toggle")).toBeChecked();
   });
