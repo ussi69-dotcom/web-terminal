@@ -1,4 +1,5 @@
 import {
+  createTerminal,
   test,
   expect,
   waitForTerminal,
@@ -13,7 +14,7 @@ test.describe("Tab Switching Reliability", () => {
     await resetAppState(page, APP_URL);
     await waitForTerminal(page);
 
-    await page.click("#new-terminal");
+    await createTerminal(page);
     await page.waitForTimeout(800);
 
     const tabs = page.locator("#terminals-tabs .tab");
@@ -56,7 +57,7 @@ test.describe("Tab Switching Reliability", () => {
     await resetAppState(page, APP_URL);
     await waitForTerminal(page);
 
-    await page.click("#new-terminal");
+    await createTerminal(page);
     await page.waitForTimeout(800);
 
     const activeTab = page.locator("#terminals-tabs .tab.active").first();

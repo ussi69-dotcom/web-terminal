@@ -10,6 +10,31 @@ import {
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
+test.describe("File explorer surface on mobile", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await resetAppState(page, APP_URL);
+    await waitForTerminal(page);
+  });
+
+  test("opens Files from the mobile primary bar as a full overlay", async ({
+    page,
+  }) => {
+    await page.click("#mobile-files-btn");
+
+    await expect(page.locator("#file-explorer")).toBeVisible();
+    await expect(page.locator("#file-explorer")).toHaveAttribute(
+      "data-mode",
+      "overlay",
+    );
+    await expect(page.locator("#file-modal")).toHaveCount(0);
+  });
+});
+
 test.describe("File explorer surface on desktop", () => {
   let tempDirs: string[] = [];
 
@@ -39,6 +64,8 @@ test.describe("File explorer surface on desktop", () => {
   test("remembers the explorer path per workspace and coordinates with Git", async ({
     page,
   }) => {
+    test.setTimeout(60000);
+
     const workspaceA = await createExplorerFixtureDir(["alpha"]);
     const workspaceB = await createExplorerFixtureDir(["beta"]);
     tempDirs.push(workspaceA.root, workspaceB.root);
@@ -96,30 +123,5 @@ test.describe("File explorer surface on desktop", () => {
     await expect(page.locator("#file-explorer .breadcrumb")).toContainText(
       "beta",
     );
-  });
-});
-
-test.describe("File explorer surface on mobile", () => {
-  test.use({
-    viewport: { width: 390, height: 844 },
-    hasTouch: true,
-  });
-
-  test.beforeEach(async ({ page }) => {
-    await resetAppState(page, APP_URL);
-    await waitForTerminal(page);
-  });
-
-  test("opens Files from the mobile primary bar as a full overlay", async ({
-    page,
-  }) => {
-    await page.click("#mobile-files-btn");
-
-    await expect(page.locator("#file-explorer")).toBeVisible();
-    await expect(page.locator("#file-explorer")).toHaveAttribute(
-      "data-mode",
-      "overlay",
-    );
-    await expect(page.locator("#file-modal")).toHaveCount(0);
   });
 });

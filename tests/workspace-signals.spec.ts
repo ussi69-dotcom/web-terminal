@@ -5,6 +5,7 @@ import {
   waitForTerminal,
   cleanupTempDir,
   createGitFixtureRepo,
+  reserveTerminalCreateBudget,
 } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
@@ -164,6 +165,7 @@ test.describe("Workspace telemetry contract", () => {
     tempDirs.push(worktreeCwd);
 
     await page.locator("#directory").fill(worktreeCwd);
+    await reserveTerminalCreateBudget(1);
     await page.evaluate(async () => {
       // @ts-ignore
       await window.terminalManager?.createTerminal();

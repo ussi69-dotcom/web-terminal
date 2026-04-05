@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import {
   cleanupTempDir,
+  createTerminal,
   createExplorerFixtureDir,
   createGitFixtureRepo,
   createWorkspaceInDir,
@@ -19,10 +20,7 @@ async function ensureSecondWorkspace(page: Page) {
   const tabsBefore = await page.locator("#terminals-tabs .tab").count();
   if (tabsBefore >= 2) return;
 
-  await page.click("#new-terminal");
-  await page.waitForFunction(() => {
-    return document.querySelectorAll("#terminals-tabs .tab").length >= 2;
-  });
+  await createTerminal(page);
 }
 
 async function getActiveTerminalCwd(page: Page) {

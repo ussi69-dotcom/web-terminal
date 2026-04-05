@@ -5,6 +5,43 @@ import os from "node:os";
 import path from "node:path";
 
 const DEFAULT_APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
+const TERMINAL_CREATE_RATE_LIMIT_WINDOW_MS = 60_000;
+// Keep a small safety margin under the backend 20/min cap because some
+// bootstrap recovery paths may legitimately spend an extra terminal create.
+const TERMINAL_CREATE_RATE_LIMIT_MAX_REQUESTS = 18;
+const TERMINAL_CREATE_RATE_LIMIT_BUFFER_MS = 250;
+let terminalCreateRequestTimestamps: number[] = [];
+
+export async function reserveTerminalCreateBudget(requestCount = 1) {
+  const needed = Math.max(0, Math.trunc(Number(requestCount) || 0));
+  if (!needed) return;
+
+  while (true) {
+    const now = Date.now();
+    terminalCreateRequestTimestamps = terminalCreateRequestTimestamps.filter(
+      (timestamp) => now - timestamp < TERMINAL_CREATE_RATE_LIMIT_WINDOW_MS,
+    );
+
+    if (
+      terminalCreateRequestTimestamps.length + needed <=
+      TERMINAL_CREATE_RATE_LIMIT_MAX_REQUESTS
+    ) {
+      for (let index = 0; index < needed; index += 1) {
+        terminalCreateRequestTimestamps.push(now);
+      }
+      return;
+    }
+
+    const oldest = terminalCreateRequestTimestamps[0];
+    const waitMs = Math.max(
+      TERMINAL_CREATE_RATE_LIMIT_BUFFER_MS,
+      TERMINAL_CREATE_RATE_LIMIT_WINDOW_MS -
+        (now - oldest) +
+        TERMINAL_CREATE_RATE_LIMIT_BUFFER_MS,
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
 
 /**
  * Helper utilities for DeckTerm E2E tests
@@ -33,6 +70,12 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
   });
 
   await page
+    .waitForFunction(() => Boolean((window as any).terminalManager), {
+      timeout: 5000,
+    })
+    .catch(() => {});
+
+  await page
     .evaluate(async () => {
       const pendingBootstrap = (window as any).__decktermBootstrapPromise;
       if (pendingBootstrap) {
@@ -44,8 +87,28 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
   let hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
 
   if (!hasTerminal) {
+    await page
+      .waitForFunction(() => {
+        const tm = (window as any).terminalManager;
+        return Boolean(tm?.terminals?.size) || Boolean(document.querySelector(".tile .xterm"));
+      }, { timeout: 3000 })
+      .catch(() => {});
+
+    try {
+      await page.waitForSelector(".tile.active .xterm, .tile .xterm", {
+        state: "attached",
+        timeout: 3000,
+      });
+      hasTerminal = true;
+    } catch {
+      // Fall through to explicit terminal creation recovery below.
+    }
+  }
+
+  if (!hasTerminal) {
     const newButton = page.locator("#new-terminal, button:has-text('New')");
     if ((await newButton.count()) > 0) {
+      await reserveTerminalCreateBudget(1);
       await newButton.first().click();
       await page.waitForTimeout(1000);
       hasTerminal = (await page.locator(".tile .xterm").count()) > 0;
@@ -53,6 +116,7 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
   }
 
   if (!hasTerminal) {
+    await reserveTerminalCreateBudget(1);
     await page.evaluate(async () => {
       // @ts-ignore
       const tm = window.terminalManager;
@@ -72,6 +136,7 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     if (page.isClosed()) {
       throw error;
     }
+    await reserveTerminalCreateBudget(1);
     await page.evaluate(async () => {
       // @ts-ignore
       const tm = window.terminalManager;
@@ -114,9 +179,57 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
  */
 export async function createTerminal(page: Page) {
   // Click new terminal button (+ button in toolbar)
-  await page.click(
-    '[data-action="new-terminal"], .new-terminal-btn, button:has-text("+")',
+  const previousState = await page.evaluate(() => {
+    const tm = (window as any).terminalManager;
+    return {
+      activeId: tm?.activeId || null,
+      terminalCount: tm?.terminals?.size || 0,
+    };
+  });
+
+  await reserveTerminalCreateBudget(1);
+  const newButton = page.locator(
+    "#new-terminal, [data-action='new-terminal']:visible, .new-terminal-btn:visible",
   );
+  const waitForCreatedTerminal = () =>
+    page.waitForFunction(
+      ({ previousActiveId, previousTerminalCount }) => {
+        const tm = (window as any).terminalManager;
+        if (!tm?.terminals) return false;
+        return (
+          tm.terminals.size > previousTerminalCount &&
+          tm.activeId &&
+          tm.activeId !== previousActiveId
+        );
+      },
+      {
+        previousActiveId: previousState.activeId,
+        previousTerminalCount: previousState.terminalCount,
+      },
+      { timeout: 12000 },
+    );
+
+  await newButton.first().click();
+
+  try {
+    await waitForCreatedTerminal();
+  } catch (error) {
+    const currentTerminalCount = await page
+      .evaluate(() => {
+        const tm = (window as any).terminalManager;
+        return tm?.terminals?.size || 0;
+      })
+      .catch(() => 0);
+
+    if (currentTerminalCount <= previousState.terminalCount) {
+      await reserveTerminalCreateBudget(1);
+      await newButton.first().click();
+      await waitForCreatedTerminal();
+    } else {
+      throw error;
+    }
+  }
+
   await waitForTerminal(page);
 }
 
@@ -318,24 +431,94 @@ async function clearServerTerminals(page: Page, url: string) {
   }
 }
 
-/**
- * Clear persisted UI/session state before each test for deterministic behavior.
- */
-export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
-  await clearServerTerminals(page, url);
+async function clearBrowserStateForOrigin(page: Page, url: string) {
+  const origin = new URL(url).origin;
+
+  try {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Storage.clearDataForOrigin", {
+      origin,
+      storageTypes: "all",
+    });
+    await cdp.detach().catch(() => {});
+    return;
+  } catch {
+    // Fall through to same-origin script cleanup for non-Chromium environments.
+  }
+
   await page.goto(url);
   await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
   });
   await page.context().clearCookies();
-  await page.reload();
+}
+
+/**
+ * Clear persisted UI/session state before each test for deterministic behavior.
+ */
+export async function resetAppState(page: Page, url = DEFAULT_APP_URL) {
+  await clearServerTerminals(page, url);
+  await clearBrowserStateForOrigin(page, url);
+  await page.context().clearCookies();
+  await reserveTerminalCreateBudget(1);
+  await page.goto(url);
   await page.waitForLoadState("domcontentloaded");
 }
 
 export async function createWorkspaceInDir(page: Page, cwd: string) {
+  const previousState = await page.evaluate(() => {
+    const tm = (window as any).terminalManager;
+    return {
+      activeId: tm?.activeId || null,
+      terminalCount: tm?.terminals?.size || 0,
+    };
+  });
+
+  const waitForCreatedWorkspace = () =>
+    page.waitForFunction(
+      ({ previousActiveId, previousTerminalCount, expectedCwd }) => {
+        const tm = (window as any).terminalManager;
+        if (!tm?.terminals || !tm.activeId) return false;
+        const active = tm.terminals.get(tm.activeId);
+        return (
+          tm.terminals.size > previousTerminalCount &&
+          tm.activeId !== previousActiveId &&
+          active?.cwd === expectedCwd
+        );
+      },
+      {
+        previousActiveId: previousState.activeId,
+        previousTerminalCount: previousState.terminalCount,
+        expectedCwd: cwd,
+      },
+      { timeout: 12000 },
+    );
+
   await page.fill("#directory", cwd);
+  await reserveTerminalCreateBudget(1);
   await page.click("#new-terminal");
+
+  try {
+    await waitForCreatedWorkspace();
+  } catch (error) {
+    const currentTerminalCount = await page
+      .evaluate(() => {
+        const tm = (window as any).terminalManager;
+        return tm?.terminals?.size || 0;
+      })
+      .catch(() => 0);
+
+    if (currentTerminalCount <= previousState.terminalCount) {
+      await page.fill("#directory", cwd);
+      await reserveTerminalCreateBudget(1);
+      await page.click("#new-terminal");
+      await waitForCreatedWorkspace();
+    } else {
+      throw error;
+    }
+  }
+
   await waitForTerminal(page);
 }
 
