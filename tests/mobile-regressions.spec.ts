@@ -5,6 +5,7 @@ import {
   expectButtonLabelsExactly,
   dragLayoutEditorItem,
   LAYOUT_EDITOR_TEST_IDS,
+  openToolsSheet,
   resetAppState,
   openLayoutEditor,
   waitForTerminal,
@@ -41,8 +42,7 @@ test.describe("Mobile regressions", () => {
     expect(apiResponse.ok()).toBe(true);
     const apiData = await apiResponse.json();
 
-    await page.getByRole("button", { name: "More" }).click();
-    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await openToolsSheet(page);
     await page.fill("#tools-sheet-directory", "/tmp/does-not-exist/child");
     await page.locator("#tools-sheet-browse").click();
 
@@ -70,16 +70,16 @@ test.describe("Mobile regressions", () => {
     expect(state.hasEntries).toBe(true);
   });
 
-  test("keeps primary actions in a dedicated bottom action bar", async ({
+  test("keeps only pinned primary actions in the dedicated mobile bottom bar", async ({
     page,
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
 
     await expect(mobileBar).toBeVisible();
-    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste", "More"]);
+    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste"]);
   });
 
-  test("customizes the mobile pinned actions from More and moves them back to More", async ({
+  test("customizes the mobile pinned actions from the tools sheet and moves them back", async ({
     page,
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
@@ -119,10 +119,69 @@ test.describe("Mobile regressions", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Done" }).click();
-    await page.getByRole("button", { name: "More" }).click();
+    await openToolsSheet(page);
     await expect(
       page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" }),
     ).toBeVisible();
+  });
+
+  test("allows the mobile action bar to be completely empty and reopened from the top-left menu", async ({
+    page,
+  }) => {
+    const mobileBar = page.locator("#mobile-action-bar");
+    const layoutEditor = await openLayoutEditor(page, "Mobile");
+    const availableZone = layoutEditor.getByTestId(
+      LAYOUT_EDITOR_TEST_IDS.available,
+    );
+
+    for (const label of ["Files", "Git", "Paste"]) {
+      await dragLayoutEditorItem(
+        page,
+        layoutEditor
+          .getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned)
+          .getByRole("button", { name: label }),
+        availableZone,
+      );
+    }
+
+    await expect(mobileBar).toBeHidden();
+    await expect(page.locator("#mobile-more-btn")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Done" }).click();
+    await page.locator("#toolbar-toggle").click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+  });
+
+  test("keeps the top-left menu toggle usable and the mobile tools sheet vertically reachable", async ({
+    page,
+  }) => {
+    await resizeWindow(page, 360, 640);
+
+    const layoutEditor = await openLayoutEditor(page, "Mobile");
+    const availableZone = layoutEditor.getByTestId(
+      LAYOUT_EDITOR_TEST_IDS.available,
+    );
+
+    for (const label of ["Files", "Git", "Paste"]) {
+      await dragLayoutEditorItem(
+        page,
+        layoutEditor
+          .getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned)
+          .getByRole("button", { name: label }),
+        availableZone,
+      );
+    }
+
+    await page.getByRole("button", { name: "Done" }).click();
+
+    const toolbarToggle = page.locator("#toolbar-toggle");
+    await toolbarToggle.click();
+    await expect(page.locator("#tools-sheet")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+
+    await toolbarToggle.click();
+    await expect(page.locator("#tools-sheet")).toBeHidden();
   });
 
   test("mobile chrome keeps the bottom action bar visible without a size warning", async ({

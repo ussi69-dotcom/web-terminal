@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   cleanupTempDir,
+  createTerminal,
   createWorkspaceInDir,
   createGitFixtureRepo,
   expect,
@@ -18,6 +19,22 @@ import {
 } from "./fixtures";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
+
+async function pruneTerminalsToActiveSession(page: any) {
+  await page.evaluate(async () => {
+    const tm = (window as any).terminalManager;
+    const activeId = tm?.activeId || null;
+    const response = await fetch("/api/terminals");
+    const terminals = await response.json().catch(() => []);
+
+    for (const terminal of terminals) {
+      if (!terminal?.id || terminal.id === activeId) continue;
+      await fetch(`/api/terminals/${encodeURIComponent(terminal.id)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
+  });
+}
 
 test.describe("Shell action hierarchy on desktop", () => {
   let tempDirs: string[] = [];
@@ -166,7 +183,140 @@ test.describe("Shell action hierarchy on desktop", () => {
     await resizeWindow(page, 390, 844);
     const mobileBar = page.locator("#mobile-action-bar");
     await expect(mobileBar).toBeVisible();
-    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste", "More"]);
+    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste"]);
+  });
+
+  test("wraps desktop tabs to two rows before hiding them when the toolbar gets crowded", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    const desktopPrimaryActions = page.locator(".desktop-primary-actions");
+
+    const layoutEditor = await openLayoutEditor(page, "Desktop");
+    await dragLayoutEditorItem(
+      page,
+      layoutEditor
+        .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
+        .getByRole("button", { name: "Clipboard" }),
+      layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned),
+    );
+    await expect(desktopPrimaryActions.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.locator("#tools-sheet")).toBeHidden();
+
+    for (let index = 0; index < 7; index += 1) {
+      await createTerminal(page);
+    }
+
+    await resizeWindow(page, 1800, 900);
+    await page.waitForTimeout(300);
+
+    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
+
+    const toolbarMetrics = await page.locator(".toolbar").evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(toolbarMetrics.clientHeight).toBeGreaterThan(48);
+    expect(toolbarMetrics.scrollWidth).toBeLessThanOrEqual(
+      toolbarMetrics.clientWidth + 1,
+    );
+    expect(toolbarMetrics.scrollHeight).toBeLessThanOrEqual(
+      toolbarMetrics.clientHeight + 1,
+    );
+
+    const tabMetrics = await page.locator(".tabs").evaluate((element) => {
+      const tabTops = Array.from(element.querySelectorAll(".tab")).map((tab) =>
+        Math.round((tab as HTMLElement).offsetTop),
+      );
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        distinctRows: [...new Set(tabTops)].length,
+      };
+    });
+    expect(tabMetrics.distinctRows).toBe(2);
+    expect(tabMetrics.scrollWidth).toBeLessThanOrEqual(
+      tabMetrics.clientWidth + 1,
+    );
+    expect(tabMetrics.scrollHeight).toBeLessThanOrEqual(
+      tabMetrics.clientHeight + 1,
+    );
+    expect(tabMetrics.clientHeight).toBeGreaterThan(40);
+    expect(
+      await page.locator("#terminals-tabs .tab").count(),
+    ).toBeGreaterThanOrEqual(8);
+  });
+
+  test("fits four desktop tabs before promoting the fifth tab into a second row", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    for (let index = 0; index < 3; index += 1) {
+      await createTerminal(page);
+    }
+
+    await resizeWindow(page, 1400, 900);
+    await page.waitForTimeout(300);
+
+    const fourTabMetrics = await page.locator(".tabs").evaluate((element) => {
+      const tabTops = Array.from(element.querySelectorAll(".tab")).map((tab) =>
+        Math.round((tab as HTMLElement).offsetTop),
+      );
+      return {
+        layout: element.dataset.layout,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        distinctRows: [...new Set(tabTops)].length,
+      };
+    });
+    expect(fourTabMetrics.layout).toBe("single");
+    expect(fourTabMetrics.distinctRows).toBe(1);
+    expect(fourTabMetrics.scrollWidth).toBeLessThanOrEqual(
+      fourTabMetrics.clientWidth + 1,
+    );
+
+    await createTerminal(page);
+    await page.waitForTimeout(300);
+
+    const fiveTabMetrics = await page.locator(".tabs").evaluate((element) => {
+      const tabTops = Array.from(element.querySelectorAll(".tab")).map((tab) =>
+        Math.round((tab as HTMLElement).offsetTop),
+      );
+      return {
+        layout: element.dataset.layout,
+        distinctRows: [...new Set(tabTops)].length,
+      };
+    });
+    expect(fiveTabMetrics.layout).toBe("wrapped");
+    expect(fiveTabMetrics.distinctRows).toBe(2);
+  });
+
+  test("keeps narrow desktop tab overflow reachable with mouse-wheel scrolling", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    for (let index = 0; index < 3; index += 1) {
+      await createTerminal(page);
+    }
+
+    await resizeWindow(page, 980, 900);
+    await page.waitForTimeout(300);
+
+    const tabs = page.locator(".tabs");
+    await expect(tabs).toHaveAttribute("data-layout", "scroll");
+
+    const initialScrollLeft = await tabs.evaluate((element) => element.scrollLeft);
+    await tabs.hover();
+    await page.mouse.wheel(0, 800);
+    await page.waitForTimeout(200);
+    const nextScrollLeft = await tabs.evaluate((element) => element.scrollLeft);
+
+    expect(nextScrollLeft).toBeGreaterThan(initialScrollLeft);
   });
 });
 
@@ -188,6 +338,5 @@ test.describe("Shell action hierarchy on mobile", () => {
     await expect(page.getByRole("button", { name: "Files" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Paste" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
   });
 });
