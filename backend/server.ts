@@ -104,8 +104,20 @@ const MAX_TERMINALS_PER_USER = parseInt(
   process.env.MAX_TERMINALS_PER_USER || "10",
   10,
 );
-const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 20; // max terminals per minute
+const RATE_LIMIT_WINDOW_MS = Math.max(
+  1_000,
+  parseInt(
+    process.env.OPENCODE_WEB_TERMINAL_RATE_LIMIT_WINDOW_MS || "60000",
+    10,
+  ) || 60_000,
+);
+const RATE_LIMIT_MAX_REQUESTS = Math.max(
+  1,
+  parseInt(
+    process.env.OPENCODE_WEB_TERMINAL_RATE_LIMIT_MAX_REQUESTS || "40",
+    10,
+  ) || 40,
+);
 const TERMINAL_IDLE_TIMEOUT_MS = parseInt(
   process.env.TERMINAL_IDLE_TIMEOUT_MS || String(2 * 60 * 60 * 1000),
   10,

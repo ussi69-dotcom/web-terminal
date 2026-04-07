@@ -6,9 +6,9 @@ import path from "node:path";
 
 const DEFAULT_APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 const TERMINAL_CREATE_RATE_LIMIT_WINDOW_MS = 60_000;
-// Keep a small safety margin under the backend 20/min cap because some
+// Keep a small safety margin under the backend default 40/min cap because some
 // bootstrap recovery paths may legitimately spend an extra terminal create.
-const TERMINAL_CREATE_RATE_LIMIT_MAX_REQUESTS = 18;
+const TERMINAL_CREATE_RATE_LIMIT_MAX_REQUESTS = 36;
 const TERMINAL_CREATE_RATE_LIMIT_BUFFER_MS = 250;
 let terminalCreateRequestTimestamps: number[] = [];
 
@@ -79,7 +79,10 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
     .evaluate(async () => {
       const pendingBootstrap = (window as any).__decktermBootstrapPromise;
       if (pendingBootstrap) {
-        await pendingBootstrap.catch(() => {});
+        await Promise.race([
+          pendingBootstrap.catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
       }
     })
     .catch(() => {});

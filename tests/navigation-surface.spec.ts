@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   cleanupTempDir,
+  createTerminal,
   createWorkspaceInDir,
   createGitFixtureRepo,
   expect,
@@ -11,7 +12,6 @@ import {
   LAYOUT_EDITOR_TEST_IDS,
   openLayoutEditor,
   openCommandPalette,
-  reserveTerminalCreateBudget,
   resetAppState,
   resizeWindow,
   test,
@@ -204,20 +204,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     await page.getByRole("button", { name: "Done" }).click();
     await expect(page.locator("#tools-sheet")).toBeHidden();
 
-    await reserveTerminalCreateBudget(7);
-    await page.evaluate(async (count) => {
-      const tm = (window as any).terminalManager;
-      for (let index = 0; index < count; index += 1) {
-        await tm.createTerminal(false, { skipBootstrapWait: true });
-      }
-    }, 7);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.querySelectorAll("#terminals-tabs .tab").length,
-        ),
-      )
-      .toBeGreaterThanOrEqual(8);
+    for (let index = 0; index < 7; index += 1) {
+      await createTerminal(page);
+    }
 
     await resizeWindow(page, 1800, 900);
     await page.waitForTimeout(300);
@@ -267,20 +256,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     page,
   }) => {
     await pruneTerminalsToActiveSession(page);
-    await reserveTerminalCreateBudget(4);
-    await page.evaluate(async () => {
-      const tm = (window as any).terminalManager;
-      for (let index = 0; index < 3; index += 1) {
-        await tm.createTerminal(false, { skipBootstrapWait: true });
-      }
-    });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.querySelectorAll("#terminals-tabs .tab").length,
-        ),
-      )
-      .toBeGreaterThanOrEqual(4);
+    for (let index = 0; index < 3; index += 1) {
+      await createTerminal(page);
+    }
 
     await resizeWindow(page, 1400, 900);
     await page.waitForTimeout(300);
@@ -302,17 +280,7 @@ test.describe("Shell action hierarchy on desktop", () => {
       fourTabMetrics.clientWidth + 1,
     );
 
-    await page.evaluate(async () => {
-      const tm = (window as any).terminalManager;
-      await tm.createTerminal(false, { skipBootstrapWait: true });
-    });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.querySelectorAll("#terminals-tabs .tab").length,
-        ),
-      )
-      .toBeGreaterThanOrEqual(5);
+    await createTerminal(page);
     await page.waitForTimeout(300);
 
     const fiveTabMetrics = await page.locator(".tabs").evaluate((element) => {
@@ -332,20 +300,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     page,
   }) => {
     await pruneTerminalsToActiveSession(page);
-    await reserveTerminalCreateBudget(3);
-    await page.evaluate(async (count) => {
-      const tm = (window as any).terminalManager;
-      for (let index = 0; index < count; index += 1) {
-        await tm.createTerminal(false, { skipBootstrapWait: true });
-      }
-    }, 3);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.querySelectorAll("#terminals-tabs .tab").length,
-        ),
-      )
-      .toBeGreaterThanOrEqual(4);
+    for (let index = 0; index < 3; index += 1) {
+      await createTerminal(page);
+    }
 
     await resizeWindow(page, 980, 900);
     await page.waitForTimeout(300);
