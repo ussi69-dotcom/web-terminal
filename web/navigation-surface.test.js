@@ -6,6 +6,8 @@ import {
   createNewFolderAction,
   createOpenGitBranchesAction,
   getDesktopActionDensityTier,
+  getDesktopActionDensityTierByWidth,
+  getDesktopTabLayoutByWidth,
   getDesktopPrimaryActionIds,
   getDesktopCustomizableActionIds,
   getDefaultActionLayoutState,
@@ -380,6 +382,175 @@ test("desktop and mobile density tiers scale differently", () => {
   expect(getMobileActionDensityTier(3)).toBe("compact");
   expect(getMobileActionDensityTier(4)).toBe("tight");
   expect(getMobileActionDensityTier(5)).toBe("icon-only");
+});
+
+test("desktop action density tiers resolve from width from largest to smallest footprint", () => {
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 420,
+      normalWidth: 400,
+      compactWidth: 320,
+      tightWidth: 240,
+      iconOnlyWidth: 96,
+    }),
+  ).toBe("normal");
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 300,
+      normalWidth: 400,
+      compactWidth: 300,
+      tightWidth: 240,
+      iconOnlyWidth: 96,
+    }),
+  ).toBe("compact");
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 200,
+      normalWidth: 400,
+      compactWidth: 300,
+      tightWidth: 200,
+      iconOnlyWidth: 96,
+    }),
+  ).toBe("tight");
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 80,
+      normalWidth: 400,
+      compactWidth: 300,
+      tightWidth: 200,
+      iconOnlyWidth: 80,
+    }),
+  ).toBe("icon-only");
+});
+
+test("desktop action density tiers fall back safely for invalid width inputs", () => {
+  expect(getDesktopActionDensityTierByWidth()).toBe("normal");
+  expect(getDesktopActionDensityTierByWidth(null)).toBe("normal");
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: Number.NaN,
+      normalWidth: "wide",
+      compactWidth: null,
+      tightWidth: undefined,
+      iconOnlyWidth: -1,
+    }),
+  ).toBe("normal");
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: -1,
+      normalWidth: 400,
+      compactWidth: 300,
+      tightWidth: 200,
+      iconOnlyWidth: 80,
+    }),
+  ).toBe("normal");
+});
+
+test("desktop action density tiers stay icon-only when available width is below the smallest footprint", () => {
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 60,
+      normalWidth: 400,
+      compactWidth: 300,
+      tightWidth: 200,
+      iconOnlyWidth: 80,
+    }),
+  ).toBe("icon-only");
+});
+
+test("desktop action density tiers fail closed for non-monotonic footprint thresholds", () => {
+  expect(
+    getDesktopActionDensityTierByWidth({
+      availableWidth: 390,
+      normalWidth: 400,
+      compactWidth: 420,
+      tightWidth: 240,
+      iconOnlyWidth: 96,
+    }),
+  ).toBe("icon-only");
+});
+
+test("desktop tab layout stays single-row when tabs still fit comfortably", () => {
+  expect(
+    getDesktopTabLayoutByWidth({
+      availableWidth: 720,
+      tabCount: 4,
+      preferredTabWidth: 160,
+      minTabWidth: 96,
+      wrapThresholdWidth: 120,
+      maxRows: 2,
+    }),
+  ).toEqual({
+    rowCount: 1,
+    visibleCount: 4,
+    overflowCount: 0,
+    tabWidth: 160,
+    mode: "single",
+  });
+});
+
+test("desktop tab layout wraps to two rows before tabs shrink below the comfort threshold", () => {
+  expect(
+    getDesktopTabLayoutByWidth({
+      availableWidth: 420,
+      tabCount: 6,
+      preferredTabWidth: 160,
+      minTabWidth: 96,
+      wrapThresholdWidth: 120,
+      maxRows: 2,
+    }),
+  ).toEqual({
+    rowCount: 2,
+    visibleCount: 6,
+    overflowCount: 0,
+    tabWidth: 137,
+    mode: "wrapped",
+  });
+});
+
+test("desktop tab layout falls back to scroll mode when two rows still cannot fit all tabs", () => {
+  expect(
+    getDesktopTabLayoutByWidth({
+      availableWidth: 240,
+      tabCount: 10,
+      preferredTabWidth: 160,
+      minTabWidth: 96,
+      wrapThresholdWidth: 120,
+      maxRows: 2,
+    }),
+  ).toEqual({
+    rowCount: 1,
+    visibleCount: 2,
+    overflowCount: 8,
+    tabWidth: 96,
+    mode: "scroll",
+  });
+});
+
+test("desktop tab layout fails closed for invalid inputs", () => {
+  expect(getDesktopTabLayoutByWidth()).toEqual({
+    rowCount: 1,
+    visibleCount: 0,
+    overflowCount: 0,
+    tabWidth: 160,
+    mode: "single",
+  });
+  expect(
+    getDesktopTabLayoutByWidth({
+      availableWidth: Number.NaN,
+      tabCount: -1,
+      preferredTabWidth: 0,
+      minTabWidth: -1,
+      wrapThresholdWidth: null,
+      maxRows: 0,
+    }),
+  ).toEqual({
+    rowCount: 1,
+    visibleCount: 0,
+    overflowCount: 0,
+    tabWidth: 160,
+    mode: "single",
+  });
 });
 
 test("overflow actions contain the secondary utilities", () => {

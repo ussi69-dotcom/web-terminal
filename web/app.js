@@ -3589,6 +3589,7 @@ class TerminalManager {
     this.layoutEditorMode = "desktop";
     this.layoutEditorOpen = false;
     this.layoutDragState = null;
+    this.desktopToolbarDensityFrame = 0;
     this.handleSurfaceActionClick = this.handleSurfaceActionClick.bind(this);
     this.handleLayoutDragMove = this.handleLayoutDragMove.bind(this);
     this.handleLayoutDragEnd = this.handleLayoutDragEnd.bind(this);
@@ -3679,6 +3680,8 @@ class TerminalManager {
     }
     this.setupToolsSheet();
     this.setupLayoutEditor();
+    this.setupDesktopTabOverflowScroll();
+    this.syncToolbarOverlayOffset();
 
     // Help modal
     this.setupHelpModal();
@@ -3704,6 +3707,7 @@ class TerminalManager {
           this.fitTerminalState(active);
           this.syncTerminalSize(this.activeId);
         }
+        this.scheduleDesktopToolbarDensitySync();
       }, 150);
     });
 
@@ -3958,9 +3962,14 @@ class TerminalManager {
   }
 
   getPrimaryActionIds(mode) {
-    return [...this.getLayoutPinnedActionIds(mode), "more"].filter((actionId) =>
-      this.getActionButtonConfig(actionId),
-    );
+    const normalizedMode = mode === "mobile" ? "mobile" : "desktop";
+    const actionIds = [...this.getLayoutPinnedActionIds(normalizedMode)];
+
+    if (normalizedMode !== "mobile") {
+      actionIds.push("more");
+    }
+
+    return actionIds.filter((actionId) => this.getActionButtonConfig(actionId));
   }
 
   getActionButtonId(actionId, surface) {
@@ -4033,6 +4042,9 @@ class TerminalManager {
     root.dataset.density = density;
 
     if (surface === "mobile-primary") {
+      const isEmpty = actionIds.length === 0;
+      root.hidden = isEmpty;
+      root.setAttribute("aria-hidden", isEmpty ? "true" : "false");
       root.style.setProperty("--mobile-action-bar-columns", String(actionIds.length || 1));
     }
 
@@ -4041,6 +4053,168 @@ class TerminalManager {
       if (button) {
         root.appendChild(button);
       }
+    });
+  }
+
+  measureDesktopActionWidthsByTier(root) {
+    const toolbar = this.toolbar;
+    if (!root || !toolbar) return null;
+
+    const previousDensity = root.dataset.density || "normal";
+    const previousTabDensity = toolbar.dataset.tabDensity || "";
+    const widthsByTier = {};
+    const tiers = ["normal", "compact", "tight", "icon-only"];
+
+    tiers.forEach((tier) => {
+      root.dataset.density = tier;
+      toolbar.dataset.tabDensity = tier;
+      widthsByTier[tier] = Math.ceil(root.scrollWidth);
+    });
+
+    root.dataset.density = previousDensity;
+    if (previousTabDensity) {
+      toolbar.dataset.tabDensity = previousTabDensity;
+    } else {
+      delete toolbar.dataset.tabDensity;
+    }
+
+    return widthsByTier;
+  }
+
+  getDesktopTabLayout() {
+    const tabs = this.tabs;
+    if (!tabs) {
+      return {
+        rowCount: 1,
+        visibleCount: 0,
+        overflowCount: 0,
+        tabWidth: 160,
+        mode: "single",
+      };
+    }
+
+    const tabCount = tabs.querySelectorAll(".tab").length;
+    return (
+      this.navigationSurface.getDesktopTabLayoutByWidth?.({
+        availableWidth: Math.floor(tabs.getBoundingClientRect().width || 0),
+        tabCount,
+        preferredTabWidth: 160,
+        minTabWidth: 96,
+        wrapThresholdWidth: 118,
+        maxRows: 2,
+        gap: 4,
+      }) || {
+        rowCount: 1,
+        visibleCount: tabCount,
+        overflowCount: 0,
+        tabWidth: 160,
+        mode: "single",
+      }
+    );
+  }
+
+  syncDesktopTabLayout() {
+    const toolbar = this.toolbar;
+    const tabs = this.tabs;
+    if (!toolbar || !tabs) return false;
+
+    if (this.getActiveChromeMode() !== "desktop") {
+      delete toolbar.dataset.tabRows;
+      delete tabs.dataset.layout;
+      delete tabs.dataset.rows;
+      delete tabs.dataset.overflowCount;
+      tabs.style.removeProperty("--desktop-tab-columns");
+      tabs.style.removeProperty("--desktop-tab-width");
+      return false;
+    }
+
+    const previousLayout = tabs.dataset.layout || "single";
+    const previousRows = tabs.dataset.rows || "1";
+    const layout = this.getDesktopTabLayout();
+    const columnCount = Math.max(
+      1,
+      Math.ceil(layout.visibleCount / Math.max(1, layout.rowCount)),
+    );
+
+    tabs.dataset.layout = layout.mode;
+    tabs.dataset.rows = String(layout.rowCount);
+    tabs.dataset.overflowCount = String(layout.overflowCount);
+    tabs.style.setProperty("--desktop-tab-columns", String(columnCount));
+    tabs.style.setProperty("--desktop-tab-width", `${layout.tabWidth}px`);
+    toolbar.dataset.tabRows = String(layout.rowCount);
+
+    return (
+      previousLayout !== layout.mode ||
+      previousRows !== String(layout.rowCount)
+    );
+  }
+
+  syncToolbarOverlayOffset() {
+    const toolbarHeight = Math.ceil(
+      this.toolbar?.getBoundingClientRect().height || 0,
+    );
+    if (toolbarHeight > 0) {
+      document.documentElement.style.setProperty(
+        "--toolbar-overlay-offset",
+        `${toolbarHeight}px`,
+      );
+    }
+  }
+
+  syncDesktopToolbarDensity() {
+    const toolbar = this.toolbar;
+    const actionBar = document.getElementById("desktop-primary-actions");
+    if (!toolbar || !actionBar) return;
+
+    if (this.getActiveChromeMode() !== "desktop") {
+      delete toolbar.dataset.tabDensity;
+      this.syncDesktopTabLayout();
+      this.syncToolbarOverlayOffset();
+      return;
+    }
+
+    const widthsByTier = this.measureDesktopActionWidthsByTier(actionBar);
+    const availableWidth = Math.ceil(actionBar.getBoundingClientRect().width || 0);
+    const fallbackDensity =
+      actionBar.dataset.density ||
+      this.navigationSurface.getActionDensityTier?.(
+        "desktop",
+        Math.max(0, this.getPrimaryActionIds("desktop").length - 1),
+      ) ||
+      "normal";
+
+    const nextDensity =
+      widthsByTier &&
+      this.navigationSurface.getDesktopActionDensityTierByWidth?.({
+        availableWidth,
+        normalWidth: widthsByTier.normal,
+        compactWidth: widthsByTier.compact,
+        tightWidth: widthsByTier.tight,
+        iconOnlyWidth: widthsByTier["icon-only"],
+      });
+
+    const density = nextDensity || fallbackDensity;
+    actionBar.dataset.density = density;
+    toolbar.dataset.tabDensity = density;
+
+    const tabLayoutChanged = this.syncDesktopTabLayout();
+    if (tabLayoutChanged) {
+      requestAnimationFrame(() => {
+        const active = this.getActiveTerminal();
+        if (!active) return;
+        this.fitTerminalState(active);
+        this.syncTerminalSize(this.activeId);
+      });
+    }
+
+    this.syncToolbarOverlayOffset();
+  }
+
+  scheduleDesktopToolbarDensitySync() {
+    if (this.desktopToolbarDensityFrame) return;
+    this.desktopToolbarDensityFrame = requestAnimationFrame(() => {
+      this.desktopToolbarDensityFrame = 0;
+      this.syncDesktopToolbarDensity();
     });
   }
 
@@ -4062,6 +4236,27 @@ class TerminalManager {
     });
   }
 
+  setupDesktopTabOverflowScroll() {
+    if (!this.tabs) return;
+
+    this.tabs.addEventListener(
+      "wheel",
+      (event) => {
+        if (this.getActiveChromeMode() !== "desktop") return;
+        if (this.tabs.dataset.layout !== "scroll") return;
+        if (this.tabs.scrollWidth <= this.tabs.clientWidth + 1) return;
+
+        const primaryDelta =
+          Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+        if (!Number.isFinite(primaryDelta) || primaryDelta === 0) return;
+
+        event.preventDefault();
+        this.tabs.scrollLeft += primaryDelta;
+      },
+      { passive: false },
+    );
+  }
+
   renderActionSurfaces() {
     this.renderPrimaryActionBar(
       document.getElementById("desktop-primary-actions"),
@@ -4078,6 +4273,7 @@ class TerminalManager {
     this.syncSurfaceButtonState();
     this.updateWrapButton();
     this.updateLinkedViewButton();
+    this.scheduleDesktopToolbarDensitySync();
   }
 
   syncSurfaceButtonState() {
@@ -5454,6 +5650,7 @@ class TerminalManager {
         button.setAttribute("aria-hidden", isAvailable ? "false" : "true");
       });
     this.refreshCommandPalette();
+    this.scheduleDesktopToolbarDensitySync();
   }
 
   updateWorkspaceLabel(workspaceId, cwd) {
@@ -5463,6 +5660,7 @@ class TerminalManager {
         this.renderWorkspaceTab(tab, cwd);
       }
     });
+    this.scheduleDesktopToolbarDensitySync();
   }
 
   startTelemetryRefreshLoop() {
@@ -7414,6 +7612,7 @@ class TerminalManager {
       this.renderWorkspaceTab(tab);
     });
     this.refreshCommandPalette();
+    this.scheduleDesktopToolbarDensitySync();
   }
 
   groupWithPrevious() {

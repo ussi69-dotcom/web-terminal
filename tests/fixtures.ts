@@ -561,8 +561,7 @@ export async function openLayoutEditor(
   page: Page,
   mode: "Desktop" | "Mobile",
 ) {
-  await page.getByRole("button", { name: "More" }).click();
-  await expect(page.locator("#tools-sheet")).toBeVisible();
+  await openToolsSheet(page);
   await page.getByRole("button", { name: "Edit layout" }).click();
   await page.getByRole("button", { name: mode }).click();
 

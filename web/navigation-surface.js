@@ -414,6 +414,137 @@ function getActionDensityTier(mode, pinnedCount) {
   throw new Error(`Unknown density mode: ${mode}`);
 }
 
+function getDesktopActionDensityTierByWidth(footprintWidths = {}) {
+  const widths =
+    footprintWidths && typeof footprintWidths === "object"
+      ? footprintWidths
+      : {};
+  const availableWidth = Number(widths.availableWidth);
+  const normalWidth = Number(widths.normalWidth);
+  const compactWidth = Number(widths.compactWidth);
+  const tightWidth = Number(widths.tightWidth);
+  const iconOnlyWidth = Number(widths.iconOnlyWidth);
+
+  if (
+    !Number.isFinite(availableWidth) ||
+    availableWidth < 0 ||
+    !Number.isFinite(normalWidth) ||
+    normalWidth < 0 ||
+    !Number.isFinite(compactWidth) ||
+    compactWidth < 0 ||
+    !Number.isFinite(tightWidth) ||
+    tightWidth < 0 ||
+    !Number.isFinite(iconOnlyWidth) ||
+    iconOnlyWidth < 0
+  ) {
+    return "normal";
+  }
+
+  if (
+    normalWidth < compactWidth ||
+    compactWidth < tightWidth ||
+    tightWidth < iconOnlyWidth
+  ) {
+    return "icon-only";
+  }
+
+  if (availableWidth >= normalWidth) return "normal";
+  if (availableWidth >= compactWidth) return "compact";
+  if (availableWidth >= tightWidth) return "tight";
+  if (availableWidth >= iconOnlyWidth) return "icon-only";
+  return "icon-only";
+}
+
+function getDesktopTabLayoutByWidth(options = {}) {
+  const settings =
+    options && typeof options === "object"
+      ? options
+      : {};
+  const availableWidth = Number(settings.availableWidth);
+  const tabCount = Math.max(0, Math.trunc(Number(settings.tabCount) || 0));
+  const preferredTabWidth = Math.max(
+    1,
+    Math.trunc(Number(settings.preferredTabWidth) || 160),
+  );
+  const minTabWidth = Math.max(
+    1,
+    Math.trunc(Number(settings.minTabWidth) || 96),
+  );
+  const wrapThresholdWidth = Math.max(
+    minTabWidth,
+    Math.trunc(Number(settings.wrapThresholdWidth) || 120),
+  );
+  const maxRows = Math.max(1, Math.trunc(Number(settings.maxRows) || 2));
+  const gap = Math.max(0, Math.trunc(Number(settings.gap) || 4));
+  const fallback = {
+    rowCount: 1,
+    visibleCount: tabCount,
+    overflowCount: 0,
+    tabWidth: preferredTabWidth,
+    mode: "single",
+  };
+
+  if (
+    !Number.isFinite(availableWidth) ||
+    availableWidth <= 0 ||
+    tabCount <= 0
+  ) {
+    return {
+      ...fallback,
+      visibleCount: tabCount,
+    };
+  }
+
+  const getWidthForColumns = (columns) => {
+    const safeColumns = Math.max(1, Math.trunc(Number(columns) || 1));
+    const totalGapWidth = gap * Math.max(0, safeColumns - 1);
+    return Math.floor((availableWidth - totalGapWidth) / safeColumns);
+  };
+
+  const singleRowWidth = getWidthForColumns(tabCount);
+  if (singleRowWidth >= wrapThresholdWidth) {
+    return {
+      rowCount: 1,
+      visibleCount: tabCount,
+      overflowCount: 0,
+      tabWidth: Math.min(preferredTabWidth, singleRowWidth),
+      mode: "single",
+    };
+  }
+
+  if (maxRows >= 2) {
+    const wrappedColumns = Math.max(1, Math.ceil(tabCount / maxRows));
+    const wrappedRows = Math.max(1, Math.ceil(tabCount / wrappedColumns));
+    const wrappedWidth = getWidthForColumns(wrappedColumns);
+
+    if (wrappedRows > 1 && wrappedWidth >= minTabWidth) {
+      return {
+        rowCount: wrappedRows,
+        visibleCount: tabCount,
+        overflowCount: 0,
+        tabWidth: Math.min(preferredTabWidth, wrappedWidth),
+        mode: "wrapped",
+      };
+    }
+  }
+
+  const visibleCount = Math.max(
+    1,
+    Math.min(
+      tabCount,
+      Math.floor((availableWidth + gap) / (minTabWidth + gap)),
+    ),
+  );
+
+  return {
+    rowCount: 1,
+    visibleCount,
+    overflowCount: Math.max(0, tabCount - visibleCount),
+    tabWidth: minTabWidth,
+    mode: "scroll",
+  };
+}
+
 function getDesktopActionDensityTier(pinnedCount) {
   return getActionDensityTier("desktop", pinnedCount);
 }
@@ -507,6 +638,8 @@ const NavigationSurfaceModule = {
   getActionDensityTier,
   getAvailableActionIds,
   getDesktopActionDensityTier,
+  getDesktopActionDensityTierByWidth,
+  getDesktopTabLayoutByWidth,
   getDesktopCustomizableActionIds,
   getDesktopPrimaryActionIds,
   getDefaultActionLayoutState,
@@ -553,6 +686,8 @@ if (typeof exports !== "undefined") {
   exports.getActionDensityTier = getActionDensityTier;
   exports.getAvailableActionIds = getAvailableActionIds;
   exports.getDesktopActionDensityTier = getDesktopActionDensityTier;
+  exports.getDesktopActionDensityTierByWidth = getDesktopActionDensityTierByWidth;
+  exports.getDesktopTabLayoutByWidth = getDesktopTabLayoutByWidth;
   exports.getDesktopCustomizableActionIds = getDesktopCustomizableActionIds;
   exports.getDesktopPrimaryActionIds = getDesktopPrimaryActionIds;
   exports.getDefaultActionLayoutState = getDefaultActionLayoutState;
