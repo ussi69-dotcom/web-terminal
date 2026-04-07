@@ -17,6 +17,12 @@ import {
   resolveAgentOutputState,
 } from "./telemetry";
 import { syncTmuxSessionClients } from "./tmux-client-size";
+import {
+  buildTmuxSessionName,
+  getTmuxSessionPrefix,
+  parseTmuxSessionName,
+  resolveTmuxSessionNamespace,
+} from "./tmux-session-names";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -115,6 +121,11 @@ const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
 
 // tmux backend for session persistence (survives server restart)
 const TMUX_BACKEND = process.env.TMUX_BACKEND === "1";
+const TMUX_SESSION_NAMESPACE = resolveTmuxSessionNamespace({
+  namespace: process.env.TMUX_SESSION_NAMESPACE,
+  port: process.env.PORT,
+});
+const TMUX_SESSION_PREFIX = getTmuxSessionPrefix(TMUX_SESSION_NAMESPACE);
 const TMUX_PIPE_DIR = "/tmp/deckterm-tmux-pipes";
 const SCROLLBACK_MAX_LINES = parseInt(
   process.env.SCROLLBACK_MAX_LINES || "2000",
@@ -448,19 +459,14 @@ async function recoverTmuxSessions(): Promise<number> {
     const sessions = output
       .trim()
       .split("\n")
-      .filter((s) => s.startsWith("deckterm_"));
+      .filter((s) => s.startsWith(`${TMUX_SESSION_PREFIX}_`));
     let recovered = 0;
 
     for (const sessionName of sessions) {
-      // Parse: deckterm_{ownerId}_{fullUUID}
-      // Session name format: deckterm_OWNERID_UUID (UUID contains dashes, not underscores)
-      const parts = sessionName.split("_");
-      if (parts.length < 3) continue;
+      const parsed = parseTmuxSessionName(sessionName, TMUX_SESSION_PREFIX);
+      if (!parsed) continue;
 
-      const ownerId = parts[1];
-      // Extract the full UUID (parts[2] and any remaining parts joined back)
-      // This handles UUIDs correctly since they use dashes, not underscores
-      const id = parts.slice(2).join("_");
+      const { ownerId, terminalId: id } = parsed;
 
       const { cwd, cols, rows, panePid, paneCurrentCommand } =
         await getTmuxSessionInfo(sessionName);
@@ -1605,11 +1611,12 @@ export function createWebApp() {
     const cols = body.cols || 120;
     const rows = body.rows || 30;
 
-    // tmux session name for persistence (sanitize ownerId for tmux)
-    // Use full UUID in session name for reliable recovery
-    const safeOwnerId = ownerId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
     const sessionName = TMUX_BACKEND
-      ? `deckterm_${safeOwnerId}_${id}`
+      ? buildTmuxSessionName({
+          namespace: TMUX_SESSION_NAMESPACE,
+          ownerId,
+          terminalId: id,
+        })
       : undefined;
 
     const terminal = await createManagedTerminal({
