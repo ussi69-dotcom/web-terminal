@@ -438,6 +438,93 @@ test.describe("Workspace telemetry contract", () => {
       });
   });
 
+  test("active workspace tab keeps claude responding stable across short idle gaps", async ({
+    page,
+  }) => {
+    await page.goto(BASE_URL);
+    await waitForTerminal(page);
+
+    const workspaceContext = await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm?.activeId);
+      return {
+        activeId: tm?.activeId ?? null,
+        workspaceId: active?.workspaceId ?? null,
+      };
+    });
+
+    expect(workspaceContext.workspaceId).toBeTruthy();
+    expect(workspaceContext.activeId).toBeTruthy();
+
+    const tabSelector = `.tab[data-workspace-id="${workspaceContext.workspaceId}"]`;
+    const claudeCommand =
+      "printf '\\033]9;9;deckterm;agent;claude;start\\a'; " +
+      "sleep 0.5; " +
+      "printf 'Working...'; " +
+      "IFS= read -r _; " +
+      "printf 'Hello from Claude'; " +
+      "sleep 1.4; " +
+      "printf ' still replying'; " +
+      "sleep 1.0; " +
+      "printf '\\033]9;9;deckterm;agent;claude;done;0\\a'";
+
+    await page.evaluate((command) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(
+        JSON.stringify({ type: "input", data: `${command}\r` }),
+      );
+    }, claudeCommand);
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent",
+        badgeText: "Claude",
+      });
+
+    await page.evaluate(() => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      active?.ws?.send(JSON.stringify({ type: "input", data: "go\r" }));
+    });
+
+    await expect
+      .poll(async () => {
+        return page.locator(tabSelector).evaluate((tab) => ({
+          primarySignal: tab.getAttribute("data-primary-signal"),
+          badgeText:
+            tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+        }));
+      })
+      .toEqual({
+        primarySignal: "agent-responding",
+        badgeText: "Claude Responding",
+      });
+
+    await page.waitForTimeout(1100);
+
+    await expect(
+      page.locator(tabSelector).evaluate((tab) => ({
+        primarySignal: tab.getAttribute("data-primary-signal"),
+        badgeText:
+          tab.querySelector(".tab-signal-badge")?.textContent?.trim() || "",
+      })),
+    ).resolves.toEqual({
+      primarySignal: "agent-responding",
+      badgeText: "Claude Responding",
+    });
+  });
+
   test("client-side cwd survives telemetry refresh without reverting", async ({
     page,
   }) => {
@@ -572,5 +659,73 @@ test.describe("Workspace telemetry contract", () => {
       label: expectedLabel,
     });
     expect(restoredState.title).toContain(clientCwd);
+  });
+
+  test("merged workspace tabs summarize multiple folders and statuses while tooltip keeps the full list", async ({
+    page,
+  }) => {
+    await page.goto(BASE_URL);
+    await waitForTerminal(page);
+
+    await reserveTerminalCreateBudget(2);
+    await page.evaluate(async () => {
+      // @ts-ignore
+      await window.terminalManager?.createTerminal(false, { skipBootstrapWait: true });
+      // @ts-ignore
+      await window.terminalManager?.createTerminal(false, { skipBootstrapWait: true });
+    });
+    await page.waitForTimeout(1200);
+
+    const merged = await page.evaluate(() => {
+      const tm = window.terminalManager;
+      const terminals = Array.from(tm.terminals.entries());
+      if (terminals.length < 3) {
+        return { error: "missing-terminals" };
+      }
+
+      const [first, second, third] = terminals;
+      first[1].cwd = "/tmp/alpha-service";
+      first[1].running = true;
+      first[1].busy = true;
+      second[1].cwd = "/tmp/beta-worker";
+      second[1].agentName = "Codex";
+      second[1].agentState = "responding";
+      third[1].cwd = "/tmp/gamma-ui";
+      third[1].ports = [4174];
+      third[1].isWorktree = true;
+
+      tm.mergeWorkspacesUI(second[1].workspaceId, first[1].workspaceId);
+      tm.mergeWorkspacesUI(third[1].workspaceId, first[1].workspaceId);
+      tm.updateTabGroups();
+      tm.syncDesktopToolbarDensity?.();
+
+      const tab = document.querySelector(
+        `.tab[data-workspace-id="${first[1].workspaceId}"]`,
+      );
+      return {
+        folderSummary:
+          tab?.querySelector(".tab-label")?.textContent?.trim() || "",
+        statusSummary:
+          tab?.querySelector(".tab-meta")?.textContent?.trim() || "",
+        badgeHidden:
+          (tab?.querySelector(".tab-signal-badge") as HTMLElement | null)?.hidden ??
+          null,
+        title: tab?.getAttribute("title") || "",
+      };
+    });
+
+    expect(merged.error).toBeUndefined();
+    expect(merged.folderSummary).toContain("alpha-service");
+    expect(merged.folderSummary).toContain("beta-worker");
+    expect(merged.statusSummary).toContain("Running");
+    expect(merged.statusSummary).toContain("Codex Responding");
+    expect(merged.badgeHidden).toBe(true);
+    expect(merged.title).toContain("/tmp/alpha-service");
+    expect(merged.title).toContain("/tmp/beta-worker");
+    expect(merged.title).toContain("/tmp/gamma-ui");
+    expect(merged.title).toContain("Running");
+    expect(merged.title).toContain("Codex Responding");
+    expect(merged.title).toContain("Ports 4174");
+    expect(merged.title).toContain("Worktree");
   });
 });

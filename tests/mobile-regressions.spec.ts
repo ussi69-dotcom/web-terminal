@@ -350,3 +350,58 @@ test.describe("Mobile regressions", () => {
     expect(after.maxScrollTop - after.scrollTop).toBeLessThanOrEqual(16);
   });
 });
+
+test.describe("Hybrid touch keyboard regressions", () => {
+  test.use({
+    viewport: { width: 1280, height: 800 },
+    hasTouch: true,
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await resetAppState(page, BASE_URL);
+    await waitForTerminal(page);
+  });
+
+  test("touch laptops do not double-send uppercase keys when fallback and xterm both fire", async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async () => {
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(tm.activeId);
+      const textarea = active?.element?.querySelector(".xterm-helper-textarea");
+      const xtermOnData = active?.terminal?._core?._onData;
+      if (!active || !textarea || !xtermOnData?.fire) {
+        return { error: "missing-terminal" };
+      }
+
+      const sent = [];
+      const originalSend = active.ws.send.bind(active.ws);
+      active.ws.send = (payload) => {
+        sent.push(JSON.parse(payload));
+      };
+
+      try {
+        const event = new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: "A",
+        });
+        textarea.dispatchEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        xtermOnData.fire("A");
+
+        return {
+          defaultPrevented: event.defaultPrevented,
+          sent,
+        };
+      } finally {
+        active.ws.send = originalSend;
+      }
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.sent).toEqual([{ type: "input", data: "A" }]);
+  });
+});

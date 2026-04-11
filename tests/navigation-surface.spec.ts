@@ -300,7 +300,7 @@ test.describe("Shell action hierarchy on desktop", () => {
     page,
   }) => {
     await pruneTerminalsToActiveSession(page);
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       await createTerminal(page);
     }
 
@@ -317,6 +317,162 @@ test.describe("Shell action hierarchy on desktop", () => {
     const nextScrollLeft = await tabs.evaluate((element) => element.scrollLeft);
 
     expect(nextScrollLeft).toBeGreaterThan(initialScrollLeft);
+  });
+
+  test("degrades long tab labels before allowing badge overlap", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    await resizeWindow(page, 1600, 900);
+
+    const snapshotTargetTab = () =>
+      page.evaluate(() => {
+        const tm = (window as any).terminalManager;
+        const tabs = Array.from(
+          document.querySelectorAll("#terminals-tabs .tab"),
+        ) as HTMLElement[];
+        const tab = tabs[0];
+        if (!tm || !tab) {
+          return { error: "missing-tab" };
+        }
+
+        const label = tab.querySelector(".tab-label") as HTMLElement | null;
+        const badge = tab.querySelector(".tab-signal-badge") as HTMLElement | null;
+        const close = tab.querySelector(".tab-close") as HTMLElement | null;
+
+        if (!label || !badge || !close) {
+          return { error: "missing-copy-elements" };
+        }
+
+        label.textContent = "/home/deploy/deckterm-worktree";
+        badge.hidden = false;
+        badge.setAttribute("aria-hidden", "false");
+        badge.dataset.signal = "agent-responding";
+        badge.textContent = "Codex Responding";
+        tab.dataset.primarySignal = "agent-responding";
+        tm.syncDesktopToolbarDensity?.();
+
+        const labelRect = label.getBoundingClientRect();
+        const badgeRect = badge.getBoundingClientRect();
+        const closeRect = close.getBoundingClientRect();
+        const sameRow = Math.abs(labelRect.top - badgeRect.top) < 8;
+        const overlap =
+          sameRow && labelRect.right > badgeRect.left + 1;
+
+        return {
+          stage: tab.dataset.copyFit || "",
+          sameRow,
+          overlap,
+          labelTextOverflow: getComputedStyle(label).textOverflow,
+          badgeTextOverflow: getComputedStyle(badge).textOverflow,
+          labelLineCount: Math.round(
+            label.getBoundingClientRect().height /
+              Math.max(parseFloat(getComputedStyle(label).lineHeight) || 1, 1),
+          ),
+          badgeBelowLabel: badgeRect.top > labelRect.bottom - 2,
+          copyClearsClose: badgeRect.right <= closeRect.left + 1,
+        };
+      });
+
+    const roomy = await snapshotTargetTab();
+    expect(roomy.error).toBeUndefined();
+    expect(roomy.overlap).toBe(false);
+
+    for (let index = 0; index < 3; index += 1) {
+      await createTerminal(page);
+    }
+
+    await expect
+      .poll(async () => {
+        const snapshot = await snapshotTargetTab();
+        return snapshot.stage;
+      })
+      .toBe("truncated");
+
+    const finalSnapshot = await snapshotTargetTab();
+    expect(finalSnapshot.error).toBeUndefined();
+    expect(finalSnapshot.stage).toBe("truncated");
+    expect(finalSnapshot.badgeBelowLabel).toBe(true);
+    expect(finalSnapshot.sameRow).toBe(false);
+    expect(finalSnapshot.overlap).toBe(false);
+    expect(finalSnapshot.labelTextOverflow).toBe("ellipsis");
+    expect(finalSnapshot.badgeTextOverflow).toBe("ellipsis");
+  });
+
+  test("prefers wider desktop tabs when the strip has room to grow", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    await resizeWindow(page, 1600, 900);
+
+    const singleTabWidth = await page.locator("#terminals-tabs .tab").evaluate((tab) =>
+      Math.round((tab as HTMLElement).getBoundingClientRect().width),
+    );
+
+    await createTerminal(page);
+
+    const twoTabWidth = await page
+      .locator("#terminals-tabs .tab")
+      .first()
+      .evaluate((tab) => Math.round((tab as HTMLElement).getBoundingClientRect().width));
+
+    expect(singleTabWidth).toBeGreaterThan(200);
+    expect(twoTabWidth).toBeGreaterThanOrEqual(200);
+    expect(singleTabWidth).toBeGreaterThan(twoTabWidth);
+  });
+
+  test("keeps the close button pinned to the right edge for merged workspace tabs", async ({
+    page,
+  }) => {
+    await pruneTerminalsToActiveSession(page);
+    await resizeWindow(page, 1600, 900);
+
+    await createTerminal(page);
+    await createTerminal(page);
+
+    const metrics = await page.evaluate(() => {
+      const tm = (window as any).terminalManager;
+      const terminals = Array.from(tm.terminals.entries());
+      if (terminals.length < 3) {
+        return { error: "missing-terminals" };
+      }
+
+      const [first, second, third] = terminals;
+      first[1].cwd = "/tmp/alpha-service";
+      second[1].cwd = "/tmp/beta-worker";
+      third[1].cwd = "/tmp/gamma-ui";
+      second[1].running = true;
+      second[1].busy = true;
+      third[1].agentName = "Codex";
+      third[1].agentState = "responding";
+
+      tm.mergeWorkspacesUI(second[1].workspaceId, first[1].workspaceId);
+      tm.mergeWorkspacesUI(third[1].workspaceId, first[1].workspaceId);
+      tm.updateTabGroups();
+      tm.syncDesktopToolbarDensity?.();
+
+      const tab = document.querySelector(
+        `.tab[data-workspace-id="${first[1].workspaceId}"]`,
+      ) as HTMLElement | null;
+      const copy = tab?.querySelector(".tab-copy") as HTMLElement | null;
+      const close = tab?.querySelector(".tab-close") as HTMLElement | null;
+      if (!tab || !copy || !close) {
+        return { error: "missing-tab-elements" };
+      }
+
+      const tabRect = tab.getBoundingClientRect();
+      const closeRect = close.getBoundingClientRect();
+      const copyRect = copy.getBoundingClientRect();
+
+      return {
+        rightInset: Math.round(tabRect.right - closeRect.right),
+        copyGap: Math.round(closeRect.left - copyRect.right),
+      };
+    });
+
+    expect(metrics.error).toBeUndefined();
+    expect(metrics.rightInset).toBeLessThanOrEqual(16);
+    expect(metrics.copyGap).toBeGreaterThanOrEqual(4);
   });
 });
 

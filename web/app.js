@@ -4094,11 +4094,13 @@ class TerminalManager {
     }
 
     const tabCount = tabs.querySelectorAll(".tab").length;
+    const preferredTabWidth =
+      tabCount <= 1 ? 280 : tabCount <= 2 ? 240 : tabCount <= 3 ? 200 : 160;
     return (
       this.navigationSurface.getDesktopTabLayoutByWidth?.({
         availableWidth: Math.floor(tabs.getBoundingClientRect().width || 0),
         tabCount,
-        preferredTabWidth: 160,
+        preferredTabWidth,
         minTabWidth: 96,
         wrapThresholdWidth: 118,
         maxRows: 2,
@@ -4147,6 +4149,100 @@ class TerminalManager {
       previousLayout !== layout.mode ||
       previousRows !== String(layout.rowCount)
     );
+  }
+
+  tabCopyStageFits(tab, stage) {
+    const copy = tab?.querySelector(".tab-copy");
+    const label = tab?.querySelector(".tab-label");
+    const meta = tab?.querySelector(".tab-meta");
+    const badge = tab?.querySelector(".tab-signal-badge");
+    const close = tab?.querySelector(".tab-close");
+    if (!copy || !label) return true;
+
+    if (stage === "truncated") {
+      return copy.getBoundingClientRect().width >= 72;
+    }
+
+    const labelFits = label.scrollWidth <= label.clientWidth + 1;
+    const secondary = meta && !meta.hidden ? meta : badge && !badge.hidden ? badge : null;
+    const secondaryFits =
+      !secondary || secondary.scrollWidth <= secondary.clientWidth + 1;
+    if (!labelFits || !secondaryFits) {
+      return false;
+    }
+
+    if (!close) {
+      return true;
+    }
+
+    const closeRect = close.getBoundingClientRect();
+    const labelRect = label.getBoundingClientRect();
+    const secondaryRect = secondary
+      ? secondary.getBoundingClientRect()
+      : labelRect;
+
+    return Math.max(labelRect.right, secondaryRect.right) <= closeRect.left + 1;
+  }
+
+  syncDesktopTabCopyFit(tab) {
+    if (!tab) return false;
+
+    const previous = tab.dataset.copyFit || "";
+    const copy = tab.querySelector(".tab-copy");
+    const label = tab.querySelector(".tab-label");
+    if (!copy || !label) {
+      delete tab.dataset.copyFit;
+      return previous !== "";
+    }
+
+    const states = ["roomy", "compact", "wrapped"];
+    let nextState = "truncated";
+
+    for (const state of states) {
+      tab.dataset.copyFit = state;
+      if (this.tabCopyStageFits(tab, state)) {
+        nextState = state;
+        break;
+      }
+    }
+
+    if (nextState === "truncated") {
+      tab.dataset.copyFit = nextState;
+      if (!this.tabCopyStageFits(tab, nextState)) {
+        nextState = "cramped";
+      }
+    }
+
+    tab.dataset.copyFit = nextState;
+    return previous !== nextState;
+  }
+
+  syncDesktopTabCopyFits() {
+    const toolbar = this.toolbar;
+    const tabs = this.tabs;
+    if (!tabs) return false;
+
+    if (this.getActiveChromeMode() !== "desktop") {
+      let cleared = false;
+      tabs.querySelectorAll(".tab").forEach((tab) => {
+        if (tab.dataset.copyFit) {
+          delete tab.dataset.copyFit;
+          cleared = true;
+        }
+      });
+      return cleared;
+    }
+
+    const beforeHeight = Math.ceil(toolbar?.getBoundingClientRect().height || 0);
+    let changed = false;
+    tabs.querySelectorAll(".tab").forEach((tab) => {
+      if (this.syncDesktopTabCopyFit(tab)) {
+        changed = true;
+      }
+    });
+
+    const afterHeight = Math.ceil(toolbar?.getBoundingClientRect().height || 0);
+    return changed || beforeHeight !== afterHeight;
   }
 
   syncToolbarOverlayOffset() {
@@ -4198,7 +4294,8 @@ class TerminalManager {
     toolbar.dataset.tabDensity = density;
 
     const tabLayoutChanged = this.syncDesktopTabLayout();
-    if (tabLayoutChanged) {
+    const tabCopyFitChanged = this.syncDesktopTabCopyFits();
+    if (tabLayoutChanged || tabCopyFitChanged) {
       requestAnimationFrame(() => {
         const active = this.getActiveTerminal();
         if (!active) return;
@@ -5739,6 +5836,65 @@ class TerminalManager {
     return terminals;
   }
 
+  uniqueOrderedValues(values = []) {
+    const result = [];
+    const seen = new Set();
+    values.forEach((value) => {
+      const normalized = String(value || "").trim();
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      result.push(normalized);
+    });
+    return result;
+  }
+
+  summarizeWorkspaceValues(values = [], maxVisible = 2) {
+    const ordered = this.uniqueOrderedValues(values);
+    if (ordered.length === 0) return "";
+    const visible = ordered.slice(0, maxVisible);
+    const hiddenCount = Math.max(0, ordered.length - visible.length);
+    return hiddenCount > 0
+      ? `${visible.join(" • ")} +${hiddenCount}`
+      : visible.join(" • ");
+  }
+
+  getWorkspaceFolderLabels(terminals = [], fallbackCwd = "") {
+    return this.uniqueOrderedValues(
+      terminals.map((terminal) =>
+        this.formatCwdLabel(terminal.cwd || fallbackCwd || "Terminal"),
+      ),
+    );
+  }
+
+  getWorkspaceFolderPaths(terminals = [], fallbackCwd = "") {
+    return this.uniqueOrderedValues(
+      terminals.map((terminal) => terminal.cwd || fallbackCwd || "Terminal"),
+    );
+  }
+
+  getWorkspaceSourceIds(terminals = [], fallbackWorkspaceId = "") {
+    return this.uniqueOrderedValues(
+      terminals.map(
+        (terminal) => terminal.originalWorkspaceId || terminal.workspaceId || fallbackWorkspaceId,
+      ),
+    );
+  }
+
+  getWorkspaceStatusLabels(terminals = []) {
+    return this.uniqueOrderedValues(
+      terminals.flatMap((terminal) =>
+        TerminalColors.getWorkspaceSignalDescriptors({
+          running: terminal.running,
+          busy: terminal.busy,
+          agentName: terminal.agentName,
+          agentState: terminal.agentState,
+          ports: terminal.ports,
+          isWorktree: terminal.isWorktree,
+        }).map((descriptor) => descriptor.label),
+      ),
+    );
+  }
+
   getWorkspaceSnapshot(workspaceId, preferredCwd = null) {
     const terminals = this.getWorkspaceTerminals(workspaceId);
     const activeTerminalId = this.resolveWorkspaceTerminalId(workspaceId);
@@ -5779,20 +5935,39 @@ class TerminalManager {
       isWorktree,
       cwd,
     }).primarySignal;
+    const folderLabels = this.getWorkspaceFolderLabels(terminals, cwd);
+    const folderPaths = this.getWorkspaceFolderPaths(terminals, cwd);
+    const sourceWorkspaceIds = this.getWorkspaceSourceIds(terminals, workspaceId);
+    const statusLabels = this.getWorkspaceStatusLabels(terminals);
+    const isMergedWorkspace = sourceWorkspaceIds.length > 1;
 
     return {
       count: terminals.length,
+      sourceWorkspaceIds,
       colors: terminals.map((terminal) =>
         TerminalColors.hashCwdToColor(terminal.cwd || cwd || "terminal"),
       ),
       cwd,
       label: this.formatCwdLabel(cwd),
+      folderLabels,
+      folderPaths,
+      folderSummary: this.summarizeWorkspaceValues(folderLabels, 2),
       running,
       agentName,
       agentState,
       ports,
       isWorktree,
       descriptors,
+      statusLabels,
+      statusSummary: this.summarizeWorkspaceValues(statusLabels, 2),
+      tabLabel: isMergedWorkspace
+        ? this.summarizeWorkspaceValues(folderLabels, 2)
+        : this.formatCwdLabel(cwd),
+      tabMeta: isMergedWorkspace
+        ? this.summarizeWorkspaceValues(statusLabels, 2)
+        : "",
+      isMergedWorkspace,
+      showSignalBadge: !isMergedWorkspace,
       primarySignal:
         primarySignalDescriptor?.key?.startsWith("ports:")
           ? "ports"
@@ -5802,11 +5977,19 @@ class TerminalManager {
   }
 
   composeWorkspaceTooltip(snapshot) {
-    const lines = [snapshot.cwd || "Terminal"];
+    const lines = [
+      snapshot.isMergedWorkspace
+        ? `Folders: ${snapshot.folderPaths.join(" • ") || "Terminal"}`
+        : snapshot.cwd || "Terminal",
+    ];
     lines.push(
       `Workspace: ${snapshot.count} terminal${snapshot.count === 1 ? "" : "s"}`,
     );
-    if (snapshot.descriptors.length > 0) {
+    if (snapshot.isMergedWorkspace) {
+      lines.push(
+        `Statuses: ${snapshot.statusLabels.join(" • ") || "none"}`,
+      );
+    } else if (snapshot.descriptors.length > 0) {
       lines.push(`Signals: ${snapshot.descriptors.map((d) => d.label).join(" • ")}`);
     } else {
       lines.push("Signals: none");
@@ -5827,12 +6010,14 @@ class TerminalManager {
     tab.title = this.composeWorkspaceTooltip(snapshot);
 
     if (signalBadge) {
-      signalBadge.textContent = snapshot.primarySignalLabel;
+      signalBadge.textContent = snapshot.showSignalBadge
+        ? snapshot.primarySignalLabel
+        : "";
       signalBadge.dataset.signal = snapshot.primarySignal;
-      signalBadge.hidden = !snapshot.primarySignalLabel;
+      signalBadge.hidden = !snapshot.showSignalBadge || !snapshot.primarySignalLabel;
       signalBadge.setAttribute(
         "aria-hidden",
-        snapshot.primarySignalLabel ? "false" : "true",
+        snapshot.showSignalBadge && snapshot.primarySignalLabel ? "false" : "true",
       );
     }
   }
@@ -5892,13 +6077,19 @@ class TerminalManager {
     const dot = tab.querySelector(".tab-dot");
     const countBadge = tab.querySelector(".tab-count");
     const labelEl = tab.querySelector(".tab-label");
+    const metaEl = tab.querySelector(".tab-meta");
     const snapshot = this.getWorkspaceSnapshot(
       tab.dataset.workspaceId,
       preferredCwd,
     );
     const blended = TerminalColors.blendWorkspaceColors(snapshot.colors);
 
-    if (labelEl) labelEl.textContent = snapshot.label;
+    if (labelEl) labelEl.textContent = snapshot.tabLabel || snapshot.label;
+    if (metaEl) {
+      metaEl.textContent = snapshot.tabMeta || "";
+      metaEl.hidden = !snapshot.tabMeta;
+    }
+    tab.dataset.summaryMode = snapshot.isMergedWorkspace ? "merged" : "single";
 
     if (snapshot.count > 1) {
       tab.classList.add("multicolor");
@@ -6431,33 +6622,22 @@ class TerminalManager {
       },
     });
 
-    const inputState = {
-      lastOnDataAt: 0,
-      lastOnDataValue: "",
-      lastFallbackAt: 0,
-      lastFallbackData: "",
-    };
+    const inputState = this.createInputState();
     const onDataDisposable = terminal.onData((data) => {
       // Debug: direct DOM update
       const dbg = document.getElementById("modifier-debug");
       if (dbg)
         dbg.textContent = `onData1: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
 
-      // Skip if fallback already processed this input (within 50ms, same data)
-      // This prevents double-sending when both handlers fire
-      if (
-        inputState.lastFallbackAt &&
-        performance.now() - inputState.lastFallbackAt < 50
-      ) {
-        if (data === inputState.lastFallbackData) {
-          if (dbg) dbg.textContent = `onData1: SKIP (fallback handled)`;
-          return;
-        }
+      const dedupedData = this.consumePendingFallbackEcho(inputState, data);
+      if (!dedupedData) {
+        if (dbg) dbg.textContent = "onData1: SKIP (fallback echo)";
+        return;
       }
 
       inputState.lastOnDataAt = performance.now();
-      inputState.lastOnDataValue = data;
-      const finalData = this.applyExtraKeyModifiers(data);
+      inputState.lastOnDataValue = dedupedData;
+      const finalData = this.applyExtraKeyModifiers(dedupedData);
       ws.send(JSON.stringify({ type: "input", data: finalData }));
     });
 
@@ -6494,6 +6674,7 @@ class TerminalManager {
       supportsLinkedView,
       tabNum,
       workspaceId,
+      originalWorkspaceId: workspaceId,
       resizeObserver: null,
       resizeTimer: null,
       preferredCols: 0,
@@ -6544,6 +6725,63 @@ class TerminalManager {
       textarea.setAttribute("inputmode", "text");
       dbg("[ExtraKeys] Mobile keyboard features disabled on textarea");
     }
+  }
+
+  createInputState() {
+    return {
+      lastOnDataAt: 0,
+      lastOnDataValue: "",
+      lastFallbackAt: 0,
+      lastFallbackData: "",
+      pendingFallbackEcho: "",
+    };
+  }
+
+  rememberFallbackEcho(inputState, data) {
+    if (!inputState || !data) return;
+
+    inputState.lastFallbackAt = performance.now();
+    inputState.lastFallbackData = data;
+    inputState.pendingFallbackEcho = `${inputState.pendingFallbackEcho || ""}${data}`.slice(
+      -256,
+    );
+  }
+
+  consumePendingFallbackEcho(inputState, data) {
+    if (!inputState || !data) return data;
+
+    let pending = inputState.pendingFallbackEcho || "";
+    let remainingData = data;
+
+    while (pending && remainingData) {
+      if (pending.startsWith(remainingData)) {
+        inputState.pendingFallbackEcho = pending.slice(remainingData.length);
+        return "";
+      }
+
+      if (remainingData.startsWith(pending)) {
+        remainingData = remainingData.slice(pending.length);
+        pending = "";
+        break;
+      }
+
+      let overlap = 0;
+      const limit = Math.min(pending.length, remainingData.length);
+      while (
+        overlap < limit &&
+        pending.charCodeAt(overlap) === remainingData.charCodeAt(overlap)
+      ) {
+        overlap += 1;
+      }
+
+      if (!overlap) break;
+
+      pending = pending.slice(overlap);
+      remainingData = remainingData.slice(overlap);
+    }
+
+    inputState.pendingFallbackEcho = pending;
+    return remainingData;
   }
 
   applyExtraKeyModifiers(data, options = {}) {
@@ -6655,12 +6893,8 @@ class TerminalManager {
         return false;
       }
 
-      // Mark that fallback is handling this input BEFORE sending
-      // This prevents onData from double-processing the same input
-      if (inputState) {
-        inputState.lastFallbackAt = performance.now();
-        inputState.lastFallbackData = data;
-      }
+      // Track fallback-originated input so delayed xterm echoes can be skipped.
+      this.rememberFallbackEcho(inputState, data);
 
       const finalData = this.applyExtraKeyModifiers(data);
       ws.send(JSON.stringify({ type: "input", data: finalData }));
@@ -7376,12 +7610,7 @@ class TerminalManager {
         },
       );
 
-      const inputState = {
-        lastOnDataAt: 0,
-        lastOnDataValue: "",
-        lastFallbackAt: 0,
-        lastFallbackData: "",
-      };
+      const inputState = this.createInputState();
       const onDataDisposable = terminal.onData((data) => {
         // Debug: direct DOM update to see if onData fires at all
         const debugEl = document.getElementById("modifier-debug");
@@ -7389,25 +7618,19 @@ class TerminalManager {
           debugEl.textContent = `onData: "${data}" | mods: ${JSON.stringify(this.extraKeys?.modifiers)}`;
         }
 
-        // Skip if fallback already processed this input (within 50ms, same data)
-        // This prevents double-sending when both handlers fire
-        if (
-          inputState.lastFallbackAt &&
-          performance.now() - inputState.lastFallbackAt < 50
-        ) {
-          if (data === inputState.lastFallbackData) {
-            if (debugEl) {
-              debugEl.textContent = "onData: SKIP (fallback handled)";
-            }
-            return;
+        const dedupedData = this.consumePendingFallbackEcho(inputState, data);
+        if (!dedupedData) {
+          if (debugEl) {
+            debugEl.textContent = "onData: SKIP (fallback echo)";
           }
+          return;
         }
 
         const mods = this.extraKeys?.modifiers;
-        dbg("[ExtraKeys] onData:", JSON.stringify(data), "mods:", mods);
+        dbg("[ExtraKeys] onData:", JSON.stringify(dedupedData), "mods:", mods);
         inputState.lastOnDataAt = performance.now();
-        inputState.lastOnDataValue = data;
-        const finalData = this.applyExtraKeyModifiers(data, { log: true });
+        inputState.lastOnDataValue = dedupedData;
+        const finalData = this.applyExtraKeyModifiers(dedupedData, { log: true });
         ws.send(JSON.stringify({ type: "input", data: finalData }));
       });
 
@@ -7449,6 +7672,7 @@ class TerminalManager {
         supportsLinkedView: Boolean(terminalInfo.supportsLinkedView),
         tabNum,
         workspaceId,
+        originalWorkspaceId: workspaceId,
         resizeObserver: null,
         resizeTimer: null,
         preferredCols: 0,
@@ -7527,9 +7751,12 @@ class TerminalManager {
     tab.innerHTML = `
       <span class="tab-dot"></span>
       <span class="tab-index">${tabNum}</span>
-      <span class="tab-label">${label}</span>
       <span class="tab-count"></span>
-      <span class="tab-signal-badge" hidden aria-hidden="true"></span>
+      <span class="tab-copy">
+        <span class="tab-label">${label}</span>
+        <span class="tab-meta" hidden></span>
+        <span class="tab-signal-badge" hidden aria-hidden="true"></span>
+      </span>
       <button class="tab-close" title="Close (Ctrl+W)">&times;</button>
     `;
 

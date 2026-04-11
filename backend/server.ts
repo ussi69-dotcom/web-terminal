@@ -126,6 +126,11 @@ const AGENT_RESPONDING_IDLE_MS = parseInt(
   process.env.AGENT_RESPONDING_IDLE_MS || "700",
   10,
 );
+const CLAUDE_AGENT_RESPONDING_IDLE_MS = parseInt(
+  process.env.CLAUDE_AGENT_RESPONDING_IDLE_MS ||
+    String(Math.max(AGENT_RESPONDING_IDLE_MS, 3000)),
+  10,
+);
 
 const CF_ACCESS_REQUIRED = process.env.CF_ACCESS_REQUIRED === "1";
 const CF_ACCESS_TEAM_NAME = process.env.CF_ACCESS_TEAM_NAME || "";
@@ -319,6 +324,10 @@ function clearAgentRespondingTimer(term: Terminal) {
 
 function scheduleAgentThinkingFallback(term: Terminal) {
   clearAgentRespondingTimer(term);
+  const idleMs =
+    term.agentName === "claude"
+      ? CLAUDE_AGENT_RESPONDING_IDLE_MS
+      : AGENT_RESPONDING_IDLE_MS;
   term.agentRespondingTimer = setTimeout(() => {
     const current = terminals.get(term.id);
     if (!current || current !== term) return;
@@ -328,7 +337,7 @@ function scheduleAgentThinkingFallback(term: Terminal) {
     }
     term.agentState = "thinking";
     broadcastTerminalState(term);
-  }, AGENT_RESPONDING_IDLE_MS);
+  }, idleMs);
 }
 
 async function finalizeReconnectReady(
