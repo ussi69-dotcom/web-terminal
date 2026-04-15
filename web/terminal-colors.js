@@ -65,12 +65,8 @@ function formatAgentLabel(agentName, agentState) {
     String(agentName).trim().toLowerCase() === "claude" ? "Claude" :
     String(agentName).trim().toLowerCase() === "codex" ? "Codex" :
     null;
-  const normalizedState = String(agentState).trim().toLowerCase();
 
   if (!normalizedAgent) return null;
-  if (normalizedState === "responding") {
-    return `${normalizedAgent} Responding`;
-  }
   return normalizedAgent;
 }
 

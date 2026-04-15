@@ -205,11 +205,7 @@ const TerminalColors =
           : String(agentName).trim().toLowerCase() === "codex"
             ? "Codex"
             : null;
-      const normalizedState = String(agentState).trim().toLowerCase();
       if (!normalizedAgent) return null;
-      if (normalizedState === "responding") {
-        return `${normalizedAgent} Responding`;
-      }
       return normalizedAgent;
     };
 
@@ -298,6 +294,18 @@ const TerminalColors =
 if (!window.TerminalColors) {
   window.TerminalColors = TerminalColors;
 }
+
+const inputFallbackHelpers =
+  window.InputFallback ||
+  (() => {
+    const shouldUseMobileInputFallback = ({
+      isMobile = false,
+      hasTouch = false,
+      isVirtualKeyboardOpen = false,
+    } = {}) => Boolean((isMobile && hasTouch) || isVirtualKeyboardOpen);
+
+    return { shouldUseMobileInputFallback };
+  })();
 
 const normalizeWorkspacePorts = (ports) => {
   if (typeof TerminalColors.normalizePorts === "function") {
@@ -6887,6 +6895,14 @@ class TerminalManager {
     let lastValue = textarea.value || "";
     let lastCompositionCommitAt = 0;
     let lastCompositionCommitData = "";
+    const shouldUseFallback = () =>
+      inputFallbackHelpers.shouldUseMobileInputFallback({
+        isMobile: platformDetector.isMobile,
+        hasTouch: platformDetector.hasTouch,
+        isVirtualKeyboardOpen: document.body.classList.contains(
+          "virtual-keyboard-open",
+        ),
+      });
 
     const sendCommittedData = (source, inputType, data, e) => {
       if (!data) {
@@ -6922,9 +6938,9 @@ class TerminalManager {
       if (dbg)
         dbg.textContent = `commit:${source} | touch:${platformDetector.hasTouch}`;
 
-      // Use hasTouch instead of isMobile - any touch device needs this fallback
-      // because xterm.js onData may not fire properly after extra keys tap
-      if (!platformDetector.hasTouch) {
+      // Only use the fallback for mobile-style text entry or an open virtual
+      // keyboard; hybrid desktops should stay on xterm's native key handling.
+      if (!shouldUseFallback()) {
         if (dbg) dbg.textContent = `!touch - skipping`;
         return;
       }
@@ -6960,8 +6976,8 @@ class TerminalManager {
           data: e?.data,
         });
       }
-      // Use hasTouch - any touch device needs input fallback
-      if (!platformDetector.hasTouch) {
+      // Hybrid touch desktops should ignore the fallback and let xterm own input.
+      if (!shouldUseFallback()) {
         lastValue = textarea.value || "";
         return;
       }
@@ -7016,7 +7032,7 @@ class TerminalManager {
         });
       }
 
-      if (!platformDetector.hasTouch || !e || e.isComposing) {
+      if (!shouldUseFallback() || !e || e.isComposing) {
         return;
       }
 

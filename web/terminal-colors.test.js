@@ -48,7 +48,7 @@ test("getPrimaryWorkspaceSignal prioritizes agent label over generic running", (
   });
 });
 
-test("getWorkspaceSignalDescriptors includes responding agent label", () => {
+test("getWorkspaceSignalDescriptors keeps agent label stable while responding", () => {
   expect(
     getWorkspaceSignalDescriptors({
       running: true,
@@ -58,7 +58,7 @@ test("getWorkspaceSignalDescriptors includes responding agent label", () => {
   ).toEqual([
     {
       key: "agent-responding",
-      label: "Claude Responding",
+      label: "Claude",
       priority: 1,
     },
     { key: "running", label: "Running", priority: 2 },

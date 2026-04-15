@@ -362,7 +362,7 @@ test.describe("Hybrid touch keyboard regressions", () => {
     await waitForTerminal(page);
   });
 
-  test("touch laptops do not double-send uppercase keys when fallback and xterm both fire", async ({
+  test("touch laptops leave hardware keyboard input to xterm without fallback duplication", async ({
     page,
   }) => {
     const result = await page.evaluate(async () => {
@@ -401,7 +401,7 @@ test.describe("Hybrid touch keyboard regressions", () => {
     });
 
     expect(result.error).toBeUndefined();
-    expect(result.defaultPrevented).toBe(true);
+    expect(result.defaultPrevented).toBe(false);
     expect(result.sent).toEqual([{ type: "input", data: "A" }]);
   });
 });
