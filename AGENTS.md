@@ -35,12 +35,20 @@ bun run start          # Production
 
 ## Environments
 
-| Port | Purpose     | Folder                    | Systemd Service      |
-| ---- | ----------- | ------------------------- | -------------------- |
-| 4173 | Production  | /home/deploy/deckterm     | deckterm.service     |
-| 4174 | Development | /home/deploy/deckterm_dev | deckterm-dev.service |
+| Port | Purpose     | Folder                                           | Systemd Service      |
+| ---- | ----------- | ------------------------------------------------ | -------------------- |
+| 4173 | Production  | /home/deploy/apps/deckterm/prod/current          | deckterm.service     |
+| 4174 | Development | /home/deploy/deckterm_dev                        | deckterm-dev.service |
 
 **IMPORTANT:** Tests must ALWAYS run against port 4174 (dev), NEVER 4173 (prod).
+
+## Deployment
+
+- `push` to `main` is expected to deploy through GitHub Actions workflow `.github/workflows/deploy-main.yml`
+- When asked to "push to main", verify the `Deploy Main` workflow conclusion before claiming production is updated
+- If that workflow fails, report that prod is not updated yet and fix the CI failure first
+- Do not manually deploy production unless explicitly requested
+- If a manual production deploy is explicitly requested, it must target `DEPLOY_ROOT=/home/deploy/apps/deckterm/prod`
 
 ## Code Map
 
