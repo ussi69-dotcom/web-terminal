@@ -1,6 +1,9 @@
 const TMUX_SESSION_ROOT = "deckterm";
 
-function sanitizeTmuxToken(value: unknown, { fallback = "default", maxLength = 24 } = {}) {
+function sanitizeTmuxToken(
+  value: unknown,
+  { fallback = "default", maxLength = 24 } = {},
+) {
   const normalized = String(value || "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "")

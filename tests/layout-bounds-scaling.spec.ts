@@ -35,9 +35,9 @@ test.describe("Layout Bounds + Scaling", () => {
       const container = document
         .querySelector("#terminal-container")
         ?.getBoundingClientRect();
-      const activeTile = document.querySelector(".tile.active") as
-        | HTMLElement
-        | null;
+      const activeTile = document.querySelector(
+        ".tile.active",
+      ) as HTMLElement | null;
 
       if (!container) return [{ reason: "missing-container" }];
       if (!activeTile) return [{ reason: "missing-active-tile" }];

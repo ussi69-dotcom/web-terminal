@@ -11,7 +11,10 @@ const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 async function openClipboardPanel(page: Page) {
   await openToolsSheet(page);
-  await page.locator("#tools-sheet").getByRole("button", { name: "Clipboard" }).click();
+  await page
+    .locator("#tools-sheet")
+    .getByRole("button", { name: "Clipboard" })
+    .click();
   await expect(page.locator("#clipboard-panel")).toBeVisible();
 }
 
@@ -193,9 +196,13 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
       const tm = window.terminalManager;
       const active = tm.terminals.get(tm.activeId);
       const textarea = active.element.querySelector(".xterm-helper-textarea");
-      const imageFile = new File([Uint8Array.from([137, 80, 78, 71])], "clip.png", {
-        type: "image/png",
-      });
+      const imageFile = new File(
+        [Uint8Array.from([137, 80, 78, 71])],
+        "clip.png",
+        {
+          type: "image/png",
+        },
+      );
 
       window.__pasteUploadCalls = [];
       window.__pasteSentPayloads = [];
@@ -241,7 +248,10 @@ test.describe("Phase 3: Clipboard Overhaul", () => {
         getData: () => "",
       };
 
-      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      const pasteEvent = new Event("paste", {
+        bubbles: true,
+        cancelable: true,
+      });
       Object.defineProperty(pasteEvent, "clipboardData", {
         configurable: true,
         value: clipboardData,

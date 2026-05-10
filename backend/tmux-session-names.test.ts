@@ -32,10 +32,16 @@ test("buildTmuxSessionName includes namespace, owner, and id", () => {
 
 test("parseTmuxSessionName accepts only the active prefix", () => {
   const prefix = getTmuxSessionPrefix("p4174");
-  expect(parseTmuxSessionName("deckterm_p4174_anonymous_1234-5678", prefix)).toEqual({
+  expect(
+    parseTmuxSessionName("deckterm_p4174_anonymous_1234-5678", prefix),
+  ).toEqual({
     ownerId: "anonymous",
     terminalId: "1234-5678",
   });
-  expect(parseTmuxSessionName("deckterm_p4173_anonymous_1234-5678", prefix)).toBeNull();
-  expect(parseTmuxSessionName("deckterm_anonymous_1234-5678", prefix)).toBeNull();
+  expect(
+    parseTmuxSessionName("deckterm_p4173_anonymous_1234-5678", prefix),
+  ).toBeNull();
+  expect(
+    parseTmuxSessionName("deckterm_anonymous_1234-5678", prefix),
+  ).toBeNull();
 });

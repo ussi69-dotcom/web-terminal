@@ -4,10 +4,7 @@ import path from "node:path";
 import { test, expect, resetAppState, waitForTerminal } from "./fixtures";
 
 const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
-const RESIZE_WATCH_SCRIPT = path.join(
-  os.tmpdir(),
-  "deckterm-resize-watch.sh",
-);
+const RESIZE_WATCH_SCRIPT = path.join(os.tmpdir(), "deckterm-resize-watch.sh");
 
 async function ensureResizeWatchScript() {
   await writeFile(

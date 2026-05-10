@@ -15,9 +15,7 @@ function normalizeText(value) {
 
 function normalizeKeywords(keywords) {
   if (!Array.isArray(keywords)) return [];
-  return keywords
-    .map((keyword) => normalizeText(keyword))
-    .filter(Boolean);
+  return keywords.map((keyword) => normalizeText(keyword)).filter(Boolean);
 }
 
 function groupRank(group) {
@@ -134,9 +132,7 @@ class ActionRegistry {
         action,
         score: scoreActionMatch(action, normalizedQuery),
       }))
-      .filter(
-        (entry) => normalizedQuery === "" || Number.isFinite(entry.score),
-      )
+      .filter((entry) => normalizedQuery === "" || Number.isFinite(entry.score))
       .sort(compareResults)
       .map(({ action }) => ({
         id: action.id,

@@ -25,6 +25,7 @@ Umožnit uživateli upravovat primary action lištu zvlášť pro desktop a mobi
 `Inline editor uvnitř More` s custom pointer-driven drag controllerem.
 
 Proč:
+
 - funguje stejně pro desktop i mobile
 - neplete běžný runtime shell s editací
 - nevyžaduje křehké HTML5 DnD API na touch zařízeních
@@ -41,6 +42,7 @@ Proč:
 ### Edit mode
 
 Po otevření `More`:
+
 - nahoře je `Edit layout`
 - po zapnutí editace sheet přepne do customizačního režimu
 - obsahuje:
@@ -51,6 +53,7 @@ Po otevření `More`:
   - `Done`
 
 DnD operace:
+
 - `Available -> Pinned` = pin
 - `Pinned -> Available` = unpin
 - `Pinned -> Pinned` = reorder
@@ -68,6 +71,7 @@ DnD operace:
 ```
 
 Rules:
+
 - `more` není editovatelná položka v layoutu
 - duplicity se filtrují
 - neznámé akce se odfiltrují při načtení
@@ -79,12 +83,14 @@ Rules:
 Layout se nebude wrapovat. Renderer použije density tiers.
 
 ### Desktop
+
 - `density-normal`: menší počet pinned akcí, plné pill buttons
 - `density-compact`: zmenšený padding, gap, label spacing
 - `density-tight`: ještě kompaktnější tlačítka
 - `density-icon-only`: ikony bez labelu, tooltip zůstává
 
 ### Mobile
+
 - bottom bar zůstává single-row
 - při vyšší hustotě se zmenší padding a mezery
 - při extrémní hustotě přechod do `icon-only`
@@ -95,6 +101,7 @@ Layout se nebude wrapovat. Renderer použije density tiers.
 ### navigation-surface layer
 
 Rozšířit `web/navigation-surface.js` o:
+
 - defaults pro `desktopPinned` a `mobilePinned`
 - load/save/reset/validate helpers
 - helpers pro výpočet `pinned`, `available`, density tier
@@ -103,6 +110,7 @@ Rozšířit `web/navigation-surface.js` o:
 ### app integration
 
 V `web/app.js`:
+
 - načíst layout state při bootstrapu
 - renderovat desktop/mobile primary actions z layout state místo fixního markup pořadí
 - doplnit tools sheet edit režim a pointer-driven drag controller
@@ -112,10 +120,12 @@ V `web/app.js`:
 ### HTML/CSS
 
 V `web/index.html`:
+
 - zachovat stabilní root kontejnery pro primary actions a `More`
 - doplnit edit affordance a edit region do `More` sheetu
 
 V `web/styles.css`:
+
 - density tier classes pro desktop/mobile action bars
 - edit mode styling
 - drag ghost / placeholder / drop target affordance

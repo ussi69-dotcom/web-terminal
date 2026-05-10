@@ -6,7 +6,7 @@ import {
   cloudflareAccess,
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
-import { mkdir, readdir, unlink, stat } from "node:fs/promises";
+import { mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   classifyAgentOutputPhase,
@@ -16,6 +16,18 @@ import {
   parseShellIntegrationChunk,
   resolveAgentOutputState,
 } from "./telemetry";
+import { isCloudflareAudienceAllowed } from "./cloudflare-access-guards";
+import {
+  applyOnboardingProfile,
+  runOnboardingDoctor,
+} from "./onboarding-doctor";
+import { supportsLinkedView as supportsTerminalLinkedView } from "./terminal-capabilities";
+import {
+  TaskRunnerError,
+  buildJudgeCommand,
+  buildWorkerCommand,
+  createTaskRunner,
+} from "./task-runner";
 import { syncTmuxSessionClients } from "./tmux-client-size";
 import {
   buildTmuxSessionName,
@@ -135,6 +147,22 @@ const CLAUDE_AGENT_RESPONDING_IDLE_MS = parseInt(
 const CF_ACCESS_REQUIRED = process.env.CF_ACCESS_REQUIRED === "1";
 const CF_ACCESS_TEAM_NAME = process.env.CF_ACCESS_TEAM_NAME || "";
 const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
+const DECKTERM_STATE_DIR =
+  process.env.DECKTERM_STATE_DIR ||
+  join(process.env.HOME || "/home/deploy", ".deckterm");
+const DECKTERM_TASK_MAX_ROUNDS = parseInt(
+  process.env.DECKTERM_TASK_MAX_ROUNDS || "5",
+  10,
+);
+const DECKTERM_TASK_PROVIDERS = (
+  process.env.DECKTERM_TASK_PROVIDERS || "codex,claude"
+)
+  .split(",")
+  .map((provider) => provider.trim())
+  .filter(
+    (provider): provider is "codex" | "claude" =>
+      provider === "codex" || provider === "claude",
+  );
 
 // tmux backend for session persistence (survives server restart)
 const TMUX_BACKEND = process.env.TMUX_BACKEND === "1";
@@ -196,8 +224,7 @@ const socketReconnectState = new WeakMap<
 const utf8Decoder = new TextDecoder();
 let bashIntegrationRcPathPromise: Promise<string> | null = null;
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function hasVisibleUserInput(data: string | Uint8Array) {
   const text = typeof data === "string" ? data : utf8Decoder.decode(data);
@@ -492,8 +519,7 @@ async function recoverTmuxSessions(): Promise<number> {
       const { cwd, cols, rows, panePid, paneCurrentCommand } =
         await getTmuxSessionInfo(sessionName);
       const paneCapture = await captureTmuxPane(sessionName);
-      const processTree =
-        panePid > 0 ? await getProcessTreeArgs(panePid) : [];
+      const processTree = panePid > 0 ? await getProcessTreeArgs(panePid) : [];
       const recoveredRuntimeState = inferTmuxRuntimeState({
         paneCurrentCommand,
         processTree,
@@ -618,20 +644,24 @@ async function authenticateWebSocketRequest(req: Request): Promise<{
     return { ok: true, ownerId: "anonymous" };
   }
   try {
-    const { cloudflareAccess: verifyJWT } = await import(
-      "@hono/cloudflare-access"
-    );
+    const { cloudflareAccess: verifyJWT } =
+      await import("@hono/cloudflare-access");
     let ownerId = "anonymous";
+    let accessPayload: CloudflareAccessPayload | null = null;
     const mockContext = {
       req: { header: (name: string) => req.headers.get(name) },
       set: (key: string, value: CloudflareAccessPayload) => {
         if (key === "accessPayload") {
+          accessPayload = value;
           ownerId = value.sub || "anonymous";
         }
       },
     };
     const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
     await middleware(mockContext as never, async () => {});
+    if (!isCloudflareAudienceAllowed(accessPayload?.aud, CF_ACCESS_AUD)) {
+      return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
+    }
     return { ok: true, ownerId };
   } catch (err) {
     debug("WebSocket JWT verification failed:", err);
@@ -682,7 +712,10 @@ function getBackendMode(): "tmux" | "raw" {
   return TMUX_BACKEND ? "tmux" : "raw";
 }
 
-function getTerminalSocketStats(term: Terminal, requestingClientId?: string | null) {
+function getTerminalSocketStats(
+  term: Terminal,
+  requestingClientId?: string | null,
+) {
   const sockets = terminalSockets.get(term.id);
   let activeConnectionCount = 0;
   let hasForeignConnection = false;
@@ -710,7 +743,10 @@ function getTerminalSocketStats(term: Terminal, requestingClientId?: string | nu
 }
 
 function supportsLinkedView(term: Terminal): boolean {
-  return false;
+  return supportsTerminalLinkedView({
+    tmuxBackend: TMUX_BACKEND,
+    sessionName: term.sessionName,
+  });
 }
 
 function serializeTerminal(term: Terminal, requestingClientId?: string | null) {
@@ -783,7 +819,10 @@ function getForeignSessionSockets(
     if (!sockets) continue;
     for (const socket of sockets) {
       if (socket.readyState !== 1 || socket.data.type !== "terminal") continue;
-      if (!socket.data.clientId || socket.data.clientId === requestingClientId) {
+      if (
+        !socket.data.clientId ||
+        socket.data.clientId === requestingClientId
+      ) {
         continue;
       }
       foreignSockets.push(socket);
@@ -797,7 +836,10 @@ function handoffTmuxSession(
   sessionName: string | undefined,
   requestingClientId: string | null,
 ): void {
-  const foreignSockets = getForeignSessionSockets(sessionName, requestingClientId);
+  const foreignSockets = getForeignSessionSockets(
+    sessionName,
+    requestingClientId,
+  );
   if (foreignSockets.length === 0) return;
 
   for (const socket of foreignSockets) {
@@ -841,60 +883,60 @@ async function ensureBashIntegrationRc(): Promise<string> {
   bashIntegrationRcPathPromise = (async () => {
     const rcPath = "/tmp/deckterm-bash-integration.rc";
     const rcContents = [
-      'if [ -f /etc/profile ]; then',
-      '  . /etc/profile',
-      'fi',
+      "if [ -f /etc/profile ]; then",
+      "  . /etc/profile",
+      "fi",
       'if [ -f "$HOME/.bash_profile" ]; then',
       '  . "$HOME/.bash_profile"',
       'elif [ -f "$HOME/.bash_login" ]; then',
       '  . "$HOME/.bash_login"',
       'elif [ -f "$HOME/.profile" ]; then',
       '  . "$HOME/.profile"',
-      'fi',
-      'if [ -f /etc/bash.bashrc ]; then',
-      '  . /etc/bash.bashrc',
-      'fi',
+      "fi",
+      "if [ -f /etc/bash.bashrc ]; then",
+      "  . /etc/bash.bashrc",
+      "fi",
       'if [ -f "$HOME/.bashrc" ]; then',
       '  . "$HOME/.bashrc"',
-      'fi',
-      '__deckterm_running_start() {',
+      "fi",
+      "__deckterm_running_start() {",
       "  printf '\\033]9;9;deckterm;running;start\\a'",
-      '}',
-      '__deckterm_emit_marker() {',
+      "}",
+      "__deckterm_emit_marker() {",
       "  printf '\\033]9;9;deckterm;%s\\a' \"$1\"",
-      '}',
-      '__deckterm_running_done() {',
-      '  local exit_code=$?',
+      "}",
+      "__deckterm_running_done() {",
+      "  local exit_code=$?",
       '  if [ "${__deckterm_prompt_seen:-0}" -eq 0 ]; then',
-      '    __deckterm_prompt_seen=1',
-      '    return',
-      '  fi',
+      "    __deckterm_prompt_seen=1",
+      "    return",
+      "  fi",
       "  printf '\\033]9;9;deckterm;running;done;%s\\a' \"$exit_code\"",
-      '}',
-      '__deckterm_run_agent() {',
+      "}",
+      "__deckterm_run_agent() {",
       '  local agent_name="$1"',
-      '  shift',
+      "  shift",
       '  __deckterm_emit_marker "agent;${agent_name};start"',
       '  command "$agent_name" "$@"',
-      '  local exit_code=$?',
+      "  local exit_code=$?",
       '  __deckterm_emit_marker "agent;${agent_name};done;${exit_code}"',
       '  return "$exit_code"',
-      '}',
-      'if command -v codex >/dev/null 2>&1; then',
+      "}",
+      "if command -v codex >/dev/null 2>&1; then",
       '  codex() { __deckterm_run_agent codex "$@"; }',
-      'fi',
-      'if command -v claude >/dev/null 2>&1; then',
+      "fi",
+      "if command -v claude >/dev/null 2>&1; then",
       '  claude() { __deckterm_run_agent claude "$@"; }',
-      'fi',
+      "fi",
       'case ";${PROMPT_COMMAND};" in',
       '  *";__deckterm_running_done;"*) ;;',
       '  "")',
       '    PROMPT_COMMAND="__deckterm_running_done"',
-      '    ;;',
-      '  *)',
+      "    ;;",
+      "  *)",
       '    PROMPT_COMMAND="__deckterm_running_done; ${PROMPT_COMMAND}"',
-      '    ;;',
-      'esac',
+      "    ;;",
+      "esac",
       "PS0=$'\\033]9;9;deckterm;running;start\\a'",
       "",
     ].join("\n");
@@ -910,7 +952,8 @@ function createTerminalHandle(id: string, cols: number, rows: number) {
     cols,
     rows,
     data(term, data) {
-      const strData = typeof data === "string" ? data : utf8Decoder.decode(data);
+      const strData =
+        typeof data === "string" ? data : utf8Decoder.decode(data);
       const terminalState = terminals.get(id);
       if (terminalState) {
         processShellIntegrationChunk(terminalState, strData);
@@ -1010,9 +1053,7 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
     rowsStr = "30",
     panePidStr = "0",
     paneCurrentCommand = "",
-  ] = infoOutput
-    .trim()
-    .split("\t");
+  ] = infoOutput.trim().split("\t");
   return {
     cwd,
     cols: parseInt(colsStr, 10) || 120,
@@ -1024,15 +1065,7 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
 
 async function captureTmuxPane(sessionName: string): Promise<string> {
   const captureProc = Bun.spawn(
-    [
-      "tmux",
-      "capture-pane",
-      "-ep",
-      "-S",
-      "-2000",
-      "-t",
-      sessionName,
-    ],
+    ["tmux", "capture-pane", "-ep", "-S", "-2000", "-t", sessionName],
     { stdout: "pipe", stderr: "pipe" },
   );
   const output = await new Response(captureProc.stdout).text();
@@ -1196,18 +1229,18 @@ async function syncTmuxRuntimeState(term: Terminal): Promise<void> {
     processShellIntegrationChunk(term, pipeDelta, { emitOutput: false });
   }
 
-  const {
-    cwd,
-    panePid,
-    paneCurrentCommand,
-  } = await getTmuxSessionInfo(term.sessionName);
+  const { cwd, panePid, paneCurrentCommand } = await getTmuxSessionInfo(
+    term.sessionName,
+  );
   if (cwd) {
     term.cwd = cwd;
   }
 
   const [capture, processTree] = await Promise.all([
     captureTmuxPane(term.sessionName).catch(() => ""),
-    panePid > 0 ? getProcessTreeArgs(panePid).catch(() => []) : Promise.resolve([]),
+    panePid > 0
+      ? getProcessTreeArgs(panePid).catch(() => [])
+      : Promise.resolve([]),
   ]);
   const nextRuntimeState = inferTmuxRuntimeState({
     paneCurrentCommand,
@@ -1223,10 +1256,7 @@ async function syncTmuxRuntimeState(term: Terminal): Promise<void> {
     hasUserPrompted: term.agentHasUserPrompt,
   });
 
-  if (
-    term.agentName &&
-    term.agentName !== nextRuntimeState.agentName
-  ) {
+  if (term.agentName && term.agentName !== nextRuntimeState.agentName) {
     clearAgentRespondingTimer(term);
   }
 
@@ -1280,7 +1310,9 @@ async function createManagedTerminal({
   const isBashShell = basename(shell) === "bash";
   const bashRcPath = isBashShell ? await ensureBashIntegrationRc() : null;
   const shellCommand =
-    bashRcPath && isBashShell ? [shell, "--rcfile", bashRcPath, "-i"] : [shell, "-il"];
+    bashRcPath && isBashShell
+      ? [shell, "--rcfile", bashRcPath, "-i"]
+      : [shell, "-il"];
   const terminal = createTerminalHandle(id, cols, rows);
 
   const closeAndRemoveTerminal = (
@@ -1416,8 +1448,59 @@ async function createManagedTerminal({
   return managedTerminal;
 }
 
+async function createOwnedTerminal({
+  cwd,
+  cols = 120,
+  rows = 30,
+  ownerId,
+  ownerEmail,
+}: {
+  cwd: string;
+  cols?: number;
+  rows?: number;
+  ownerId: string;
+  ownerEmail: string;
+}): Promise<Terminal> {
+  const fs = await import("fs/promises");
+  let resolvedCwd = cwd || process.env.HOME || "/";
+  try {
+    const pathStat = await fs.stat(resolvedCwd);
+    if (!pathStat.isDirectory()) {
+      resolvedCwd = process.env.HOME || "/";
+    }
+  } catch {
+    resolvedCwd = process.env.HOME || "/";
+  }
+
+  const id = crypto.randomUUID();
+  const sessionName = TMUX_BACKEND
+    ? buildTmuxSessionName({
+        namespace: TMUX_SESSION_NAMESPACE,
+        ownerId,
+        terminalId: id,
+      })
+    : undefined;
+
+  return createManagedTerminal({
+    id,
+    cwd: resolvedCwd,
+    cols,
+    rows,
+    ownerId,
+    ownerEmail,
+    sessionName,
+    createTmuxSession: Boolean(sessionName),
+  });
+}
+
 export function createWebApp() {
   const app = new Hono();
+  const taskRunner = createTaskRunner({
+    stateDir: DECKTERM_STATE_DIR,
+    resolveAllowedPath,
+    maxRounds: DECKTERM_TASK_MAX_ROUNDS,
+    allowedProviders: DECKTERM_TASK_PROVIDERS,
+  });
 
   app.onError((err, c) => {
     console.error("[Hono] Route error:", err);
@@ -1435,7 +1518,8 @@ export function createWebApp() {
     "/*",
     cors({
       origin: hasTrustedOrigins
-        ? (origin) => (origin && TRUSTED_ORIGINS.includes(origin) ? origin : null)
+        ? (origin) =>
+            origin && TRUSTED_ORIGINS.includes(origin) ? origin : null
         : "*",
       credentials: hasTrustedOrigins,
     }),
@@ -1444,6 +1528,13 @@ export function createWebApp() {
   // Cloudflare Access JWT authentication
   if (CF_ACCESS_REQUIRED && CF_ACCESS_TEAM_NAME) {
     app.use("/*", cloudflareAccess(CF_ACCESS_TEAM_NAME));
+    app.use("/*", async (c, next) => {
+      const accessPayload = c.get("accessPayload");
+      if (!isCloudflareAudienceAllowed(accessPayload?.aud, CF_ACCESS_AUD)) {
+        return c.text("Unauthorized", 401);
+      }
+      await next();
+    });
   }
 
   // No-cache headers - bypass CF cache
@@ -1512,6 +1603,46 @@ export function createWebApp() {
       },
       disk: { percent: Math.round(diskUsage) },
     });
+  });
+
+  app.get("/api/onboarding/doctor", async (c) => {
+    const cfVisitor = c.req.header("cf-visitor") || "";
+    const cfVisitorScheme =
+      cfVisitor.match(/"scheme"\s*:\s*"([^"]+)"/)?.[1] || "";
+    const host = c.req.header("x-forwarded-host") || c.req.header("host") || "";
+    const forwardedProto = c.req.header("x-forwarded-proto") || cfVisitorScheme;
+    return c.json(
+      await runOnboardingDoctor({
+        profile: c.req.query("profile"),
+        publicOrigin: c.req.query("publicOrigin"),
+        requestContext: {
+          viaCloudflare: Boolean(
+            c.req.header("cf-ray") ||
+            c.req.header("cf-connecting-ip") ||
+            c.req.header("cf-visitor"),
+          ),
+          cfAccessJwtPresent: Boolean(c.req.header("cf-access-jwt-assertion")),
+          publicOrigin:
+            c.req.query("publicOrigin") ||
+            (host && forwardedProto ? `${forwardedProto}://${host}` : ""),
+          host,
+          forwardedProto,
+        },
+      }),
+    );
+  });
+
+  app.post("/api/onboarding/apply", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    return c.json(
+      await applyOnboardingProfile({
+        profile: body.profile,
+        publicOrigin: body.publicOrigin,
+        allowedFileRoots: body.allowedFileRoots,
+        cfAccessTeamName: body.cfAccessTeamName,
+        cfAccessAud: body.cfAccessAud,
+      }),
+    );
   });
 
   // OpenCode health check
@@ -1606,6 +1737,166 @@ export function createWebApp() {
     }
   });
 
+  function taskErrorResponse(c: any, err: unknown) {
+    if (err instanceof TaskRunnerError) {
+      return c.json({ error: err.message }, err.status as never);
+    }
+    return c.json({ error: "Task runner failed", message: String(err) }, 500);
+  }
+
+  app.get("/api/tasks", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    return c.json(await taskRunner.listTasks(ownerId));
+  });
+
+  app.post("/api/tasks", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const task = await taskRunner.createTask(body, { ownerId });
+      return c.json(task);
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.get("/api/tasks/:id", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    try {
+      return c.json(await taskRunner.getTask(c.req.param("id"), { ownerId }));
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.patch("/api/tasks/:id", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(
+        await taskRunner.updateTask(c.req.param("id"), { ownerId }, body),
+      );
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.post("/api/tasks/:id/start", async (c) => {
+    const { ownerId, ownerEmail } = getCurrentUser(c);
+    try {
+      const task = await taskRunner.getTask(c.req.param("id"), { ownerId });
+      const creationError = getTerminalCreationError(ownerId);
+      if (creationError) {
+        return c.json(creationError.body, creationError.status);
+      }
+      rateLimitState.record();
+      const terminal = await createOwnedTerminal({
+        cwd: task.workingDirectory,
+        cols: 120,
+        rows: 30,
+        ownerId,
+        ownerEmail,
+      });
+      terminal.terminal.write(`${buildWorkerCommand(task)}\n`);
+      const updated = await taskRunner.markWorkerStarted(
+        task.id,
+        {
+          ownerId,
+        },
+        terminal.id,
+      );
+      return c.json({ task: updated, terminal: serializeTerminal(terminal) });
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.post("/api/tasks/:id/run-checks", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    try {
+      return c.json(await taskRunner.runChecks(c.req.param("id"), { ownerId }));
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.post("/api/tasks/:id/judge", async (c) => {
+    const { ownerId, ownerEmail } = getCurrentUser(c);
+    try {
+      const task = await taskRunner.getTask(c.req.param("id"), { ownerId });
+      const prompt = await taskRunner.buildJudgePrompt(task.id, { ownerId });
+      await writeFile(task.controlFiles.judgePromptFile, prompt);
+      const creationError = getTerminalCreationError(ownerId);
+      if (creationError) {
+        return c.json(creationError.body, creationError.status);
+      }
+      rateLimitState.record();
+      const terminal = await createOwnedTerminal({
+        cwd: task.workingDirectory,
+        cols: 120,
+        rows: 30,
+        ownerId,
+        ownerEmail,
+      });
+      terminal.terminal.write(`${buildJudgeCommand(task)}\n`);
+      const updated = await taskRunner.markJudgeStarted(
+        task.id,
+        {
+          ownerId,
+        },
+        terminal.id,
+      );
+      return c.json({
+        task: updated,
+        terminal: serializeTerminal(terminal),
+        prompt,
+      });
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.post("/api/tasks/:id/pause", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    try {
+      return c.json(
+        await taskRunner.updateTask(
+          c.req.param("id"),
+          { ownerId },
+          { status: "paused" },
+        ),
+      );
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.post("/api/tasks/:id/reset", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    try {
+      return c.json(
+        await taskRunner.updateTask(
+          c.req.param("id"),
+          { ownerId },
+          { status: "ready" },
+        ),
+      );
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
+  app.delete("/api/tasks/:id", async (c) => {
+    const { ownerId } = getCurrentUser(c);
+    try {
+      return c.json(
+        await taskRunner.deleteTask(c.req.param("id"), { ownerId }),
+      );
+    } catch (err) {
+      return taskErrorResponse(c, err);
+    }
+  });
+
   // Create new terminal running shell
   app.post("/api/terminals", async (c) => {
     const { ownerId, ownerEmail } = getCurrentUser(c);
@@ -1616,39 +1907,12 @@ export function createWebApp() {
 
     rateLimitState.record();
     const body = await c.req.json().catch(() => ({}));
-    const fs = await import("fs/promises");
-
-    let cwd = body.cwd || process.env.HOME || "/";
-    try {
-      const stat = await fs.stat(cwd);
-      if (!stat.isDirectory()) {
-        cwd = process.env.HOME || "/";
-      }
-    } catch {
-      cwd = process.env.HOME || "/";
-    }
-
-    const id = crypto.randomUUID();
-    const cols = body.cols || 120;
-    const rows = body.rows || 30;
-
-    const sessionName = TMUX_BACKEND
-      ? buildTmuxSessionName({
-          namespace: TMUX_SESSION_NAMESPACE,
-          ownerId,
-          terminalId: id,
-        })
-      : undefined;
-
-    const terminal = await createManagedTerminal({
-      id,
-      cwd,
-      cols,
-      rows,
+    const terminal = await createOwnedTerminal({
+      cwd: body.cwd || process.env.HOME || "/",
+      cols: body.cols || 120,
+      rows: body.rows || 30,
       ownerId,
       ownerEmail,
-      sessionName,
-      createTmuxSession: Boolean(sessionName),
     });
 
     return c.json(serializeTerminal(terminal));
@@ -1669,7 +1933,10 @@ export function createWebApp() {
       return c.json({ error: "Linked view requires tmux backend" }, 400);
     }
     if (!sourceTerm.sessionName) {
-      return c.json({ error: "Linked view unavailable for this terminal" }, 409);
+      return c.json(
+        { error: "Linked view unavailable for this terminal" },
+        409,
+      );
     }
 
     const creationError = getTerminalCreationError(ownerId);
@@ -2059,9 +2326,7 @@ export function createWebApp() {
           const renameSep = " -> ";
           const renameIdx = rawPath.indexOf(renameSep);
           const isRenamed =
-            stagedStatus === "R" ||
-            unstagedStatus === "R" ||
-            renameIdx !== -1;
+            stagedStatus === "R" || unstagedStatus === "R" || renameIdx !== -1;
 
           let path = rawPath;
           let oldPath: string | undefined;
@@ -2112,8 +2377,7 @@ export function createWebApp() {
       );
     }
 
-    const stagedEnabled =
-      staged === "1" || staged?.toLowerCase?.() === "true";
+    const stagedEnabled = staged === "1" || staged?.toLowerCase?.() === "true";
     if (stagedEnabled && commit) {
       return c.json(
         { error: "Invalid query: staged and commit cannot be combined" },
@@ -2550,6 +2814,17 @@ export function createWebApp() {
 }
 
 export async function startWebServer(host: string, port: number) {
+  if (CF_ACCESS_REQUIRED && !CF_ACCESS_TEAM_NAME) {
+    throw new Error(
+      "CF_ACCESS_REQUIRED=1 but CF_ACCESS_TEAM_NAME is empty. Server-side JWT validation cannot run; refusing to start in a silently-unprotected state. Set CF_ACCESS_TEAM_NAME or unset CF_ACCESS_REQUIRED.",
+    );
+  }
+  if (CF_ACCESS_REQUIRED && !CF_ACCESS_AUD) {
+    throw new Error(
+      "CF_ACCESS_REQUIRED=1 but CF_ACCESS_AUD is empty. Server-side audience pinning cannot run; refusing to start in a silently-unprotected state. Set CF_ACCESS_AUD or unset CF_ACCESS_REQUIRED.",
+    );
+  }
+
   // Recover existing tmux sessions before starting server
   if (TMUX_BACKEND) {
     console.log(
@@ -2626,7 +2901,12 @@ export async function startWebServer(host: string, port: number) {
         }
 
         const success = server.upgrade(req, {
-          data: { type: "terminal" as const, terminalId: id, ownerId, clientId },
+          data: {
+            type: "terminal" as const,
+            terminalId: id,
+            ownerId,
+            clientId,
+          },
         });
         if (success) return undefined;
 

@@ -10,6 +10,8 @@ const NAVIGATION_SURFACE_HIERARCHY = Object.freeze({
   desktopPrimary: Object.freeze(["files", "git", "palette", "more"]),
   mobilePrimary: Object.freeze(["files", "git", "paste", "more"]),
   overflow: Object.freeze([
+    "setup",
+    "tasks",
     "clipboard",
     "toggle-extra-keys",
     "wrap-lines",
@@ -40,10 +42,14 @@ function getOverflowActionIds() {
 function getDefaultPinnedActionIds(mode) {
   const normalizedMode = normalizeCwd(mode).toLowerCase();
   if (normalizedMode === "desktop") {
-    return getDesktopPrimaryActionIds().filter((actionId) => actionId !== "more");
+    return getDesktopPrimaryActionIds().filter(
+      (actionId) => actionId !== "more",
+    );
   }
   if (normalizedMode === "mobile") {
-    return getMobilePrimaryActionIds().filter((actionId) => actionId !== "more");
+    return getMobilePrimaryActionIds().filter(
+      (actionId) => actionId !== "more",
+    );
   }
   throw new Error(`Unknown layout mode: ${mode}`);
 }
@@ -227,12 +233,18 @@ function sortRecentWorkspaceEntries(entries) {
   });
 }
 
-function limitRecentWorkspaceEntries(entries, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+function limitRecentWorkspaceEntries(
+  entries,
+  maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+) {
   const limit = Math.max(0, Number(maxEntries) || 0);
   return entries.slice(0, limit);
 }
 
-function normalizeRecentWorkspaceEntries(value, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+function normalizeRecentWorkspaceEntries(
+  value,
+  maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+) {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -254,7 +266,10 @@ function normalizeRecentWorkspaceEntries(value, maxEntries = ACTION_RECENT_WORKS
   );
 }
 
-function loadRecentWorkspaceEntries(storage, maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES) {
+function loadRecentWorkspaceEntries(
+  storage,
+  maxEntries = ACTION_RECENT_WORKSPACES_MAX_ENTRIES,
+) {
   const raw = readStorageValue(storage, ACTION_RECENT_WORKSPACES_STORAGE_KEY);
   if (!raw) {
     return [];
@@ -296,7 +311,9 @@ function upsertRecentWorkspaceEntry(
   }
 
   const next = Array.isArray(entries) ? entries.slice() : [];
-  const filtered = next.filter((entry) => validateRecentWorkspaceEntry(entry)?.cwd !== normalized.cwd);
+  const filtered = next.filter(
+    (entry) => validateRecentWorkspaceEntry(entry)?.cwd !== normalized.cwd,
+  );
   filtered.unshift(normalized);
   return normalizeRecentWorkspaceEntries(filtered, maxEntries);
 }
@@ -312,7 +329,9 @@ function getMobileCustomizableActionIds() {
 function getAvailableActionIds(mode, pinnedActionIds = []) {
   const config = getModeLayoutConfig(mode);
   const pinned = new Set(uniqueActionIds(pinnedActionIds));
-  return config.customizableActionIds.filter((actionId) => !pinned.has(actionId));
+  return config.customizableActionIds.filter(
+    (actionId) => !pinned.has(actionId),
+  );
 }
 
 function clampLayoutIndex(index, listLength) {
@@ -348,7 +367,9 @@ function pinLayoutAction(state, mode, actionId, targetIndex) {
   }
 
   return updatePinnedActionList(state, mode, (pinnedActionIds) => {
-    const nextPinned = pinnedActionIds.filter((id) => id !== normalizedActionId);
+    const nextPinned = pinnedActionIds.filter(
+      (id) => id !== normalizedActionId,
+    );
     const insertionIndex = clampLayoutIndex(targetIndex, nextPinned.length);
     nextPinned.splice(insertionIndex, 0, normalizedActionId);
     return nextPinned;
@@ -386,7 +407,9 @@ function reorderLayoutAction(state, mode, actionId, targetIndex) {
     const currentIndex = pinnedActionIds.indexOf(normalizedActionId);
     if (currentIndex === -1) return pinnedActionIds;
 
-    const nextPinned = pinnedActionIds.filter((id) => id !== normalizedActionId);
+    const nextPinned = pinnedActionIds.filter(
+      (id) => id !== normalizedActionId,
+    );
     const insertionIndex = clampLayoutIndex(targetIndex, nextPinned.length);
     nextPinned.splice(insertionIndex, 0, normalizedActionId);
     return nextPinned;
@@ -456,10 +479,7 @@ function getDesktopActionDensityTierByWidth(footprintWidths = {}) {
 }
 
 function getDesktopTabLayoutByWidth(options = {}) {
-  const settings =
-    options && typeof options === "object"
-      ? options
-      : {};
+  const settings = options && typeof options === "object" ? options : {};
   const availableWidth = Number(settings.availableWidth);
   const tabCount = Math.max(0, Math.trunc(Number(settings.tabCount) || 0));
   const preferredTabWidth = Math.max(
@@ -686,7 +706,8 @@ if (typeof exports !== "undefined") {
   exports.getActionDensityTier = getActionDensityTier;
   exports.getAvailableActionIds = getAvailableActionIds;
   exports.getDesktopActionDensityTier = getDesktopActionDensityTier;
-  exports.getDesktopActionDensityTierByWidth = getDesktopActionDensityTierByWidth;
+  exports.getDesktopActionDensityTierByWidth =
+    getDesktopActionDensityTierByWidth;
   exports.getDesktopTabLayoutByWidth = getDesktopTabLayoutByWidth;
   exports.getDesktopCustomizableActionIds = getDesktopCustomizableActionIds;
   exports.getDesktopPrimaryActionIds = getDesktopPrimaryActionIds;

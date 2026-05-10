@@ -13,12 +13,14 @@
 ### Task 1: Add failing telemetry tests for running markers
 
 **Files:**
+
 - Modify: `backend/telemetry.ts`
 - Create: `backend/telemetry.test.ts`
 
 **Step 1: Write the failing test**
 
 Add tests that prove:
+
 - a start marker sets `running: true`
 - a prompt-return marker sets `running: false` and preserves an exit code
 - marker text is stripped from extracted output
@@ -47,6 +49,7 @@ git commit -m "feat(dev): add running marker telemetry"
 ### Task 2: Feed running state from backend PTY stream
 
 **Files:**
+
 - Modify: `backend/server.ts`
 
 **Step 1: Write the failing test**
@@ -61,6 +64,7 @@ Expected: FAIL because server terminal state does not yet track running transiti
 **Step 3: Write minimal implementation**
 
 Update PTY output handling to:
+
 - strip markers before sending output to browser and scrollback
 - store `running` and last completion metadata on the terminal
 - expose `running` via `/api/terminals`
@@ -80,6 +84,7 @@ git commit -m "feat(dev): track foreground running state"
 ### Task 3: Render running badge instead of busy
 
 **Files:**
+
 - Modify: `web/app.js`
 - Modify: `web/styles.css`
 - Modify: `web/terminal-colors.js`
@@ -93,6 +98,7 @@ Change client/unit/e2e expectations from `Busy` to `Running` and add a transitio
 **Step 2: Run test to verify it fails**
 
 Run:
+
 - `bun test ./web/terminal-colors.test.js`
 - `cd tests && PW_BASE_URL=http://127.0.0.1:4181 npx playwright test workspace-signals.spec.ts --workers=1 --reporter=line`
 
@@ -116,6 +122,7 @@ git commit -m "feat(dev): render running workspace signal"
 ### Task 4: Add completion notification
 
 **Files:**
+
 - Modify: `web/app.js`
 - Modify: `tests/workspace-signals.spec.ts`
 
@@ -146,11 +153,13 @@ git commit -m "feat(dev): notify on command completion"
 ### Task 5: Final verification
 
 **Files:**
+
 - Modify: none unless fixes are needed
 
 **Step 1: Run targeted verification**
 
 Run:
+
 - `bun test ./backend/telemetry.test.ts`
 - `bun run test:unit`
 - `cd tests && PW_BASE_URL=http://127.0.0.1:4181 npx playwright test workspace-signals.spec.ts mobile-regressions.spec.ts phase3-clipboard.spec.ts --workers=1 --reporter=line`

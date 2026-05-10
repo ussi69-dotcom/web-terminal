@@ -105,7 +105,11 @@ function formatFileSize(bytes) {
 
 function getItemIcon(item) {
   if (item?.isDir) return "📁";
-  const ext = String(item?.name || "").split(".").pop()?.toLowerCase() || "";
+  const ext =
+    String(item?.name || "")
+      .split(".")
+      .pop()
+      ?.toLowerCase() || "";
   return FILE_ICONS[ext] || "📄";
 }
 
@@ -127,17 +131,21 @@ class FileExplorerController {
         ? document.getElementById("file-explorer")
         : null);
     this.viewport =
-      viewport || (typeof window !== "undefined" ? window : { innerWidth: 1024 });
+      viewport ||
+      (typeof window !== "undefined" ? window : { innerWidth: 1024 });
     this.breakpoint = breakpoint;
     this.fetchImpl =
-      fetchImpl || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
+      fetchImpl ||
+      (typeof fetch === "function" ? fetch.bind(globalThis) : null);
     this.alertImpl = alertImpl || getDefaultAlertImpl();
     this.confirmImpl = confirmImpl || getDefaultConfirmImpl();
     this.promptImpl = promptImpl || getDefaultPromptImpl();
     this.openWindowImpl = openWindowImpl || getDefaultOpenWindowImpl();
     this.renderers = {
       breadcrumb:
-        typeof renderers.breadcrumb === "function" ? renderers.breadcrumb : null,
+        typeof renderers.breadcrumb === "function"
+          ? renderers.breadcrumb
+          : null,
       list: typeof renderers.list === "function" ? renderers.list : null,
       status: typeof renderers.status === "function" ? renderers.status : null,
     };
@@ -207,7 +215,9 @@ class FileExplorerController {
     });
 
     this.backdropEl?.addEventListener("click", this.handleBackdropClick);
-    this.uploadBtnEl?.addEventListener("click", () => this.uploadInputEl?.click());
+    this.uploadBtnEl?.addEventListener("click", () =>
+      this.uploadInputEl?.click(),
+    );
     this.uploadInputEl?.addEventListener("change", this.handleUpload);
     this.mkdirBtnEl?.addEventListener("click", () => void this.createFolder());
     this.refreshBtnEl?.addEventListener("click", () => {
@@ -284,7 +294,10 @@ class FileExplorerController {
 
     this.root.setAttribute("data-mode", this.mode);
     this.root.setAttribute("aria-hidden", this.isOpen ? "false" : "true");
-    this.shellEl?.setAttribute("aria-modal", this.mode === "overlay" ? "true" : "false");
+    this.shellEl?.setAttribute(
+      "aria-modal",
+      this.mode === "overlay" ? "true" : "false",
+    );
     this.dropZoneEl?.classList?.toggle("hidden", !this.dragActive);
   }
 
@@ -353,11 +366,7 @@ class FileExplorerController {
         );
       } else if (snapshot.error) {
         this.listEl.appendChild(
-          this.createMessageCard(
-            "error",
-            "Explorer error",
-            snapshot.error,
-          ),
+          this.createMessageCard("error", "Explorer error", snapshot.error),
         );
       } else if (snapshot.items.length === 0) {
         this.listEl.appendChild(
@@ -535,7 +544,9 @@ class FileExplorerController {
   getSelectedItem(workspaceId) {
     const normalizedWorkspaceId = String(workspaceId || "").trim();
     if (!normalizedWorkspaceId) return null;
-    return cloneSelection(this.selectedItemByWorkspace.get(normalizedWorkspaceId));
+    return cloneSelection(
+      this.selectedItemByWorkspace.get(normalizedWorkspaceId),
+    );
   }
 
   setWorkspaceItems(workspaceId, items) {
@@ -581,8 +592,7 @@ class FileExplorerController {
     const currentPath = normalizeExplorerPath(data?.path) || "/";
 
     if (currentPath !== "/") {
-      const parentPath =
-        currentPath.split("/").slice(0, -1).join("/") || "/";
+      const parentPath = currentPath.split("/").slice(0, -1).join("/") || "/";
       items.push({
         name: "..",
         path: parentPath,
@@ -641,7 +651,9 @@ class FileExplorerController {
         `/api/browse?path=${encodeURIComponent(nextPath)}&files=true`,
       );
       const data = await res.json().catch(() => ({}));
-      if (this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId) {
+      if (
+        this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId
+      ) {
         return null;
       }
 
@@ -663,7 +675,9 @@ class FileExplorerController {
 
       return data;
     } catch (err) {
-      if (this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId) {
+      if (
+        this.pendingLoadByWorkspace.get(normalizedWorkspaceId) !== requestId
+      ) {
         return null;
       }
 
@@ -724,7 +738,11 @@ class FileExplorerController {
     }
   }
 
-  async createFolder(path = null, folderName = null, workspaceId = this.currentWorkspaceId) {
+  async createFolder(
+    path = null,
+    folderName = null,
+    workspaceId = this.currentWorkspaceId,
+  ) {
     const normalizedWorkspaceId = String(workspaceId || "").trim();
     const basePath =
       normalizeExplorerPath(path) ||
@@ -775,7 +793,12 @@ class FileExplorerController {
     const basePath =
       normalizeExplorerPath(path) ||
       this.getWorkspacePath(normalizedWorkspaceId);
-    if (!this.fetchImpl || !basePath || !normalizedWorkspaceId || !files?.length) {
+    if (
+      !this.fetchImpl ||
+      !basePath ||
+      !normalizedWorkspaceId ||
+      !files?.length
+    ) {
       return false;
     }
 

@@ -91,10 +91,16 @@ export async function waitForTerminal(page: Page, timeout = 30000) {
 
   if (!hasTerminal) {
     await page
-      .waitForFunction(() => {
-        const tm = (window as any).terminalManager;
-        return Boolean(tm?.terminals?.size) || Boolean(document.querySelector(".tile .xterm"));
-      }, { timeout: 3000 })
+      .waitForFunction(
+        () => {
+          const tm = (window as any).terminalManager;
+          return (
+            Boolean(tm?.terminals?.size) ||
+            Boolean(document.querySelector(".tile .xterm"))
+          );
+        },
+        { timeout: 3000 },
+      )
       .catch(() => {});
 
     try {
@@ -356,12 +362,17 @@ export async function createGitFixtureRepo(): Promise<string> {
   const homeRoot = process.env.HOME || os.tmpdir();
   const fixtureRoot = path.join(homeRoot, ".deckterm-test-fixtures");
   await mkdir(fixtureRoot, { recursive: true });
-  const repoDir = await mkdtemp(path.join(fixtureRoot, "deckterm-git-fixture-"));
+  const repoDir = await mkdtemp(
+    path.join(fixtureRoot, "deckterm-git-fixture-"),
+  );
   await mkdir(path.join(repoDir, "src", "staged"), { recursive: true });
   await mkdir(path.join(repoDir, "src", "changes"), { recursive: true });
 
   await writeFile(path.join(repoDir, "src", "staged", "staged.txt"), "base\n");
-  await writeFile(path.join(repoDir, "src", "changes", "changed.txt"), "base\n");
+  await writeFile(
+    path.join(repoDir, "src", "changes", "changed.txt"),
+    "base\n",
+  );
 
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
   execSync('git config user.email "deckterm-tests@example.com"', {
@@ -560,10 +571,7 @@ export const LAYOUT_EDITOR_TEST_IDS = {
   available: "layout-editor-available-actions",
 } as const;
 
-export async function openLayoutEditor(
-  page: Page,
-  mode: "Desktop" | "Mobile",
-) {
+export async function openLayoutEditor(page: Page, mode: "Desktop" | "Mobile") {
   await openToolsSheet(page);
   await page.getByRole("button", { name: "Edit layout" }).click();
   await page.getByRole("button", { name: mode }).click();
@@ -592,8 +600,10 @@ export async function dragLayoutEditorItem(
 
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
-  if (!sourceBox) throw new Error("Missing source bounding box for layout drag");
-  if (!targetBox) throw new Error("Missing target bounding box for layout drag");
+  if (!sourceBox)
+    throw new Error("Missing source bounding box for layout drag");
+  if (!targetBox)
+    throw new Error("Missing target bounding box for layout drag");
 
   const sourceCenter = {
     x: sourceBox.x + sourceBox.width / 2,

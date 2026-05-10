@@ -1,0 +1,17 @@
+# Example Cloudflare Tunnel config for DeckTerm.
+#
+# Cloudflare Access is configured in the Zero Trust dashboard, not here:
+# - protect hostname deckterm.example.com
+# - copy the Access application AUD into CF_ACCESS_AUD
+# - send traffic only to the local DeckTerm listener
+
+tunnel: deckterm
+credentials-file: /home/deploy/.cloudflared/deckterm.json
+
+ingress:
+  - hostname: deckterm.example.com
+    service: http://127.0.0.1:4174
+    originRequest:
+      connectTimeout: 30s
+      noHappyEyeballs: true
+  - service: http_status:404

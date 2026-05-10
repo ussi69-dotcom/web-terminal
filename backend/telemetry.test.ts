@@ -10,8 +10,7 @@ import {
 } from "./telemetry";
 
 const START = "\x1b]9;9;deckterm;running;start\x07";
-const DONE = (code: number) =>
-  `\x1b]9;9;deckterm;running;done;${code}\x07`;
+const DONE = (code: number) => `\x1b]9;9;deckterm;running;done;${code}\x07`;
 const AGENT_START = (name: string) =>
   `\x1b]9;9;deckterm;agent;${name};start\x07`;
 const AGENT_DONE = (name: string, code: number) =>

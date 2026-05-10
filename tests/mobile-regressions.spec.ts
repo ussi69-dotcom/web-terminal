@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import {
   test,
   expect,
@@ -70,13 +71,66 @@ test.describe("Mobile regressions", () => {
     expect(state.hasEntries).toBe(true);
   });
 
-  test("keeps only pinned primary actions in the dedicated mobile bottom bar", async ({
+  test("directory picker can navigate to parent with row and breadcrumb clicks", async ({
+    page,
+  }) => {
+    const root = await mkdtemp(path.join(DEFAULT_ROOT, "deckterm-picker-"));
+    const child = path.join(root, "child");
+    await mkdir(child, { recursive: true });
+
+    try {
+      await openToolsSheet(page);
+      await page.fill("#tools-sheet-directory", child);
+      await page.locator("#tools-sheet-browse").click();
+
+      await page.waitForSelector("#dir-modal:not(.hidden)", {
+        timeout: 5000,
+      });
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.terminalManager.currentDirPath || ""),
+        )
+        .toBe(child);
+
+      await page.locator("#dir-list .dir-item", { hasText: ".." }).click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.terminalManager.currentDirPath || ""),
+        )
+        .toBe(root);
+
+      await page.locator("#dir-list .dir-item", { hasText: "child" }).dblclick();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.terminalManager.currentDirPath || ""),
+        )
+        .toBe(child);
+
+      await page
+        .locator("#dir-breadcrumb a", { hasText: path.basename(root) })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.terminalManager.currentDirPath || ""),
+        )
+        .toBe(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps pinned primary actions plus fixed More in the dedicated mobile bottom bar", async ({
     page,
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
 
     await expect(mobileBar).toBeVisible();
-    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste"]);
+    await expectButtonLabelsExactly(mobileBar, [
+      "Files",
+      "Git",
+      "Paste",
+      "More",
+    ]);
   });
 
   test("customizes the mobile pinned actions from the tools sheet and moves them back", async ({
@@ -102,7 +156,9 @@ test.describe("Mobile regressions", () => {
         .getByRole("button", { name: "Clipboard" }),
       pinnedZone,
     );
-    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      mobileBar.getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
 
     await dragLayoutEditorItem(
       page,
@@ -111,7 +167,9 @@ test.describe("Mobile regressions", () => {
         .getByRole("button", { name: "Clipboard" }),
       availableZone,
     );
-    await expect(mobileBar.getByRole("button", { name: "Clipboard" })).toHaveCount(0);
+    await expect(
+      mobileBar.getByRole("button", { name: "Clipboard" }),
+    ).toHaveCount(0);
     await expect(
       layoutEditor
         .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
@@ -125,7 +183,7 @@ test.describe("Mobile regressions", () => {
     ).toBeVisible();
   });
 
-  test("allows the mobile action bar to be completely empty and reopened from the top-left menu", async ({
+  test("keeps fixed More available when all customizable mobile actions are unpinned", async ({
     page,
   }) => {
     const mobileBar = page.locator("#mobile-action-bar");
@@ -144,13 +202,15 @@ test.describe("Mobile regressions", () => {
       );
     }
 
-    await expect(mobileBar).toBeHidden();
-    await expect(page.locator("#mobile-more-btn")).toHaveCount(0);
+    await expect(mobileBar).toBeVisible();
+    await expectButtonLabelsExactly(mobileBar, ["More"]);
 
     await page.getByRole("button", { name: "Done" }).click();
-    await page.locator("#toolbar-toggle").click();
+    await page.locator("#mobile-more-btn").click();
     await expect(page.locator("#tools-sheet")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Edit layout" }),
+    ).toBeVisible();
   });
 
   test("keeps the top-left menu toggle usable and the mobile tools sheet vertically reachable", async ({
@@ -178,7 +238,9 @@ test.describe("Mobile regressions", () => {
     const toolbarToggle = page.locator("#toolbar-toggle");
     await toolbarToggle.click();
     await expect(page.locator("#tools-sheet")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Edit layout" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Edit layout" }),
+    ).toBeVisible();
 
     await toolbarToggle.click();
     await expect(page.locator("#tools-sheet")).toBeHidden();

@@ -12,6 +12,7 @@ It combines persistent tmux-backed shells, workspace tabs, split tiles, mobile-f
 - Workspace-aware file explorer for browse, upload, download, mkdir, rename, and delete inside allowed roots
 - Built-in git panel and git APIs for status, diff, stage, unstage, commit, branch, checkout, log, and show
 - Agent-aware workspace badges such as `Codex` and `Codex Responding`
+- Supervised Task Runner for Codex/Claude task workspaces, check runs, judge prompts, and optional git worktrees
 - Release-based production deployment from `main` with CI verification and atomic rollout
 
 ## Product Snapshot
@@ -33,10 +34,10 @@ For rollout and CI/CD details, see [deploy/README.md](/home/deploy/deckterm_dev/
 
 Two separate environments are used on the server:
 
-| Port | Role | Source | Service |
-| --- | --- | --- | --- |
-| `4174` | Development | [`/home/deploy/deckterm_dev`](/home/deploy/deckterm_dev) | `deckterm-dev.service` |
-| `4173` | Production | release symlink under `/home/deploy/apps/deckterm/prod/current` | `deckterm.service` |
+| Port   | Role        | Source                                                          | Service                |
+| ------ | ----------- | --------------------------------------------------------------- | ---------------------- |
+| `4174` | Development | [`/home/deploy/deckterm_dev`](/home/deploy/deckterm_dev)        | `deckterm-dev.service` |
+| `4173` | Production  | release symlink under `/home/deploy/apps/deckterm/prod/current` | `deckterm.service`     |
 
 Important:
 
@@ -55,6 +56,10 @@ bun run dev
 
 By default the backend starts on `4174` unless `PORT` overrides it.
 
+For a dedicated server install with Cloudflare Access, Cloudflare Tunnel,
+nginx, systemd, and firewall guidance, see
+[docs/install-dedicated-server.md](docs/install-dedicated-server.md).
+
 ## Core Features
 
 ### Terminal and workspace UX
@@ -66,6 +71,8 @@ By default the backend starts on `4174` unless `PORT` overrides it.
 - Desktop uses a compact top bar with primary actions for Files, Git, Palette, and More
 - Mobile uses a bottom action bar for Files, Git, Paste, and More
 - More opens overflow actions for secondary utilities like Clipboard, Extra Keys, Wrap, Fullscreen, Fonts, and Help
+- Setup runs the deployment doctor, profile wizard, remediation rows, and config snippets for dedicated installs
+- Tasks opens a supervised Agent Runner surface for creating task workspaces, running checks, and launching worker/judge terminals
 - Desktop Files opens as a persistent right-side explorer while mobile Files opens as an overlay
 - Command palette stays focused on jump-layer and advanced commands rather than basic visible navigation
 - Search, font scaling, fullscreen, line wrap toggle, reconnect lifecycle overlay
@@ -112,19 +119,29 @@ Relevant variables include:
 
 Common runtime variables:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `4174` | HTTP server port |
-| `HOST` | `0.0.0.0` | Bind address |
-| `OPENCODE_WEB_DEBUG` | `0` | Debug logging |
-| `OPENCODE_WEB_MAX_TERMINALS` | `10` | Global terminal cap |
-| `MAX_TERMINALS_PER_USER` | `10` | Per-user cap |
-| `TERMINAL_IDLE_TIMEOUT_MS` | `7200000` | Idle terminal cleanup |
-| `SCROLLBACK_MAX_LINES` | `2000` | Reconnect replay line budget |
-| `SCROLLBACK_MAX_BYTES` | `1048576` | Reconnect replay byte budget |
-| `AGENT_RESPONDING_IDLE_MS` | `700` | Response-to-idle decay for agent badges |
-| `ALLOWED_FILE_ROOTS` | `$HOME` | Allowed browse/upload/git roots |
-| `TMUX_BACKEND` | `1` in deployed environments | Persistent tmux sessions |
+| Variable                     | Default                      | Purpose                                                           |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------------- |
+| `PORT`                       | `4174`                       | HTTP server port                                                  |
+| `HOST`                       | `0.0.0.0`                    | Bind address                                                      |
+| `OPENCODE_WEB_DEBUG`         | `0`                          | Debug logging                                                     |
+| `OPENCODE_WEB_MAX_TERMINALS` | `10`                         | Global terminal cap                                               |
+| `MAX_TERMINALS_PER_USER`     | `10`                         | Per-user cap                                                      |
+| `TERMINAL_IDLE_TIMEOUT_MS`   | `7200000`                    | Idle terminal cleanup                                             |
+| `SCROLLBACK_MAX_LINES`       | `2000`                       | Reconnect replay line budget                                      |
+| `SCROLLBACK_MAX_BYTES`       | `1048576`                    | Reconnect replay byte budget                                      |
+| `AGENT_RESPONDING_IDLE_MS`   | `700`                        | Response-to-idle decay for agent badges                           |
+| `ALLOWED_FILE_ROOTS`         | `$HOME`                      | Allowed browse/upload/git roots                                   |
+| `TMUX_BACKEND`               | `1` in deployed environments | Persistent tmux sessions                                          |
+| `DECKTERM_STATE_DIR`         | `$HOME/.deckterm`            | Task Runner metadata, control files, and worktree root            |
+| `DECKTERM_TASK_MAX_ROUNDS`   | `5`                          | Reserved cap for supervised worker/judge rounds                   |
+| `DECKTERM_TASK_PROVIDERS`    | `codex,claude`               | Reserved provider allow-list for task workflows                   |
+| `DECKTERM_PUBLISH_MODE`      | `local`                      | Setup doctor profile: `local`, `cloudflare`, `nginx`, or `direct` |
+| `CF_ACCESS_REQUIRED`         | `0`                          | Require Cloudflare Access JWTs                                    |
+| `CF_ACCESS_TEAM_NAME`        | empty                        | Cloudflare Access team name                                       |
+| `CF_ACCESS_AUD`              | empty                        | Cloudflare Access application audience tag                        |
+| `TRUSTED_ORIGINS`            | empty                        | Comma-separated allowed browser origins                           |
+| `DECKTERM_DOCTOR_ENV`        | `.env`                       | Env file used by the Setup doctor endpoint                        |
+| `DECKTERM_DOCTOR_SCRIPT`     | `scripts/doctor.sh`          | Fixed local doctor script used by Setup                           |
 
 Legacy compatibility note:
 

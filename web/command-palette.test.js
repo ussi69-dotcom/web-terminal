@@ -195,12 +195,16 @@ test("ArrowDown changes the selected item and Enter runs it", () => {
 
   controller.open();
 
-  dom.input.dispatchEvent(
-    { type: "keydown", key: "ArrowDown", preventDefault() {} },
-  );
-  dom.input.dispatchEvent(
-    { type: "keydown", key: "Enter", preventDefault() {} },
-  );
+  dom.input.dispatchEvent({
+    type: "keydown",
+    key: "ArrowDown",
+    preventDefault() {},
+  });
+  dom.input.dispatchEvent({
+    type: "keydown",
+    key: "Enter",
+    preventDefault() {},
+  });
 
   expect(runLog).toEqual(["open-file-manager"]);
   expect(dom.root.classList.contains("hidden")).toBeTrue();
@@ -214,9 +218,11 @@ test("Escape closes the palette from the keyboard", () => {
   });
 
   controller.open();
-  dom.input.dispatchEvent(
-    { type: "keydown", key: "Escape", preventDefault() {} },
-  );
+  dom.input.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    preventDefault() {},
+  });
 
   expect(dom.root.classList.contains("hidden")).toBeTrue();
 });

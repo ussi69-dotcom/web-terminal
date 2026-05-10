@@ -301,6 +301,8 @@ test("desktop customizable action ids keep more fixed outside the editor", () =>
 
   expect(desktopEditable).not.toContain("more");
   expect(desktopEditable).toContain("files");
+  expect(desktopEditable).toContain("setup");
+  expect(desktopEditable).toContain("tasks");
   expect(desktopEditable).toContain("clipboard");
 });
 
@@ -309,6 +311,8 @@ test("mobile customizable action ids keep more fixed outside the editor", () => 
 
   expect(mobileEditable).not.toContain("more");
   expect(mobileEditable).toContain("files");
+  expect(mobileEditable).toContain("setup");
+  expect(mobileEditable).toContain("tasks");
   expect(mobileEditable).toContain("clipboard");
 });
 
@@ -555,7 +559,9 @@ test("desktop tab layout fails closed for invalid inputs", () => {
 
 test("overflow actions contain the secondary utilities", () => {
   const overflow = getOverflowActionIds();
-  expect(overflow).toHaveLength(8);
+  expect(overflow).toHaveLength(10);
+  expect(overflow).toContain("setup");
+  expect(overflow).toContain("tasks");
   expect(overflow).toContain("clipboard");
   expect(overflow).toContain("toggle-extra-keys");
   expect(overflow).toContain("wrap-lines");

@@ -13,6 +13,7 @@
 ### Task 1: Add Failing Coverage for Palette Jump Actions
 
 **Files:**
+
 - Modify: `tests/command-palette.spec.ts`
 - Reuse helpers from: `tests/fixtures.ts`
 
@@ -83,6 +84,7 @@ git commit -m "test(palette): cover jump-layer mvp"
 ### Task 2: Add a Recent Workspace Store and Pure Helpers
 
 **Files:**
+
 - Modify: `web/navigation-surface.js`
 - Modify: `web/navigation-surface.test.js`
 
@@ -139,6 +141,7 @@ git commit -m "test(palette): add recent workspace helpers"
 ### Task 3: Wire Recent Workspace Actions into the Palette
 
 **Files:**
+
 - Modify: `web/app.js`
 - Test: `tests/command-palette.spec.ts`
 
@@ -195,6 +198,7 @@ git commit -m "feat(palette): add recent workspace actions"
 ### Task 4: Add `Go to Directory...` and `Reveal Current CWD in Files`
 
 **Files:**
+
 - Modify: `web/app.js`
 - Test: `tests/command-palette.spec.ts`
 
@@ -249,6 +253,7 @@ git commit -m "feat(palette): add directory jump actions"
 ### Task 5: Polish Explicit Git Checkout Entry and Update Docs
 
 **Files:**
+
 - Modify: `web/app.js`
 - Modify: `README.md`
 - Modify: `docs/product-guide.md`

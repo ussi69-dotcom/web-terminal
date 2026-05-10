@@ -52,19 +52,23 @@ function hexToRgba(hex, alpha = 1) {
 
 function normalizePorts(ports) {
   if (!Array.isArray(ports)) return [];
-  return [...new Set(
-    ports
-      .map((port) => Number(port))
-      .filter((port) => Number.isInteger(port) && port > 0),
-  )].sort((left, right) => left - right);
+  return [
+    ...new Set(
+      ports
+        .map((port) => Number(port))
+        .filter((port) => Number.isInteger(port) && port > 0),
+    ),
+  ].sort((left, right) => left - right);
 }
 
 function formatAgentLabel(agentName, agentState) {
   if (!agentName || !agentState) return null;
   const normalizedAgent =
-    String(agentName).trim().toLowerCase() === "claude" ? "Claude" :
-    String(agentName).trim().toLowerCase() === "codex" ? "Codex" :
-    null;
+    String(agentName).trim().toLowerCase() === "claude"
+      ? "Claude"
+      : String(agentName).trim().toLowerCase() === "codex"
+        ? "Codex"
+        : null;
 
   if (!normalizedAgent) return null;
   return normalizedAgent;
@@ -136,8 +140,7 @@ function getPrimaryWorkspaceSignal({
         agentState,
         ports,
         isWorktree,
-      })[0] ||
-      null,
+      })[0] || null,
   };
 }
 

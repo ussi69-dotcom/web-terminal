@@ -40,7 +40,9 @@ test.describe("Git Explorer - VS Code style", () => {
       .count();
     expect(folderNodeCount).toBeGreaterThan(0);
 
-    const targetFile = files.locator(".git-file", { hasText: "staged.txt" }).first();
+    const targetFile = files
+      .locator(".git-file", { hasText: "staged.txt" })
+      .first();
     await expect(targetFile).toBeVisible();
 
     await targetFile.click();

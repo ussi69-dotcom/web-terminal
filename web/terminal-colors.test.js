@@ -73,7 +73,11 @@ test("getWorkspaceSignalDescriptors produces stable worktree and port descriptor
       isWorktree: true,
     }),
   ).toEqual([
-    { key: "ports:3000,4174,8080", label: "Ports 3000, 4174, 8080", priority: 3 },
+    {
+      key: "ports:3000,4174,8080",
+      label: "Ports 3000, 4174, 8080",
+      priority: 3,
+    },
     { key: "worktree", label: "Worktree", priority: 4 },
   ]);
 });

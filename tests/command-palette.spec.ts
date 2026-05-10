@@ -44,7 +44,9 @@ test.describe("Command palette navigation layer", () => {
     await Promise.all(tempDirs.map((dir) => cleanupTempDir(dir)));
   });
 
-  test("opens via keyboard shortcut and focuses the input", async ({ page }) => {
+  test("opens via keyboard shortcut and focuses the input", async ({
+    page,
+  }) => {
     await openCommandPalette(page);
 
     await expect(page.locator("#command-palette")).toBeVisible();
@@ -135,7 +137,9 @@ test.describe("Command palette navigation layer", () => {
 
     await expect
       .poll(() =>
-        page.locator("#terminals-tabs .tab.active").getAttribute("data-workspace-id"),
+        page
+          .locator("#terminals-tabs .tab.active")
+          .getAttribute("data-workspace-id"),
       )
       .toBe(workspaceAId);
     await expect(page.locator("#directory")).toHaveValue(workspaceA.root);
@@ -165,7 +169,9 @@ test.describe("Command palette navigation layer", () => {
     await expect.poll(() => getActiveTerminalCwd(page)).toBe(workspace.root);
   });
 
-  test("reveals the current cwd in Files from the palette", async ({ page }) => {
+  test("reveals the current cwd in Files from the palette", async ({
+    page,
+  }) => {
     const workspace = await createExplorerFixtureDir(["files"]);
     tempDirs.push(workspace.root);
 

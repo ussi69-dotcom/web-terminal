@@ -9,6 +9,6 @@ test("app bootstrap does not redeclare the standalone input fallback helper", ()
   const indexHtml = readText("./index.html");
   const appJs = readText("./app.js");
 
-  expect(indexHtml).toContain('/input-fallback.js?v=');
+  expect(indexHtml).toContain("/input-fallback.js?v=");
   expect(appJs).not.toContain("const InputFallback =");
 });

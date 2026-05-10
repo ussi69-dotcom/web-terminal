@@ -35,10 +35,10 @@ bun run start          # Production
 
 ## Environments
 
-| Port | Purpose     | Folder                                           | Systemd Service      |
-| ---- | ----------- | ------------------------------------------------ | -------------------- |
-| 4173 | Production  | /home/deploy/apps/deckterm/prod/current          | deckterm.service     |
-| 4174 | Development | /home/deploy/deckterm_dev                        | deckterm-dev.service |
+| Port | Purpose     | Folder                                  | Systemd Service      |
+| ---- | ----------- | --------------------------------------- | -------------------- |
+| 4173 | Production  | /home/deploy/apps/deckterm/prod/current | deckterm.service     |
+| 4174 | Development | /home/deploy/deckterm_dev               | deckterm-dev.service |
 
 **IMPORTANT:** Tests must ALWAYS run against port 4174 (dev), NEVER 4173 (prod).
 

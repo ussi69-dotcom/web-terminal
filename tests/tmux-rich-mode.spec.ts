@@ -35,8 +35,7 @@ test.describe("Tmux Rich Mode", () => {
         activeId,
         workspaceId: active?.workspaceId ?? null,
         terminalCount: tm?.terminals?.size ?? 0,
-        tabCount:
-          document.querySelectorAll("#terminals-tabs .tab").length ?? 0,
+        tabCount: document.querySelectorAll("#terminals-tabs .tab").length ?? 0,
         terminalIds: Array.from(tm?.terminals?.keys?.() || []),
       };
     });
@@ -48,27 +47,31 @@ test.describe("Tmux Rich Mode", () => {
     await linkedViewButton.click();
 
     await expect
-      .poll(async () => {
-      return page.evaluate(() => {
-        // @ts-ignore
-        const tm = window.terminalManager;
-        const activeId = tm?.activeId ?? null;
-        const active = activeId ? tm?.terminals?.get(activeId) : null;
-        const terminals = Array.from(tm?.terminals?.entries?.() || []).map(
-          ([id, terminal]) => ({
-            id,
-            workspaceId: terminal?.workspaceId ?? null,
-          }),
-        );
-        return {
-          activeId,
-          workspaceId: active?.workspaceId ?? null,
-          terminalCount: tm?.terminals?.size ?? 0,
-          tabCount: document.querySelectorAll("#terminals-tabs .tab").length ?? 0,
-          terminals,
-        };
-      });
-    }, { timeout: 15000 })
+      .poll(
+        async () => {
+          return page.evaluate(() => {
+            // @ts-ignore
+            const tm = window.terminalManager;
+            const activeId = tm?.activeId ?? null;
+            const active = activeId ? tm?.terminals?.get(activeId) : null;
+            const terminals = Array.from(tm?.terminals?.entries?.() || []).map(
+              ([id, terminal]) => ({
+                id,
+                workspaceId: terminal?.workspaceId ?? null,
+              }),
+            );
+            return {
+              activeId,
+              workspaceId: active?.workspaceId ?? null,
+              terminalCount: tm?.terminals?.size ?? 0,
+              tabCount:
+                document.querySelectorAll("#terminals-tabs .tab").length ?? 0,
+              terminals,
+            };
+          });
+        },
+        { timeout: 15000 },
+      )
       .toMatchObject({
         terminalCount: initialContext.terminalCount + 1,
         tabCount: initialContext.tabCount + 1,
@@ -106,9 +109,9 @@ test.describe("Tmux Rich Mode", () => {
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
 
-    await expect(page.locator(".tile.active .xterm-rows").first()).toContainText(
-      marker,
-    );
+    await expect(
+      page.locator(".tile.active .xterm-rows").first(),
+    ).toContainText(marker);
 
     const originalTab = page.locator(
       `#terminals-tabs .tab[data-workspace-id="${initialContext.workspaceId}"]`,
@@ -116,8 +119,8 @@ test.describe("Tmux Rich Mode", () => {
     await originalTab.click();
     await expect(originalTab).toHaveClass(/active/);
 
-    await expect(page.locator(".tile.active .xterm-rows").first()).toContainText(
-      marker,
-    );
+    await expect(
+      page.locator(".tile.active .xterm-rows").first(),
+    ).toContainText(marker);
   });
 });

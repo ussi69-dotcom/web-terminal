@@ -7,7 +7,9 @@ const COMMAND_PALETTE_GROUP_ORDER = {
 };
 
 function getCommandPaletteGroupRank(group) {
-  return COMMAND_PALETTE_GROUP_ORDER[group] || COMMAND_PALETTE_GROUP_ORDER.Other;
+  return (
+    COMMAND_PALETTE_GROUP_ORDER[group] || COMMAND_PALETTE_GROUP_ORDER.Other
+  );
 }
 
 class CommandPaletteController {

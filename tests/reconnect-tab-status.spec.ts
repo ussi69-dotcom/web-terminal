@@ -88,9 +88,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     }, terminalId);
     expect(initialTabSignals).toEqual(
       expect.objectContaining({
-        primarySignal: expect.stringMatching(
-          /^(none|running|ports|worktree)$/,
-        ),
+        primarySignal: expect.stringMatching(/^(none|running|ports|worktree)$/),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),
         isWorktree: expect.stringMatching(/^(true|false)$/),
@@ -133,9 +131,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     }, terminalId);
     expect(reconnectingTabSignals).toEqual(
       expect.objectContaining({
-        primarySignal: expect.stringMatching(
-          /^(none|running|ports|worktree)$/,
-        ),
+        primarySignal: expect.stringMatching(/^(none|running|ports|worktree)$/),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),
         isWorktree: expect.stringMatching(/^(true|false)$/),
@@ -158,7 +154,9 @@ test.describe("Terminal Tab Status on Reconnection", () => {
             const active = tm?.terminals?.get(tm.activeId);
             const overlay = document.querySelector(".terminal-overlay");
             return {
-              isReconnecting: tab ? tab.classList.contains("reconnecting") : true,
+              isReconnecting: tab
+                ? tab.classList.contains("reconnecting")
+                : true,
               overlayHidden: overlay
                 ? overlay.classList.contains("hidden")
                 : false,
@@ -228,9 +226,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     }, terminalId);
     expect(finalTabSignals).toEqual(
       expect.objectContaining({
-        primarySignal: expect.stringMatching(
-          /^(none|running|ports|worktree)$/,
-        ),
+        primarySignal: expect.stringMatching(/^(none|running|ports|worktree)$/),
         busy: expect.stringMatching(/^(true|false)$/),
         ports: expect.any(String),
         isWorktree: expect.stringMatching(/^(true|false)$/),
@@ -249,10 +245,7 @@ test.describe("Terminal Tab Status on Reconnection", () => {
     await expect
       .poll(
         async () =>
-          page
-            .locator(".tile.active .xterm-rows")
-            .first()
-            .textContent(),
+          page.locator(".tile.active .xterm-rows").first().textContent(),
         { timeout: 10000 },
       )
       .toContain(reconnectMarker);
@@ -308,11 +301,11 @@ test.describe("Terminal Tab Status on Reconnection", () => {
       };
 
       window.WebSocket = FakeWebSocket;
-      window.setTimeout = ((fn) => {
+      window.setTimeout = (fn) => {
         timerQueue.push(fn);
         return timerQueue.length;
-      });
-      window.clearTimeout = (() => {});
+      };
+      window.clearTimeout = () => {};
 
       try {
         const socket = new ReconnectingWebSocket("ws://fake", "term-test", {

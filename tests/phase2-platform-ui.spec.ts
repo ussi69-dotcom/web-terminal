@@ -21,7 +21,10 @@ const APP_URL = process.env.PW_BASE_URL || "http://localhost:4174";
 
 async function toggleExtraKeysFromMore(page: Page) {
   await openToolsSheet(page);
-  await page.locator("#tools-sheet").getByRole("button", { name: "Extra Keys" }).click();
+  await page
+    .locator("#tools-sheet")
+    .getByRole("button", { name: "Extra Keys" })
+    .click();
   await page.waitForTimeout(100);
 }
 
@@ -147,7 +150,9 @@ test.describe("Phase 2: Platform-Adaptive UI", () => {
     }) => {
       await openToolsSheet(page);
       await expect(
-        page.locator("#tools-sheet").getByRole("button", { name: "Extra Keys" }),
+        page
+          .locator("#tools-sheet")
+          .getByRole("button", { name: "Extra Keys" }),
       ).toBeVisible();
     });
 
@@ -180,12 +185,16 @@ test.describe("Phase 2: Platform-Adaptive UI", () => {
 
       const essentialKeys = ["ESC", "TAB", "CTRL", "ALT", "SHIFT"];
       for (const key of essentialKeys) {
-        await expect(page.locator(`#extra-keys [data-key="${key}"]`)).toBeVisible();
+        await expect(
+          page.locator(`#extra-keys [data-key="${key}"]`),
+        ).toBeVisible();
       }
 
       const arrowKeys = ["UP", "DOWN", "LEFT", "RIGHT"];
       for (const key of arrowKeys) {
-        await expect(page.locator(`#extra-keys [data-key="${key}"]`)).toBeVisible();
+        await expect(
+          page.locator(`#extra-keys [data-key="${key}"]`),
+        ).toBeVisible();
       }
     });
   });

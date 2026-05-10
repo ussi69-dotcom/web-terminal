@@ -39,4 +39,3 @@
 - Agent-specific logic is gated behind explicit wrapper markers; unrelated commands stay on the current path.
 - If agent output cannot be classified, state falls back to generic `Running`.
 - No dependency on undocumented remote APIs; only PTY output and shell wrappers are used.
-

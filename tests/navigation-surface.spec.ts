@@ -139,16 +139,18 @@ test.describe("Shell action hierarchy on desktop", () => {
     const clipboardAction = layoutEditor
       .getByTestId(LAYOUT_EDITOR_TEST_IDS.available)
       .getByRole("button", { name: "Clipboard" });
-    const pinnedZone = layoutEditor.getByTestId(
-      LAYOUT_EDITOR_TEST_IDS.pinned,
-    );
+    const pinnedZone = layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned);
 
     await dragLayoutEditorItem(page, clipboardAction, pinnedZone);
-    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      toolbar.getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
 
     await page.reload();
     await waitForTerminal(page);
-    await expect(toolbar.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      toolbar.getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
   });
 
   test("resets the custom desktop layout back to desktop and mobile defaults", async ({
@@ -160,7 +162,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     await expect(
       page.getByRole("heading", { name: "Available in More" }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Reset defaults" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Reset defaults" }),
+    ).toBeVisible();
 
     await dragLayoutEditorItem(
       page,
@@ -169,7 +173,9 @@ test.describe("Shell action hierarchy on desktop", () => {
         .getByRole("button", { name: "Clipboard" }),
       layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned),
     );
-    await expect(desktopPrimaryActions.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      desktopPrimaryActions.getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Reset defaults" }).click();
 
@@ -183,7 +189,12 @@ test.describe("Shell action hierarchy on desktop", () => {
     await resizeWindow(page, 390, 844);
     const mobileBar = page.locator("#mobile-action-bar");
     await expect(mobileBar).toBeVisible();
-    await expectButtonLabelsExactly(mobileBar, ["Files", "Git", "Paste"]);
+    await expectButtonLabelsExactly(mobileBar, [
+      "Files",
+      "Git",
+      "Paste",
+      "More",
+    ]);
   });
 
   test("wraps desktop tabs to two rows before hiding them when the toolbar gets crowded", async ({
@@ -200,7 +211,9 @@ test.describe("Shell action hierarchy on desktop", () => {
         .getByRole("button", { name: "Clipboard" }),
       layoutEditor.getByTestId(LAYOUT_EDITOR_TEST_IDS.pinned),
     );
-    await expect(desktopPrimaryActions.getByRole("button", { name: "Clipboard" })).toBeVisible();
+    await expect(
+      desktopPrimaryActions.getByRole("button", { name: "Clipboard" }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
     await expect(page.locator("#tools-sheet")).toBeHidden();
 
@@ -213,12 +226,14 @@ test.describe("Shell action hierarchy on desktop", () => {
 
     await expect(page.getByRole("button", { name: "More" })).toBeVisible();
 
-    const toolbarMetrics = await page.locator(".toolbar").evaluate((element) => ({
-      clientWidth: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-    }));
+    const toolbarMetrics = await page
+      .locator(".toolbar")
+      .evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }));
     expect(toolbarMetrics.clientHeight).toBeGreaterThan(48);
     expect(toolbarMetrics.scrollWidth).toBeLessThanOrEqual(
       toolbarMetrics.clientWidth + 1,
@@ -310,7 +325,9 @@ test.describe("Shell action hierarchy on desktop", () => {
     const tabs = page.locator(".tabs");
     await expect(tabs).toHaveAttribute("data-layout", "scroll");
 
-    const initialScrollLeft = await tabs.evaluate((element) => element.scrollLeft);
+    const initialScrollLeft = await tabs.evaluate(
+      (element) => element.scrollLeft,
+    );
     await tabs.hover();
     await page.mouse.wheel(0, 800);
     await page.waitForTimeout(200);
@@ -337,7 +354,9 @@ test.describe("Shell action hierarchy on desktop", () => {
         }
 
         const label = tab.querySelector(".tab-label") as HTMLElement | null;
-        const badge = tab.querySelector(".tab-signal-badge") as HTMLElement | null;
+        const badge = tab.querySelector(
+          ".tab-signal-badge",
+        ) as HTMLElement | null;
         const close = tab.querySelector(".tab-close") as HTMLElement | null;
 
         if (!label || !badge || !close) {
@@ -356,8 +375,7 @@ test.describe("Shell action hierarchy on desktop", () => {
         const badgeRect = badge.getBoundingClientRect();
         const closeRect = close.getBoundingClientRect();
         const sameRow = Math.abs(labelRect.top - badgeRect.top) < 8;
-        const overlap =
-          sameRow && labelRect.right > badgeRect.left + 1;
+        const overlap = sameRow && labelRect.right > badgeRect.left + 1;
 
         return {
           stage: tab.dataset.copyFit || "",
@@ -405,16 +423,20 @@ test.describe("Shell action hierarchy on desktop", () => {
     await pruneTerminalsToActiveSession(page);
     await resizeWindow(page, 1600, 900);
 
-    const singleTabWidth = await page.locator("#terminals-tabs .tab").evaluate((tab) =>
-      Math.round((tab as HTMLElement).getBoundingClientRect().width),
-    );
+    const singleTabWidth = await page
+      .locator("#terminals-tabs .tab")
+      .evaluate((tab) =>
+        Math.round((tab as HTMLElement).getBoundingClientRect().width),
+      );
 
     await createTerminal(page);
 
     const twoTabWidth = await page
       .locator("#terminals-tabs .tab")
       .first()
-      .evaluate((tab) => Math.round((tab as HTMLElement).getBoundingClientRect().width));
+      .evaluate((tab) =>
+        Math.round((tab as HTMLElement).getBoundingClientRect().width),
+      );
 
     expect(singleTabWidth).toBeGreaterThan(200);
     expect(twoTabWidth).toBeGreaterThanOrEqual(200);
@@ -494,5 +516,6 @@ test.describe("Shell action hierarchy on mobile", () => {
     await expect(page.getByRole("button", { name: "Files" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Git" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Paste" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More" })).toBeVisible();
   });
 });

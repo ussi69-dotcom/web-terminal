@@ -13,6 +13,7 @@
 ### Task 1: Add Failing Coverage for the New Action Hierarchy
 
 **Files:**
+
 - Modify: `tests/navigation-surface.spec.ts`
 - Modify: `tests/mobile-regressions.spec.ts`
 - Modify: `tests/fixtures.ts`
@@ -63,6 +64,7 @@ git commit -m "test(navigation): cover primary action hierarchy"
 ### Task 2: Add a Testable Action-Hierarchy Model
 
 **Files:**
+
 - Modify: `web/navigation-surface.js`
 - Modify: `web/navigation-surface.test.js`
 
@@ -111,6 +113,7 @@ git commit -m "test(navigation): codify shell action hierarchy"
 ### Task 3: Replace the Desktop Rail with Explicit Top-Bar Primary Actions
 
 **Files:**
+
 - Modify: `web/index.html`
 - Modify: `web/styles.css`
 
@@ -169,6 +172,7 @@ git commit -m "feat(navigation): move desktop primary actions into top bar"
 ### Task 4: Add the Mobile Bottom Action Bar and `More` Overflow Surface
 
 **Files:**
+
 - Modify: `web/index.html`
 - Modify: `web/styles.css`
 - Modify: `web/app.js`
@@ -239,6 +243,7 @@ git commit -m "feat(navigation): add bottom-bar mobile actions and overflow"
 ### Task 5: Tune Mobile Density and CWD Placement
 
 **Files:**
+
 - Modify: `web/index.html`
 - Modify: `web/styles.css`
 - Modify: `web/app.js`
@@ -284,6 +289,7 @@ git commit -m "refactor(navigation): reduce mobile shell density"
 ### Task 6: Update Docs and Run Full Verification
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `docs/product-guide.md`
 - Modify: `web/index.html`

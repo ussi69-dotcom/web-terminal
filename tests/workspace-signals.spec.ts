@@ -354,9 +354,7 @@ test.describe("Workspace telemetry contract", () => {
       // @ts-ignore
       const tm = window.terminalManager;
       const active = tm?.terminals?.get(tm.activeId);
-      active?.ws?.send(
-        JSON.stringify({ type: "input", data: `${command}\r` }),
-      );
+      active?.ws?.send(JSON.stringify({ type: "input", data: `${command}\r` }));
     }, thinkingCommand);
 
     await expect
@@ -473,9 +471,7 @@ test.describe("Workspace telemetry contract", () => {
       // @ts-ignore
       const tm = window.terminalManager;
       const active = tm?.terminals?.get(tm.activeId);
-      active?.ws?.send(
-        JSON.stringify({ type: "input", data: `${command}\r` }),
-      );
+      active?.ws?.send(JSON.stringify({ type: "input", data: `${command}\r` }));
     }, claudeCommand);
 
     await expect
@@ -565,24 +561,20 @@ test.describe("Workspace telemetry contract", () => {
 
     await page.waitForTimeout(6500);
 
-    const finalState = await page.evaluate(
-      ({ activeId, workspaceId }) => {
-        // @ts-ignore
-        const tm = window.terminalManager;
-        const active = tm?.terminals?.get(activeId);
-        const tab = document.querySelector(
-          `.tab[data-workspace-id="${workspaceId}"]`,
-        );
-        return {
-          terminalCwd: active?.cwd ?? null,
-          sessionCwd: tm?.sessionRegistry?.get(activeId)?.cwd ?? null,
-          label:
-            tab?.querySelector(".tab-label")?.textContent?.trim() || null,
-          title: tab?.getAttribute("title") || null,
-        };
-      },
-      workspaceContext!,
-    );
+    const finalState = await page.evaluate(({ activeId, workspaceId }) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(activeId);
+      const tab = document.querySelector(
+        `.tab[data-workspace-id="${workspaceId}"]`,
+      );
+      return {
+        terminalCwd: active?.cwd ?? null,
+        sessionCwd: tm?.sessionRegistry?.get(activeId)?.cwd ?? null,
+        label: tab?.querySelector(".tab-label")?.textContent?.trim() || null,
+        title: tab?.getAttribute("title") || null,
+      };
+    }, workspaceContext!);
 
     expect(finalState).toMatchObject({
       terminalCwd: clientCwd,
@@ -634,24 +626,20 @@ test.describe("Workspace telemetry contract", () => {
       new RegExp(clientCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
 
-    const restoredState = await page.evaluate(
-      ({ activeId, workspaceId }) => {
-        // @ts-ignore
-        const tm = window.terminalManager;
-        const active = tm?.terminals?.get(activeId);
-        const tab = document.querySelector(
-          `.tab[data-workspace-id="${workspaceId}"]`,
-        );
-        return {
-          terminalCwd: active?.cwd ?? null,
-          sessionCwd: tm?.sessionRegistry?.get(activeId)?.cwd ?? null,
-          label:
-            tab?.querySelector(".tab-label")?.textContent?.trim() || null,
-          title: tab?.getAttribute("title") || null,
-        };
-      },
-      workspaceContext!,
-    );
+    const restoredState = await page.evaluate(({ activeId, workspaceId }) => {
+      // @ts-ignore
+      const tm = window.terminalManager;
+      const active = tm?.terminals?.get(activeId);
+      const tab = document.querySelector(
+        `.tab[data-workspace-id="${workspaceId}"]`,
+      );
+      return {
+        terminalCwd: active?.cwd ?? null,
+        sessionCwd: tm?.sessionRegistry?.get(activeId)?.cwd ?? null,
+        label: tab?.querySelector(".tab-label")?.textContent?.trim() || null,
+        title: tab?.getAttribute("title") || null,
+      };
+    }, workspaceContext!);
 
     expect(restoredState).toMatchObject({
       terminalCwd: clientCwd,
@@ -670,9 +658,13 @@ test.describe("Workspace telemetry contract", () => {
     await reserveTerminalCreateBudget(2);
     await page.evaluate(async () => {
       // @ts-ignore
-      await window.terminalManager?.createTerminal(false, { skipBootstrapWait: true });
+      await window.terminalManager?.createTerminal(false, {
+        skipBootstrapWait: true,
+      });
       // @ts-ignore
-      await window.terminalManager?.createTerminal(false, { skipBootstrapWait: true });
+      await window.terminalManager?.createTerminal(false, {
+        skipBootstrapWait: true,
+      });
     });
     await page.waitForTimeout(1200);
 
@@ -708,8 +700,8 @@ test.describe("Workspace telemetry contract", () => {
         statusSummary:
           tab?.querySelector(".tab-meta")?.textContent?.trim() || "",
         badgeHidden:
-          (tab?.querySelector(".tab-signal-badge") as HTMLElement | null)?.hidden ??
-          null,
+          (tab?.querySelector(".tab-signal-badge") as HTMLElement | null)
+            ?.hidden ?? null,
         title: tab?.getAttribute("title") || "",
       };
     });

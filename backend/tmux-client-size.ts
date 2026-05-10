@@ -9,8 +9,7 @@ type SyncTmuxSessionClientsOptions = {
   delayMs?: number;
 };
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function parseTmuxSessionClients(
   output: string,
@@ -20,9 +19,16 @@ export function parseTmuxSessionClients(
 
   const clients: TmuxSessionClient[] = [];
   for (const line of output.split("\n")) {
-    const [tty = "", pidText = "", currentSession = ""] = line.trim().split("\t");
+    const [tty = "", pidText = "", currentSession = ""] = line
+      .trim()
+      .split("\t");
     const pid = Number.parseInt(pidText, 10);
-    if (!tty || currentSession !== sessionName || !Number.isInteger(pid) || pid <= 0) {
+    if (
+      !tty ||
+      currentSession !== sessionName ||
+      !Number.isInteger(pid) ||
+      pid <= 0
+    ) {
       continue;
     }
     clients.push({ tty, pid });
@@ -65,7 +71,12 @@ async function listTmuxSessionClients(
   sessionName: string,
 ): Promise<TmuxSessionClient[]> {
   const clientProc = Bun.spawn(
-    ["tmux", "list-clients", "-F", "#{client_tty}\t#{client_pid}\t#{session_name}"],
+    [
+      "tmux",
+      "list-clients",
+      "-F",
+      "#{client_tty}\t#{client_pid}\t#{session_name}",
+    ],
     { stdout: "pipe", stderr: "pipe" },
   );
   const output = await new Response(clientProc.stdout).text();
@@ -79,11 +90,7 @@ export async function syncTmuxSessionClients(
   rows: number,
   options: SyncTmuxSessionClientsOptions = {},
 ): Promise<number> {
-  const {
-    waitForClient = false,
-    maxAttempts = 6,
-    delayMs = 25,
-  } = options;
+  const { waitForClient = false, maxAttempts = 6, delayMs = 25 } = options;
 
   let clients: TmuxSessionClient[] = [];
   const attempts = waitForClient ? Math.max(1, maxAttempts) : 1;

@@ -13,6 +13,7 @@
 ### Task 1: Add Failing Coverage for the Unified Explorer Surface
 
 **Files:**
+
 - Create: `tests/file-explorer-surface.spec.ts`
 - Modify: `tests/command-palette.spec.ts`
 - Modify: `tests/navigation-surface.spec.ts`
@@ -86,6 +87,7 @@ git commit -m "test(files): add explorer surface coverage"
 ### Task 2: Add the Explorer Surface Shell
 
 **Files:**
+
 - Modify: `web/index.html`
 - Modify: `web/styles.css`
 
@@ -143,6 +145,7 @@ git commit -m "feat(files): add explorer surface shell"
 ### Task 3: Extract a Workspace-Aware File Explorer Controller
 
 **Files:**
+
 - Create: `web/file-explorer.js`
 - Create: `web/file-explorer.test.js`
 - Modify: `web/index.html`
@@ -209,6 +212,7 @@ git commit -m "feat(files): add workspace-aware explorer controller"
 ### Task 4: Wire the Explorer Into TerminalManager and Replace File Modal Entry Points
 
 **Files:**
+
 - Modify: `web/app.js`
 - Modify: `tests/file-explorer-surface.spec.ts`
 - Modify: `tests/command-palette.spec.ts`
@@ -266,6 +270,7 @@ git commit -m "feat(files): wire explorer surface into shell"
 ### Task 5: Migrate File Operations and Drag/Drop to the New Surface
 
 **Files:**
+
 - Modify: `web/file-explorer.js`
 - Modify: `web/app.js`
 - Modify: `tests/file-explorer-surface.spec.ts`
@@ -309,6 +314,7 @@ git commit -m "feat(files): migrate explorer operations to shared surface"
 ### Task 6: Remove Legacy File Modal and Refresh Product Docs
 
 **Files:**
+
 - Modify: `web/index.html`
 - Modify: `web/styles.css`
 - Modify: `README.md`

@@ -199,6 +199,141 @@
         </div>
       </div>
 
+      <div id="task-panel" class="task-panel hidden" aria-hidden="true">
+        <div class="task-panel-backdrop"></div>
+        <section
+          class="task-panel-shell"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="task-panel-title"
+        >
+          <div class="task-panel-header">
+            <div>
+              <div class="task-panel-kicker">Agent Runner</div>
+              <h3 id="task-panel-title">Tasks</h3>
+            </div>
+            <button
+              id="task-panel-close"
+              class="btn-icon"
+              title="Close tasks"
+              aria-label="Close tasks"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <form id="task-form" class="task-form">
+            <label>
+              <span>Project root</span>
+              <input id="task-project-root" name="projectRoot" />
+            </label>
+            <label>
+              <span>Task title</span>
+              <input id="task-title" name="title" />
+            </label>
+            <label>
+              <span>Task description</span>
+              <textarea id="task-description" name="description" rows="4"></textarea>
+            </label>
+            <div class="task-form-row">
+              <label>
+                <span>Worker</span>
+                <select id="task-worker-provider" name="workerProvider">
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                </select>
+              </label>
+              <label>
+                <span>Judge</span>
+                <select id="task-judge-provider" name="judgeProvider">
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                </select>
+              </label>
+            </div>
+            <label class="task-checkbox">
+              <input id="task-use-worktree" name="useWorktree" type="checkbox" checked />
+              <span>Use git worktree</span>
+            </label>
+            <button id="task-create" class="btn btn-primary" type="submit">
+              Create Task
+            </button>
+          </form>
+
+          <div id="task-status" class="task-status" role="status"></div>
+          <div id="task-list" class="task-list" aria-label="Task list"></div>
+          <div id="task-detail" class="task-detail"></div>
+        </section>
+      </div>
+
+      <div id="setup-panel" class="setup-panel hidden" aria-hidden="true">
+        <div class="setup-panel-backdrop"></div>
+        <section
+          class="setup-panel-shell"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="setup-panel-title"
+        >
+          <div class="setup-panel-header">
+            <div>
+              <div class="setup-panel-kicker">Onboarding</div>
+              <h3 id="setup-panel-title">Setup</h3>
+            </div>
+            <button
+              id="setup-panel-close"
+              class="btn-icon"
+              title="Close setup"
+              aria-label="Close setup"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="setup-actions">
+            <label class="setup-profile-field">
+              <span>Publishing profile</span>
+              <select id="setup-profile" aria-label="Publishing profile">
+                <option value="cloudflare-tunnel">
+                  Cloudflare Tunnel (edge access only)
+                </option>
+                <option value="cloudflare-access">
+                  Cloudflare Tunnel + Access JWT (strict)
+                </option>
+                <option value="nginx">nginx reverse proxy</option>
+                <option value="local">Local only</option>
+                <option value="direct">Direct LAN</option>
+              </select>
+            </label>
+            <label class="setup-profile-field">
+              <span>Public URL</span>
+              <input
+                id="setup-public-origin"
+                name="publicOrigin"
+                placeholder="https://deckterm.example.com"
+                autocomplete="off"
+              />
+            </label>
+            <button id="setup-run-doctor" class="btn btn-primary" type="button">
+              Check
+            </button>
+            <button id="setup-apply-safe" class="btn" type="button">
+              Apply safe settings
+            </button>
+          </div>
+          <div id="setup-status" class="setup-status" role="status"></div>
+          <div id="setup-summary" class="setup-summary"></div>
+          <section id="setup-wizard" class="setup-wizard"></section>
+          <section id="setup-remediations" class="setup-remediations"></section>
+          <section id="setup-snippets" class="setup-snippets"></section>
+          <div id="setup-checks" class="setup-checks"></div>
+          <div id="setup-recommendations" class="setup-recommendations"></div>
+          <section class="setup-output">
+            <h4>Doctor Output</h4>
+            <pre id="setup-output-text"></pre>
+          </section>
+        </section>
+      </div>
+
       <div
         id="file-explorer"
         class="file-explorer hidden"

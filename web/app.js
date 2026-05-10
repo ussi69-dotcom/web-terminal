@@ -277,8 +277,7 @@ const TerminalColors =
           agentState,
           ports,
           isWorktree,
-        })[0] ||
-        null,
+        })[0] || null,
     });
 
     return {
@@ -346,6 +345,20 @@ const ACTION_BUTTON_CONFIG = Object.freeze({
     action: "palette",
     desktopId: "command-palette-trigger",
     toolsId: "tools-sheet-palette",
+    desktopTone: "secondary",
+  }),
+  tasks: Object.freeze({
+    label: "Tasks",
+    icon: "list-checks",
+    action: "tasks",
+    toolsId: "tools-sheet-tasks",
+    desktopTone: "secondary",
+  }),
+  setup: Object.freeze({
+    label: "Setup",
+    icon: "shield-check",
+    action: "setup",
+    toolsId: "tools-sheet-setup",
     desktopTone: "secondary",
   }),
   clipboard: Object.freeze({
@@ -594,7 +607,10 @@ class ReconnectingWebSocket {
   markConnectionReady(resumed) {
     this.retryCount = 0;
     this.awaitingReconnectReady = false;
-    this.callbacks.onStatusChange("connected", resumed ? { resumed: true } : {});
+    this.callbacks.onStatusChange(
+      "connected",
+      resumed ? { resumed: true } : {},
+    );
   }
 
   startHeartbeat() {
@@ -1837,10 +1853,7 @@ class ExtraKeysManager {
       "touchstart",
       (e) => {
         const btn = e.target.closest(".ek-btn, .ek-toggle");
-        dbg(
-          "[ExtraKeys] touchstart, btn:",
-          btn?.dataset?.key || btn?.id,
-        );
+        dbg("[ExtraKeys] touchstart, btn:", btn?.dataset?.key || btn?.id);
         if (btn) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -1928,12 +1941,7 @@ class ExtraKeysManager {
 
     // For actual key sequences, we need an active terminal
     const active = this.tm.terminals.get(this.tm.activeId);
-    dbg(
-      "[ExtraKeys] Active terminal:",
-      this.tm.activeId,
-      "ws:",
-      !!active?.ws,
-    );
+    dbg("[ExtraKeys] Active terminal:", this.tm.activeId, "ws:", !!active?.ws);
     if (!active?.ws) return;
 
     let sequence = KEY_SEQUENCES[key] || key;
@@ -2777,7 +2785,8 @@ class GitManager {
     // Scroll into view
     const selected = this.panel.querySelector(".git-file.selected");
     if (selected) {
-      this.state.selectedPath = selected.dataset.path || this.state.selectedPath;
+      this.state.selectedPath =
+        selected.dataset.path || this.state.selectedPath;
       this.state.selectedIndex = Number(
         selected.dataset.index || this.state.selectedIndex,
       );
@@ -2974,8 +2983,7 @@ class GitManager {
         const unstagedStatus = f.unstagedStatus || "";
         const isStaged = f.section === "staged" || !!stagedStatus;
         const sectionKey = isStaged ? "staged" : "changes";
-        const displayStatus =
-          stagedStatus || unstagedStatus || f.status || "?";
+        const displayStatus = stagedStatus || unstagedStatus || f.status || "?";
         const file = {
           path: f.path,
           oldPath: f.oldPath || null,
@@ -2995,7 +3003,9 @@ class GitManager {
 
       if (prevSelectedPath) {
         const allFiles = this.getAllFiles();
-        const nextIndex = allFiles.findIndex((f) => f.path === prevSelectedPath);
+        const nextIndex = allFiles.findIndex(
+          (f) => f.path === prevSelectedPath,
+        );
         if (nextIndex !== -1) {
           this.state.selectedIndex = nextIndex;
           this.state.selectedPath = prevSelectedPath;
@@ -3169,7 +3179,10 @@ class GitManager {
 
   renderSectionTree(files, section, startIndex) {
     if (files.length === 0) {
-      return { html: '<p class="muted centered">No files</p>', nextIndex: startIndex };
+      return {
+        html: '<p class="muted centered">No files</p>',
+        nextIndex: startIndex,
+      };
     }
 
     const root = this.buildFileTree(files);
@@ -3222,16 +3235,24 @@ class GitManager {
         </div>
       `;
       if (!collapsed) {
-        const rendered = this.renderTreeNode(folder, sectionKey, depth + 1, index);
+        const rendered = this.renderTreeNode(
+          folder,
+          sectionKey,
+          depth + 1,
+          index,
+        );
         html += rendered.html;
         index = rendered.nextIndex;
       }
     });
 
-    const files = [...(node.files || [])].sort((a, b) => a.path.localeCompare(b.path));
+    const files = [...(node.files || [])].sort((a, b) =>
+      a.path.localeCompare(b.path),
+    );
     files.forEach((file) => {
       const isSelected =
-        this.state.selectedPath === file.path || index === this.state.selectedIndex;
+        this.state.selectedPath === file.path ||
+        index === this.state.selectedIndex;
       const fileName = file.path.split("/").pop() || file.path;
       html += `
         <div class="git-file ${isSelected ? "selected" : ""}" data-path="${this.escapeHtml(file.path)}" data-index="${index}" style="--tree-depth:${depth}">
@@ -3579,6 +3600,17 @@ class TerminalManager {
     this.clientInstanceId = this.getOrCreateClientInstanceId();
     this.commandPaletteGitCache = new Map();
     this.rightSurface = "none";
+    this.taskState = {
+      items: [],
+      selectedId: null,
+      loading: false,
+    };
+    this.setupState = {
+      report: null,
+      applyResult: null,
+      loading: false,
+      profile: "cloudflare",
+    };
 
     // Session registry for reconnection persistence
     this.sessionRegistry = new SessionRegistry();
@@ -3687,6 +3719,8 @@ class TerminalManager {
       toolbarToggle.addEventListener("click", () => this.toggleToolsSheet());
     }
     this.setupToolsSheet();
+    this.setupTaskPanel();
+    this.setupSetupPanel();
     this.setupLayoutEditor();
     this.setupDesktopTabOverflowScroll();
     this.syncToolbarOverlayOffset();
@@ -3818,32 +3852,30 @@ class TerminalManager {
 
   estimateInitialTerminalSize(split = false) {
     const active = this.getActiveTerminal();
-    const predictedPixels =
-      window.TerminalSizing?.predictInitialTilePixels?.({
-        containerWidth: this.container?.clientWidth || window.innerWidth,
-        containerHeight: this.container?.clientHeight || window.innerHeight,
-        split,
-        activeTileWidth: active?.element?.clientWidth || 0,
-        activeTileHeight: active?.element?.clientHeight || 0,
-      }) || {
-        width: this.container?.clientWidth || window.innerWidth,
-        height: this.container?.clientHeight || window.innerHeight,
-      };
+    const predictedPixels = window.TerminalSizing?.predictInitialTilePixels?.({
+      containerWidth: this.container?.clientWidth || window.innerWidth,
+      containerHeight: this.container?.clientHeight || window.innerHeight,
+      split,
+      activeTileWidth: active?.element?.clientWidth || 0,
+      activeTileHeight: active?.element?.clientHeight || 0,
+    }) || {
+      width: this.container?.clientWidth || window.innerWidth,
+      height: this.container?.clientHeight || window.innerHeight,
+    };
     const cellMetrics = this.measureTerminalCellSize();
-    const estimated =
-      window.TerminalSizing?.estimateTerminalGrid?.({
-        width: predictedPixels.width,
-        height: predictedPixels.height,
-        cellWidth: cellMetrics?.cellWidth || 0,
-        cellHeight: cellMetrics?.cellHeight || 0,
-        horizontalPadding: TERMINAL_PADDING_X,
-        verticalPadding: TERMINAL_PADDING_Y,
-        fallbackCols: APP_DEFAULT_TERMINAL_COLS,
-        fallbackRows: APP_DEFAULT_TERMINAL_ROWS,
-      }) || {
-        cols: APP_DEFAULT_TERMINAL_COLS,
-        rows: APP_DEFAULT_TERMINAL_ROWS,
-      };
+    const estimated = window.TerminalSizing?.estimateTerminalGrid?.({
+      width: predictedPixels.width,
+      height: predictedPixels.height,
+      cellWidth: cellMetrics?.cellWidth || 0,
+      cellHeight: cellMetrics?.cellHeight || 0,
+      horizontalPadding: TERMINAL_PADDING_X,
+      verticalPadding: TERMINAL_PADDING_Y,
+      fallbackCols: APP_DEFAULT_TERMINAL_COLS,
+      fallbackRows: APP_DEFAULT_TERMINAL_ROWS,
+    }) || {
+      cols: APP_DEFAULT_TERMINAL_COLS,
+      rows: APP_DEFAULT_TERMINAL_ROWS,
+    };
 
     return this.normalizeTerminalGrid(estimated);
   }
@@ -3872,7 +3904,10 @@ class TerminalManager {
       rows: terminal.rows,
     });
 
-    if (normalized.cols !== terminal.cols || normalized.rows !== terminal.rows) {
+    if (
+      normalized.cols !== terminal.cols ||
+      normalized.rows !== terminal.rows
+    ) {
       terminal.resize(normalized.cols, normalized.rows);
     }
 
@@ -3973,9 +4008,7 @@ class TerminalManager {
     const normalizedMode = mode === "mobile" ? "mobile" : "desktop";
     const actionIds = [...this.getLayoutPinnedActionIds(normalizedMode)];
 
-    if (normalizedMode !== "mobile") {
-      actionIds.push("more");
-    }
+    actionIds.push("more");
 
     return actionIds.filter((actionId) => this.getActionButtonConfig(actionId));
   }
@@ -4053,7 +4086,10 @@ class TerminalManager {
       const isEmpty = actionIds.length === 0;
       root.hidden = isEmpty;
       root.setAttribute("aria-hidden", isEmpty ? "true" : "false");
-      root.style.setProperty("--mobile-action-bar-columns", String(actionIds.length || 1));
+      root.style.setProperty(
+        "--mobile-action-bar-columns",
+        String(actionIds.length || 1),
+      );
     }
 
     actionIds.forEach((actionId) => {
@@ -4154,8 +4190,7 @@ class TerminalManager {
     toolbar.dataset.tabRows = String(layout.rowCount);
 
     return (
-      previousLayout !== layout.mode ||
-      previousRows !== String(layout.rowCount)
+      previousLayout !== layout.mode || previousRows !== String(layout.rowCount)
     );
   }
 
@@ -4172,7 +4207,8 @@ class TerminalManager {
     }
 
     const labelFits = label.scrollWidth <= label.clientWidth + 1;
-    const secondary = meta && !meta.hidden ? meta : badge && !badge.hidden ? badge : null;
+    const secondary =
+      meta && !meta.hidden ? meta : badge && !badge.hidden ? badge : null;
     const secondaryFits =
       !secondary || secondary.scrollWidth <= secondary.clientWidth + 1;
     if (!labelFits || !secondaryFits) {
@@ -4241,7 +4277,9 @@ class TerminalManager {
       return cleared;
     }
 
-    const beforeHeight = Math.ceil(toolbar?.getBoundingClientRect().height || 0);
+    const beforeHeight = Math.ceil(
+      toolbar?.getBoundingClientRect().height || 0,
+    );
     let changed = false;
     tabs.querySelectorAll(".tab").forEach((tab) => {
       if (this.syncDesktopTabCopyFit(tab)) {
@@ -4278,7 +4316,9 @@ class TerminalManager {
     }
 
     const widthsByTier = this.measureDesktopActionWidthsByTier(actionBar);
-    const availableWidth = Math.ceil(actionBar.getBoundingClientRect().width || 0);
+    const availableWidth = Math.ceil(
+      actionBar.getBoundingClientRect().width || 0,
+    );
     const fallbackDensity =
       actionBar.dataset.density ||
       this.navigationSurface.getActionDensityTier?.(
@@ -4386,6 +4426,14 @@ class TerminalManager {
     const moreOpen = Boolean(
       this.toolsSheet && !this.toolsSheet.classList.contains("hidden"),
     );
+    const tasksOpen = Boolean(
+      document.getElementById("task-panel") &&
+      !document.getElementById("task-panel").classList.contains("hidden"),
+    );
+    const setupOpen = Boolean(
+      document.getElementById("setup-panel") &&
+      !document.getElementById("setup-panel").classList.contains("hidden"),
+    );
     const paletteOpen = this.isCommandPaletteOpen();
 
     document.querySelectorAll("[data-action-id]").forEach((button) => {
@@ -4394,6 +4442,10 @@ class TerminalManager {
         button.classList.toggle("active", surface === "files");
       } else if (actionId === "git") {
         button.classList.toggle("active", surface === "git");
+      } else if (actionId === "tasks") {
+        button.classList.toggle("active", tasksOpen);
+      } else if (actionId === "setup") {
+        button.classList.toggle("active", setupOpen);
       } else if (actionId === "more") {
         button.classList.toggle("active", moreOpen);
       } else if (actionId === "palette") {
@@ -4406,6 +4458,8 @@ class TerminalManager {
     if (action === "linked-view") this.createLinkedView();
     else if (action === "file-manager") await this.openFileExplorer();
     else if (action === "git") await this.openGitPanel();
+    else if (action === "tasks") await this.openTaskPanel();
+    else if (action === "setup") await this.openSetupPanel();
     else if (action === "toggle-tools-sheet") this.toggleToolsSheet();
     else if (action === "open-dir-picker") this.openDirPicker();
     else if (action === "clipboard") this.clipboardManager.togglePanel();
@@ -4508,6 +4562,742 @@ class TerminalManager {
       ?.addEventListener("click", close);
   }
 
+  setupTaskPanel() {
+    const panel = document.getElementById("task-panel");
+    if (!panel) return;
+
+    panel
+      .querySelector(".task-panel-backdrop")
+      ?.addEventListener("click", () => this.closeTaskPanel());
+    panel
+      .querySelector("#task-panel-close")
+      ?.addEventListener("click", () => this.closeTaskPanel());
+    panel.querySelector("#task-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.createTaskFromForm();
+    });
+    panel.querySelector("#task-list")?.addEventListener("click", (event) => {
+      const item = event.target.closest("[data-task-id]");
+      if (!item) return;
+      this.selectTask(item.dataset.taskId);
+    });
+    panel.querySelector("#task-detail")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-task-action]");
+      if (!button) return;
+      void this.handleTaskAction(button.dataset.taskAction);
+    });
+  }
+
+  setupSetupPanel() {
+    const panel = document.getElementById("setup-panel");
+    if (!panel) return;
+
+    panel
+      .querySelector(".setup-panel-backdrop")
+      ?.addEventListener("click", () => this.closeSetupPanel());
+    panel
+      .querySelector("#setup-panel-close")
+      ?.addEventListener("click", () => this.closeSetupPanel());
+    panel
+      .querySelector("#setup-run-doctor")
+      ?.addEventListener("click", () => this.runSetupDoctor());
+    panel
+      .querySelector("#setup-apply-safe")
+      ?.addEventListener("click", () => this.applySetupProfile());
+    panel
+      .querySelector("#setup-profile")
+      ?.addEventListener("change", (event) => {
+        this.setupState.profile = event.target.value || "cloudflare";
+        this.renderSetupReport(this.setupState.report);
+      });
+    panel.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-setup-details-toggle]");
+      if (!toggle) return;
+      const details = panel.querySelector("#setup-snippets");
+      if (!details) return;
+      const isHidden = details.hasAttribute("hidden");
+      if (isHidden) {
+        details.removeAttribute("hidden");
+        toggle.textContent = "Hide details";
+      } else {
+        details.setAttribute("hidden", "");
+        toggle.textContent = "Show details";
+      }
+    });
+  }
+
+  getTaskPanel() {
+    return document.getElementById("task-panel");
+  }
+
+  getSetupPanel() {
+    return document.getElementById("setup-panel");
+  }
+
+  setTaskStatus(message) {
+    const status = document.getElementById("task-status");
+    if (status) status.textContent = message || "";
+  }
+
+  async openTaskPanel({ focusTitle = false } = {}) {
+    const panel = this.getTaskPanel();
+    if (!panel) return;
+
+    this.closeToolsSheet();
+    this.closeSetupPanel();
+    panel.classList.remove("hidden");
+    panel.setAttribute("aria-hidden", "false");
+    const rootInput = panel.querySelector("#task-project-root");
+    if (rootInput && !rootInput.value) {
+      rootInput.value = this.getCurrentDirectoryValue() || "";
+    }
+    await this.refreshTasks();
+    if (focusTitle) {
+      panel.querySelector("#task-title")?.focus();
+    }
+    this.syncSurfaceButtonState();
+  }
+
+  closeTaskPanel() {
+    const panel = this.getTaskPanel();
+    if (!panel) return;
+    panel.classList.add("hidden");
+    panel.setAttribute("aria-hidden", "true");
+    this.syncSurfaceButtonState();
+  }
+
+  setSetupStatus(message) {
+    const status = document.getElementById("setup-status");
+    if (status) status.textContent = message || "";
+  }
+
+  async openSetupPanel() {
+    const panel = this.getSetupPanel();
+    if (!panel) return;
+
+    this.closeToolsSheet();
+    this.closeTaskPanel();
+    panel.classList.remove("hidden");
+    panel.setAttribute("aria-hidden", "false");
+    this.renderSetupReport(this.setupState.report);
+    this.syncSurfaceButtonState();
+  }
+
+  closeSetupPanel() {
+    const panel = this.getSetupPanel();
+    if (!panel) return;
+    panel.classList.add("hidden");
+    panel.setAttribute("aria-hidden", "true");
+    this.syncSurfaceButtonState();
+  }
+
+  renderSetupReport(report) {
+    const summary = document.getElementById("setup-summary");
+    const wizard = document.getElementById("setup-wizard");
+    const remediations = document.getElementById("setup-remediations");
+    const snippets = document.getElementById("setup-snippets");
+    const checks = document.getElementById("setup-checks");
+    const recommendations = document.getElementById("setup-recommendations");
+    const output = document.getElementById("setup-output-text");
+    if (
+      !summary ||
+      !wizard ||
+      !remediations ||
+      !snippets ||
+      !checks ||
+      !recommendations ||
+      !output
+    )
+      return;
+    output.closest(".setup-output")?.setAttribute("hidden", "");
+
+    summary.replaceChildren();
+    wizard.replaceChildren();
+    remediations.replaceChildren();
+    snippets.replaceChildren();
+    snippets.setAttribute("hidden", "");
+    checks.replaceChildren();
+    recommendations.replaceChildren();
+    output.textContent = "";
+
+    if (!report) {
+      const empty = document.createElement("div");
+      empty.className = "setup-empty";
+      empty.textContent = "Doctor has not run yet";
+      summary.appendChild(empty);
+      return;
+    }
+
+    this.renderSetupCurrentConfig(report, summary);
+    this.renderSetupWizard(report.wizard, { wizard, remediations, snippets });
+
+    const checkList = document.createElement("ul");
+    (Array.isArray(report.checks) ? report.checks : []).forEach((check) => {
+      const item = document.createElement("li");
+      item.className = `setup-check ${check.status || "failed"}`;
+      const badge = document.createElement("span");
+      badge.textContent = check.status || "failed";
+      const message = document.createElement("div");
+      message.textContent = check.message || check.raw || "Unknown check";
+      item.append(badge, message);
+      checkList.appendChild(item);
+    });
+    if (!checkList.children.length) {
+      const item = document.createElement("li");
+      item.className = "setup-check failed";
+      item.textContent = "No doctor checks were reported";
+      checkList.appendChild(item);
+    }
+    checks.appendChild(checkList);
+
+    const recommendationList = document.createElement("ul");
+    (Array.isArray(report.recommendations)
+      ? report.recommendations
+      : []
+    ).forEach((recommendation) => {
+      const item = document.createElement("li");
+      item.textContent = recommendation;
+      recommendationList.appendChild(item);
+    });
+    recommendations.appendChild(recommendationList);
+
+    output.textContent = [report.stdout, report.stderr]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    snippets.append(
+      checks,
+      recommendations,
+      this.renderSetupOutputSection(output.textContent),
+    );
+  }
+
+  renderSetupCurrentConfig(report, target) {
+    const status = String(report.status || "failed");
+    target.dataset.status = status;
+
+    const section = document.createElement("section");
+    section.className = "setup-current";
+
+    const header = document.createElement("div");
+    header.className = "setup-section-header";
+    const title = document.createElement("h4");
+    title.textContent = "Current config";
+    const badge = document.createElement("span");
+    badge.className = `setup-status-badge ${status}`;
+    badge.textContent =
+      status === "ok"
+        ? "Ready"
+        : status === "warning"
+          ? "Needs changes"
+          : "Blocked";
+    header.append(title, badge);
+
+    const rows = document.createElement("div");
+    rows.className = "setup-state-grid";
+    const bindLabel =
+      report.config?.host === "0.0.0.0" ? "Public bind" : "Local bind";
+    const requestContext = report.requestContext || {};
+    const accessPath = requestContext.viaCloudflare
+      ? "Cloudflare request detected"
+      : "Local/direct request";
+    const accessValidation = report.config?.cfAccessRequired
+      ? "Required by DeckTerm"
+      : "Not required by DeckTerm";
+    const liveTunnel =
+      requestContext.viaCloudflare && requestContext.cfAccessJwtPresent;
+    const stateRows = [
+      ["Publishing mode", report.config?.publishMode || "local"],
+      [
+        "Network bind",
+        `${bindLabel} (${report.config?.host || "?"}:${report.config?.port || "?"})`,
+      ],
+      ["Access path", accessPath],
+      ["CF Access validation", accessValidation],
+      [
+        "Persistent terminals",
+        report.config?.tmuxBackend ? "tmux on" : "tmux off",
+      ],
+    ];
+    if (liveTunnel) {
+      stateRows.push(["Live tunnel", "JWT reaching DeckTerm"]);
+    }
+    stateRows.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "setup-state-row";
+      const rowLabel = document.createElement("span");
+      rowLabel.textContent = label;
+      const rowValue = document.createElement("strong");
+      rowValue.textContent = value;
+      row.append(rowLabel, rowValue);
+      rows.appendChild(row);
+    });
+
+    section.append(header, rows);
+    target.appendChild(section);
+  }
+
+  renderSetupOutputSection(text) {
+    const section = document.createElement("section");
+    section.className = "setup-output";
+    const title = document.createElement("h4");
+    title.textContent = "Doctor Output";
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    section.append(title, pre);
+    return section;
+  }
+
+  renderSetupWizard(plan, targets) {
+    if (!plan || !targets) return;
+    const profileSelect = document.getElementById("setup-profile");
+    if (profileSelect && plan.profile) {
+      profileSelect.value = plan.profile;
+      this.setupState.profile = plan.profile;
+    }
+
+    const header = document.createElement("section");
+    header.className = "setup-target";
+    const headerTop = document.createElement("div");
+    headerTop.className = "setup-section-header";
+    const title = document.createElement("h4");
+    title.textContent = "Target profile";
+    const badge = document.createElement("span");
+    badge.className = "setup-target-badge";
+    badge.textContent = plan.profileLabel || "Setup profile";
+    headerTop.append(title, badge);
+    header.appendChild(headerTop);
+    targets.wizard.appendChild(header);
+
+    const steps = document.createElement("section");
+    steps.className = "setup-next-steps";
+    const stepsHeader = document.createElement("div");
+    stepsHeader.className = "setup-section-header";
+    const remediationTitle = document.createElement("h4");
+    remediationTitle.textContent = "Next steps";
+    const stepsMeta = document.createElement("span");
+    stepsMeta.textContent = "Apply in order";
+    stepsHeader.append(remediationTitle, stepsMeta);
+    steps.appendChild(stepsHeader);
+
+    const remediationList = document.createElement("ol");
+    remediationList.className = "setup-remediation-list";
+    const rows = Array.isArray(plan.remediations) ? plan.remediations : [];
+    rows.forEach((row) => {
+      const item = document.createElement("li");
+      item.className = "setup-remediation";
+      const itemTitle = document.createElement("div");
+      itemTitle.className = "setup-remediation-title";
+      itemTitle.textContent = row.title || row.id || "Fix";
+      const detail = document.createElement("div");
+      detail.className = "setup-remediation-detail";
+      detail.textContent = row.detail || "";
+      item.append(itemTitle, detail);
+
+      remediationList.appendChild(item);
+    });
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "setup-empty";
+      empty.textContent = "No fixes needed for this profile";
+      remediationList.appendChild(empty);
+    }
+    steps.appendChild(remediationList);
+    targets.remediations.appendChild(steps);
+
+    const advanced = document.createElement("section");
+    advanced.className = "setup-advanced";
+    const advancedHeader = document.createElement("div");
+    advancedHeader.className = "setup-section-header";
+    const snippetsTitle = document.createElement("h4");
+    snippetsTitle.textContent = "Full generated config";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "btn";
+    toggle.dataset.setupDetailsToggle = "true";
+    toggle.textContent = "Show details";
+    advancedHeader.append(snippetsTitle, toggle);
+    advanced.appendChild(advancedHeader);
+    targets.remediations.appendChild(advanced);
+
+    (Array.isArray(plan.snippetList) ? plan.snippetList : []).forEach(
+      (snippet) => {
+        const section = document.createElement("article");
+        section.className = "setup-snippet";
+        const label = document.createElement("div");
+        label.className = "setup-snippet-label";
+        label.textContent = snippet.label || "Snippet";
+        const pre = document.createElement("pre");
+        pre.textContent = snippet.content || "";
+        section.append(label, pre);
+        targets.snippets.appendChild(section);
+      },
+    );
+  }
+
+  async runSetupDoctor() {
+    if (this.setupState.loading) return;
+    this.setupState.loading = true;
+    this.setSetupStatus("Running doctor...");
+    try {
+      const profile =
+        document.getElementById("setup-profile")?.value ||
+        this.setupState.profile ||
+        "cloudflare";
+      const publicOrigin =
+        document.getElementById("setup-public-origin")?.value?.trim() || "";
+      const params = new URLSearchParams({ profile });
+      if (publicOrigin) params.set("publicOrigin", publicOrigin);
+      const res = await fetch(`/api/onboarding/doctor?${params.toString()}`);
+      const report = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          report.error || report.message || "Doctor request failed",
+        );
+      }
+      this.setupState.report = report;
+      this.renderSetupReport(report);
+      this.setSetupStatus(`Doctor finished: ${report.status || "failed"}`);
+    } catch (err) {
+      this.setupState.report = null;
+      this.renderSetupReport(null);
+      this.setSetupStatus(err instanceof Error ? err.message : "Doctor failed");
+    } finally {
+      this.setupState.loading = false;
+    }
+  }
+
+  async applySetupProfile() {
+    if (this.setupState.loading) return;
+    this.setupState.loading = true;
+    this.setSetupStatus("Applying safe settings...");
+    try {
+      const profile =
+        document.getElementById("setup-profile")?.value ||
+        this.setupState.profile ||
+        "cloudflare";
+      const publicOrigin =
+        document.getElementById("setup-public-origin")?.value?.trim() || "";
+      const res = await fetch("/api/onboarding/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile,
+          publicOrigin,
+          allowedFileRoots: this.getCurrentDirectoryValue() || "",
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          payload.error || payload.message || "Setup apply failed",
+        );
+      }
+      this.setupState.applyResult = payload;
+      this.setupState.report = payload.report || null;
+      this.renderSetupReport(this.setupState.report);
+      this.setSetupStatus(
+        "Safe settings written. Restart DeckTerm before opening it publicly.",
+      );
+    } catch (err) {
+      this.setSetupStatus(
+        err instanceof Error ? err.message : "Setup apply failed",
+      );
+    } finally {
+      this.setupState.loading = false;
+    }
+  }
+
+  async fetchTaskJson(url, options = {}) {
+    const res = await fetch(url, options);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        payload.error || payload.message || "Task request failed",
+      );
+    }
+    return payload;
+  }
+
+  async refreshTasks({ selectedId = this.taskState.selectedId } = {}) {
+    const panel = this.getTaskPanel();
+    if (!panel || panel.classList.contains("hidden")) return;
+    this.taskState.loading = true;
+    this.setTaskStatus("Loading tasks...");
+    try {
+      const tasks = await this.fetchTaskJson("/api/tasks");
+      this.taskState.items = Array.isArray(tasks) ? tasks : [];
+      this.taskState.selectedId =
+        selectedId &&
+        this.taskState.items.some((task) => task.id === selectedId)
+          ? selectedId
+          : this.taskState.items[0]?.id || null;
+      this.renderTasks();
+      this.setTaskStatus("");
+    } catch (err) {
+      this.setTaskStatus(
+        err instanceof Error ? err.message : "Failed to load tasks",
+      );
+    } finally {
+      this.taskState.loading = false;
+    }
+  }
+
+  renderTasks() {
+    const list = document.getElementById("task-list");
+    if (!list) return;
+    list.replaceChildren();
+
+    if (this.taskState.items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "task-item-meta";
+      empty.textContent = "No tasks";
+      list.appendChild(empty);
+      this.renderTaskDetail(null);
+      return;
+    }
+
+    this.taskState.items.forEach((task) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "task-item";
+      button.dataset.taskId = task.id;
+      button.classList.toggle("active", task.id === this.taskState.selectedId);
+
+      const header = document.createElement("div");
+      header.className = "task-item-header";
+      const title = document.createElement("div");
+      title.className = "task-item-title";
+      title.textContent = task.title || "Untitled task";
+      const badge = document.createElement("span");
+      badge.className = "task-badge";
+      badge.textContent = task.status || "ready";
+      header.append(title, badge);
+
+      const meta = document.createElement("div");
+      meta.className = "task-item-meta";
+      meta.textContent = task.workingDirectory || task.projectRoot || "";
+
+      button.append(header, meta);
+      list.appendChild(button);
+    });
+
+    this.renderTaskDetail(
+      this.taskState.items.find(
+        (task) => task.id === this.taskState.selectedId,
+      ) || null,
+    );
+  }
+
+  renderTaskDetail(task) {
+    const detail = document.getElementById("task-detail");
+    if (!detail) return;
+    detail.replaceChildren();
+    if (!task) return;
+
+    const header = document.createElement("div");
+    header.className = "task-detail-header";
+    const title = document.createElement("div");
+    title.className = "task-detail-title";
+    title.textContent = task.title || "Untitled task";
+    const badge = document.createElement("span");
+    badge.className = "task-badge";
+    badge.textContent = task.status || "ready";
+    header.append(title, badge);
+
+    const meta = document.createElement("div");
+    meta.className = "task-detail-meta";
+    meta.textContent = task.workingDirectory || task.projectRoot || "";
+
+    const checks = document.createElement("ul");
+    checks.className = "task-checks";
+    (task.checks || []).forEach((check) => {
+      const item = document.createElement("li");
+      item.textContent = `${check.label}: ${check.command}`;
+      checks.appendChild(item);
+    });
+    if (!checks.children.length) {
+      const item = document.createElement("li");
+      item.textContent = "No checks";
+      checks.appendChild(item);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "task-actions";
+    [
+      ["start", "Start Worker"],
+      ["checks", "Run Checks"],
+      ["judge", "Run Judge"],
+    ].forEach(([action, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = action === "start" ? "btn btn-primary" : "btn";
+      button.dataset.taskAction = action;
+      button.textContent = label;
+      actions.appendChild(button);
+    });
+
+    const checkOutput = this.renderTaskCheckOutput(task);
+    const rounds = this.renderTaskRounds(task);
+
+    detail.append(header, meta, checks, checkOutput, rounds, actions);
+  }
+
+  renderTaskCheckOutput(task) {
+    const section = document.createElement("section");
+    section.className = "task-check-output";
+    const title = document.createElement("h4");
+    title.textContent = "Last check output";
+    section.appendChild(title);
+
+    const results = task.lastCheckRun?.results || [];
+    if (!results.length) {
+      const empty = document.createElement("div");
+      empty.className = "task-detail-meta";
+      empty.textContent = "No check run yet";
+      section.appendChild(empty);
+      return section;
+    }
+
+    results.forEach((result) => {
+      const item = document.createElement("div");
+      item.className = "task-check-result";
+      const label = document.createElement("div");
+      label.className = "task-check-label";
+      label.textContent = `${result.label || result.command} exited ${result.exitCode}`;
+      const output = document.createElement("pre");
+      output.textContent =
+        [result.stdout, result.stderr].filter(Boolean).join("\n").trim() ||
+        "(no output)";
+      item.append(label, output);
+      section.appendChild(item);
+    });
+
+    return section;
+  }
+
+  renderTaskRounds(task) {
+    const section = document.createElement("section");
+    section.className = "task-rounds";
+    const title = document.createElement("h4");
+    title.textContent = "Round history";
+    section.appendChild(title);
+
+    const rounds = Array.isArray(task.rounds) ? task.rounds : [];
+    if (!rounds.length) {
+      const empty = document.createElement("div");
+      empty.className = "task-detail-meta";
+      empty.textContent = "No rounds yet";
+      section.appendChild(empty);
+      return section;
+    }
+
+    const list = document.createElement("ol");
+    rounds.forEach((round) => {
+      const item = document.createElement("li");
+      const type = round.type || "event";
+      const status = round.status ? ` ${round.status}` : "";
+      const success =
+        typeof round.success === "boolean"
+          ? round.success
+            ? " success"
+            : " failed"
+          : "";
+      item.textContent = `${type}${status}${success}`;
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    return section;
+  }
+
+  selectTask(taskId) {
+    this.taskState.selectedId = taskId || null;
+    this.renderTasks();
+  }
+
+  getSelectedTask() {
+    return (
+      this.taskState.items.find(
+        (task) => task.id === this.taskState.selectedId,
+      ) || null
+    );
+  }
+
+  async createTaskFromForm() {
+    const panel = this.getTaskPanel();
+    if (!panel) return;
+    const body = {
+      projectRoot: panel.querySelector("#task-project-root")?.value || "",
+      title: panel.querySelector("#task-title")?.value || "",
+      description: panel.querySelector("#task-description")?.value || "",
+      workerProvider:
+        panel.querySelector("#task-worker-provider")?.value || "codex",
+      judgeProvider:
+        panel.querySelector("#task-judge-provider")?.value || "codex",
+      useWorktree: Boolean(panel.querySelector("#task-use-worktree")?.checked),
+    };
+
+    this.setTaskStatus("Creating task...");
+    try {
+      const task = await this.fetchTaskJson("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const titleInput = panel.querySelector("#task-title");
+      const descriptionInput = panel.querySelector("#task-description");
+      if (titleInput) titleInput.value = "";
+      if (descriptionInput) descriptionInput.value = "";
+      await this.refreshTasks({ selectedId: task.id });
+    } catch (err) {
+      this.setTaskStatus(
+        err instanceof Error ? err.message : "Failed to create task",
+      );
+    }
+  }
+
+  async handleTaskAction(action) {
+    const task = this.getSelectedTask();
+    if (!task) return;
+    const endpoint =
+      action === "start"
+        ? "start"
+        : action === "checks"
+          ? "run-checks"
+          : action === "judge"
+            ? "judge"
+            : "";
+    if (!endpoint) return;
+
+    this.setTaskStatus(
+      `${action === "checks" ? "Running checks" : "Starting"}...`,
+    );
+    try {
+      const payload = await this.fetchTaskJson(
+        `/api/tasks/${encodeURIComponent(task.id)}/${endpoint}`,
+        { method: "POST" },
+      );
+      if (payload.terminal) {
+        await this.reconnectToTerminal(
+          payload.terminal.id,
+          payload.terminal.cwd,
+          null,
+          {
+            showReconnectBanner: false,
+            isReconnection: false,
+            backendMode: payload.terminal.backendMode || null,
+            supportsLinkedView: Boolean(payload.terminal.supportsLinkedView),
+          },
+        );
+      }
+      await this.refreshTasks({ selectedId: task.id });
+    } catch (err) {
+      this.setTaskStatus(
+        err instanceof Error ? err.message : "Task action failed",
+      );
+    }
+  }
+
   setupLayoutEditor() {
     if (!this.toolsSheet) return;
 
@@ -4582,8 +5372,7 @@ class TerminalManager {
 
   getLayoutActionLabel(actionId) {
     return (
-      this.getActionButtonConfig(actionId)?.label ||
-      actionId.replace(/-/g, " ")
+      this.getActionButtonConfig(actionId)?.label || actionId.replace(/-/g, " ")
     );
   }
 
@@ -4687,7 +5476,10 @@ class TerminalManager {
 
     if (root) {
       root.dataset.mode = mode;
-      root.setAttribute("aria-hidden", this.layoutEditorOpen ? "false" : "true");
+      root.setAttribute(
+        "aria-hidden",
+        this.layoutEditorOpen ? "false" : "true",
+      );
       root.classList.toggle("hidden", !this.layoutEditorOpen);
     }
 
@@ -4724,7 +5516,9 @@ class TerminalManager {
     this.toolsSheet.classList.toggle("tools-sheet-editing", editing);
     this.renderToolsSheetGrid();
 
-    const editButton = this.toolsSheet.querySelector("#tools-sheet-edit-layout");
+    const editButton = this.toolsSheet.querySelector(
+      "#tools-sheet-edit-layout",
+    );
     if (editButton) {
       editButton.hidden = editing;
       editButton.setAttribute("aria-hidden", editing ? "true" : "false");
@@ -4793,7 +5587,9 @@ class TerminalManager {
 
   getLayoutEditorBucket(bucket) {
     const suffix = bucket === "available" ? "available" : "pinned";
-    return this.toolsSheet?.querySelector(`#layout-editor-${suffix}-actions`) || null;
+    return (
+      this.toolsSheet?.querySelector(`#layout-editor-${suffix}-actions`) || null
+    );
   }
 
   updateLayoutDragGhostPosition(clientX, clientY) {
@@ -4905,10 +5701,18 @@ class TerminalManager {
   }
 
   layoutStatesEqual(left, right) {
-    const leftDesktop = Array.isArray(left?.desktopPinned) ? left.desktopPinned : [];
-    const leftMobile = Array.isArray(left?.mobilePinned) ? left.mobilePinned : [];
-    const rightDesktop = Array.isArray(right?.desktopPinned) ? right.desktopPinned : [];
-    const rightMobile = Array.isArray(right?.mobilePinned) ? right.mobilePinned : [];
+    const leftDesktop = Array.isArray(left?.desktopPinned)
+      ? left.desktopPinned
+      : [];
+    const leftMobile = Array.isArray(left?.mobilePinned)
+      ? left.mobilePinned
+      : [];
+    const rightDesktop = Array.isArray(right?.desktopPinned)
+      ? right.desktopPinned
+      : [];
+    const rightMobile = Array.isArray(right?.mobilePinned)
+      ? right.mobilePinned
+      : [];
 
     return (
       leftDesktop.join("\n") === rightDesktop.join("\n") &&
@@ -4934,7 +5738,8 @@ class TerminalManager {
         ) || state;
     } else if (sourceBucket === "pinned" && dropBucket === "available") {
       nextState =
-        this.navigationSurface.unpinLayoutAction?.(state, mode, actionId) || state;
+        this.navigationSurface.unpinLayoutAction?.(state, mode, actionId) ||
+        state;
     } else if (sourceBucket === "pinned" && dropBucket === "pinned") {
       nextState =
         this.navigationSurface.reorderLayoutAction?.(
@@ -4965,11 +5770,12 @@ class TerminalManager {
     placeholder?.remove();
     ghost?.remove();
 
-    [this.getLayoutEditorBucket("pinned"), this.getLayoutEditorBucket("available")].forEach(
-      (bucket) => {
-        bucket?.classList.remove("is-drop-target", "is-drop-active");
-      },
-    );
+    [
+      this.getLayoutEditorBucket("pinned"),
+      this.getLayoutEditorBucket("available"),
+    ].forEach((bucket) => {
+      bucket?.classList.remove("is-drop-target", "is-drop-active");
+    });
 
     this.layoutDragState = null;
 
@@ -5173,7 +5979,10 @@ class TerminalManager {
       window.gitManager.hide();
     }
 
-    const targetPath = this.fileExplorer.openForWorkspace(workspaceId, targetCwd);
+    const targetPath = this.fileExplorer.openForWorkspace(
+      workspaceId,
+      targetCwd,
+    );
     this.rightSurface = "files";
 
     if (targetPath) {
@@ -5233,6 +6042,22 @@ class TerminalManager {
         keywords: ["split", "pane", "terminal"],
         priority: 45,
         run: () => this.splitWorkspace(),
+      },
+      {
+        id: "new-task-workspace",
+        title: "New Task Workspace",
+        group: "Actions",
+        keywords: ["agent", "worker", "judge", "task"],
+        priority: 44,
+        run: () => this.openTaskPanel({ focusTitle: true }),
+      },
+      {
+        id: "open-tasks",
+        title: "Open Tasks",
+        group: "Actions",
+        keywords: ["agent", "runner", "worker", "judge"],
+        priority: 43,
+        run: () => this.openTaskPanel(),
       },
       {
         id: "open-git",
@@ -5404,7 +6229,9 @@ class TerminalManager {
           if (!cwd) return null;
 
           const existingWorkspaceId = this.findWorkspaceIdByCwd(cwd);
-          const activeWorkspaceId = this.terminals.get(this.activeId)?.workspaceId;
+          const activeWorkspaceId = this.terminals.get(
+            this.activeId,
+          )?.workspaceId;
           const metadata = [entry.label];
 
           if (entry.label !== cwd) {
@@ -5511,9 +6338,7 @@ class TerminalManager {
   isCommandPaletteOpen() {
     return Boolean(
       this.commandPalette &&
-        !document
-          .getElementById("command-palette")
-          ?.classList.contains("hidden"),
+      !document.getElementById("command-palette")?.classList.contains("hidden"),
     );
   }
 
@@ -5526,11 +6351,13 @@ class TerminalManager {
   async ensureCommandPaletteGitContext(cwd) {
     const nextCwd = String(cwd || "").trim();
     if (!nextCwd || this.commandPaletteGitCache.has(nextCwd)) {
-      return this.commandPaletteGitCache.get(nextCwd) || {
-        isGitRepo: false,
-        gitBranches: [],
-        currentGitBranch: "",
-      };
+      return (
+        this.commandPaletteGitCache.get(nextCwd) || {
+          isGitRepo: false,
+          gitBranches: [],
+          currentGitBranch: "",
+        }
+      );
     }
 
     try {
@@ -5640,7 +6467,8 @@ class TerminalManager {
       if (
         window.gitManager &&
         !window.gitManager.panel?.classList.contains("hidden") &&
-        (window.gitManager.state.cwd || window.gitManager.currentCwd) === nextCwd
+        (window.gitManager.state.cwd || window.gitManager.currentCwd) ===
+          nextCwd
       ) {
         await window.gitManager.refresh();
       }
@@ -5740,8 +6568,8 @@ class TerminalManager {
   canCreateLinkedView(terminal = this.getActiveTerminal()) {
     return Boolean(
       terminal &&
-        terminal.backendMode === "tmux" &&
-        terminal.supportsLinkedView,
+      terminal.backendMode === "tmux" &&
+      terminal.supportsLinkedView,
     );
   }
 
@@ -5883,7 +6711,10 @@ class TerminalManager {
   getWorkspaceSourceIds(terminals = [], fallbackWorkspaceId = "") {
     return this.uniqueOrderedValues(
       terminals.map(
-        (terminal) => terminal.originalWorkspaceId || terminal.workspaceId || fallbackWorkspaceId,
+        (terminal) =>
+          terminal.originalWorkspaceId ||
+          terminal.workspaceId ||
+          fallbackWorkspaceId,
       ),
     );
   }
@@ -5911,23 +6742,21 @@ class TerminalManager {
       : null;
     const fallbackTerminal = terminals[0] || null;
     const cwd =
-      preferredCwd ||
-      activeTerminal?.cwd ||
-      fallbackTerminal?.cwd ||
-      "";
+      preferredCwd || activeTerminal?.cwd || fallbackTerminal?.cwd || "";
     const ports = normalizeWorkspacePorts(
       terminals.flatMap((terminal) => terminal.ports || []),
     );
     const running = terminals.some((terminal) =>
       Boolean(terminal.running ?? terminal.busy),
     );
-    const agentTerminal =
-      activeTerminal?.agentState
-        ? activeTerminal
-        : terminals.find((terminal) => terminal.agentState) || null;
+    const agentTerminal = activeTerminal?.agentState
+      ? activeTerminal
+      : terminals.find((terminal) => terminal.agentState) || null;
     const agentName = agentTerminal?.agentName || null;
     const agentState = agentTerminal?.agentState || null;
-    const isWorktree = terminals.some((terminal) => Boolean(terminal.isWorktree));
+    const isWorktree = terminals.some((terminal) =>
+      Boolean(terminal.isWorktree),
+    );
     const descriptors = TerminalColors.getWorkspaceSignalDescriptors({
       running,
       agentName,
@@ -5945,7 +6774,10 @@ class TerminalManager {
     }).primarySignal;
     const folderLabels = this.getWorkspaceFolderLabels(terminals, cwd);
     const folderPaths = this.getWorkspaceFolderPaths(terminals, cwd);
-    const sourceWorkspaceIds = this.getWorkspaceSourceIds(terminals, workspaceId);
+    const sourceWorkspaceIds = this.getWorkspaceSourceIds(
+      terminals,
+      workspaceId,
+    );
     const statusLabels = this.getWorkspaceStatusLabels(terminals);
     const isMergedWorkspace = sourceWorkspaceIds.length > 1;
 
@@ -5976,10 +6808,9 @@ class TerminalManager {
         : "",
       isMergedWorkspace,
       showSignalBadge: !isMergedWorkspace,
-      primarySignal:
-        primarySignalDescriptor?.key?.startsWith("ports:")
-          ? "ports"
-          : primarySignalDescriptor?.key || "none",
+      primarySignal: primarySignalDescriptor?.key?.startsWith("ports:")
+        ? "ports"
+        : primarySignalDescriptor?.key || "none",
       primarySignalLabel: primarySignalDescriptor?.label || "",
     };
   }
@@ -5994,11 +6825,11 @@ class TerminalManager {
       `Workspace: ${snapshot.count} terminal${snapshot.count === 1 ? "" : "s"}`,
     );
     if (snapshot.isMergedWorkspace) {
-      lines.push(
-        `Statuses: ${snapshot.statusLabels.join(" • ") || "none"}`,
-      );
+      lines.push(`Statuses: ${snapshot.statusLabels.join(" • ") || "none"}`);
     } else if (snapshot.descriptors.length > 0) {
-      lines.push(`Signals: ${snapshot.descriptors.map((d) => d.label).join(" • ")}`);
+      lines.push(
+        `Signals: ${snapshot.descriptors.map((d) => d.label).join(" • ")}`,
+      );
     } else {
       lines.push("Signals: none");
     }
@@ -6022,10 +6853,13 @@ class TerminalManager {
         ? snapshot.primarySignalLabel
         : "";
       signalBadge.dataset.signal = snapshot.primarySignal;
-      signalBadge.hidden = !snapshot.showSignalBadge || !snapshot.primarySignalLabel;
+      signalBadge.hidden =
+        !snapshot.showSignalBadge || !snapshot.primarySignalLabel;
       signalBadge.setAttribute(
         "aria-hidden",
-        snapshot.showSignalBadge && snapshot.primarySignalLabel ? "false" : "true",
+        snapshot.showSignalBadge && snapshot.primarySignalLabel
+          ? "false"
+          : "true",
       );
     }
   }
@@ -6037,7 +6871,9 @@ class TerminalManager {
     const prevRunning = Boolean(terminal.running ?? terminal.busy);
     const nextRunning = Boolean(nextState.running);
     const nextExitCode =
-      typeof nextState.lastExitCode === "number" ? nextState.lastExitCode : null;
+      typeof nextState.lastExitCode === "number"
+        ? nextState.lastExitCode
+        : null;
     const nextAgentName =
       typeof nextState.agentName === "string" && nextState.agentName
         ? nextState.agentName
@@ -6238,7 +7074,7 @@ class TerminalManager {
     const filesOpen = Boolean(this.fileExplorer?.isOpen);
     const gitOpen = Boolean(
       window.gitManager &&
-        !window.gitManager.panel?.classList.contains("hidden"),
+      !window.gitManager.panel?.classList.contains("hidden"),
     );
     const nextSurface = filesOpen ? "files" : gitOpen ? "git" : "none";
     this.rightSurface = nextSurface;
@@ -6331,7 +7167,11 @@ class TerminalManager {
 
   setupKeyboardShortcuts() {
     document.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "p"
+      ) {
         e.preventDefault();
         this.toggleCommandPalette();
         return;
@@ -6599,7 +7439,9 @@ class TerminalManager {
 
     dbg(`[reconnect] Attempting to reconnect terminal ${id}...`);
     if (showReconnectBanner) {
-      terminal.write("\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n");
+      terminal.write(
+        "\x1b[33m[Reconnecting to existing terminal...]\x1b[0m\r\n",
+      );
     }
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -6610,9 +7452,7 @@ class TerminalManager {
       onMessage: (data) => {
         // Log first 100 chars of received data for debugging
         if (data.length > 0 && data.length < 200) {
-          dbg(
-            `[reconnect] Received data for ${id}: ${data.length} bytes`,
-          );
+          dbg(`[reconnect] Received data for ${id}: ${data.length} bytes`);
         }
         terminal.write(data);
         this.queueTelemetryRefresh();
@@ -6699,12 +7539,14 @@ class TerminalManager {
       awaitingReconnectReady: false,
     });
 
-    dbg(
-      `[reconnect] Terminal ${id} stored in Map with isReconnection=true`,
-    );
+    dbg(`[reconnect] Terminal ${id} stored in Map with isReconnection=true`);
 
     // Register with session registry for future reconnection
-    this.sessionRegistry.register(id, { workspaceId, cwd: restoredCwd, tabNum });
+    this.sessionRegistry.register(id, {
+      workspaceId,
+      cwd: restoredCwd,
+      tabNum,
+    });
 
     this.addTab(id, restoredCwd, tabNum, workspaceId);
     this.queueTelemetryRefresh(0);
@@ -6750,9 +7592,8 @@ class TerminalManager {
 
     inputState.lastFallbackAt = performance.now();
     inputState.lastFallbackData = data;
-    inputState.pendingFallbackEcho = `${inputState.pendingFallbackEcho || ""}${data}`.slice(
-      -256,
-    );
+    inputState.pendingFallbackEcho =
+      `${inputState.pendingFallbackEcho || ""}${data}`.slice(-256);
   }
 
   consumePendingFallbackEcho(inputState, data) {
@@ -6837,10 +7678,7 @@ class TerminalManager {
         }
       }
       if (options.log) {
-        dbg(
-          "[ExtraKeys] Applied CTRL, finalData:",
-          JSON.stringify(finalData),
-        );
+        dbg("[ExtraKeys] Applied CTRL, finalData:", JSON.stringify(finalData));
       }
       // Don't reset - modifiers stay active until user toggles them off
     } else if (mods.alt) {
@@ -6852,10 +7690,7 @@ class TerminalManager {
       // SHIFT: uppercase entire string
       finalData = data.toUpperCase();
       if (options.log) {
-        dbg(
-          "[ExtraKeys] Applied SHIFT, finalData:",
-          JSON.stringify(finalData),
-        );
+        dbg("[ExtraKeys] Applied SHIFT, finalData:", JSON.stringify(finalData));
       }
       // Don't reset - modifiers stay active until user toggles them off
     }
@@ -7098,9 +7933,11 @@ class TerminalManager {
     const pasteHandler = (event) => {
       if (!event.clipboardData) return;
       event.preventDefault();
-      this.clipboardManager.handlePaste(ws, event.clipboardData).catch((err) => {
-        console.error("Clipboard paste fallback failed:", err);
-      });
+      this.clipboardManager
+        .handlePaste(ws, event.clipboardData)
+        .catch((err) => {
+          console.error("Clipboard paste fallback failed:", err);
+        });
     };
 
     textarea.addEventListener("paste", pasteHandler, true);
@@ -7318,13 +8155,15 @@ class TerminalManager {
       if (status === "reconnecting") {
         tab.classList.add("reconnecting");
         dbg(`[reconnect] Tab ${id} marked as reconnecting`);
-      } else if (status === "failed" || status === "dead" || status === "taken_over") {
+      } else if (
+        status === "failed" ||
+        status === "dead" ||
+        status === "taken_over"
+      ) {
         tab.classList.add("disconnected");
         dbg(`[reconnect] Tab ${id} marked as disconnected`);
       } else if (status === "connected") {
-        dbg(
-          `[reconnect] Tab ${id} marked as connected (classes cleared)`,
-        );
+        dbg(`[reconnect] Tab ${id} marked as connected (classes cleared)`);
       }
     } else {
       console.warn(`[reconnect] Tab not found for ${id}!`);
@@ -7430,9 +8269,7 @@ class TerminalManager {
         }
       }
     }
-    dbg(
-      `[debug] Terminal debug mode: ${this.debugMode ? "ON" : "OFF"}`,
-    );
+    dbg(`[debug] Terminal debug mode: ${this.debugMode ? "ON" : "OFF"}`);
   }
 
   updateDebugOverlay(id) {
@@ -7512,7 +8349,10 @@ class TerminalManager {
 
           // Hide the warning for compact layouts where the bottom action bar is expected.
           if (t.sizeWarning) {
-            t.sizeWarning.classList.toggle("visible", isTooSmall && !usesCompactLayout);
+            t.sizeWarning.classList.toggle(
+              "visible",
+              isTooSmall && !usesCompactLayout,
+            );
           }
 
           // Always send resize - terminal will work even if small
@@ -7622,7 +8462,8 @@ class TerminalManager {
           onStatusChange: (status, extra) =>
             this.handleStatusChange(id, status, extra),
           onLifecycle: (message) => this.handleReconnectLifecycle(id, message),
-          onTerminalState: (message) => this.applyTerminalRuntimeState(id, message),
+          onTerminalState: (message) =>
+            this.applyTerminalRuntimeState(id, message),
         },
       );
 
@@ -7646,7 +8487,9 @@ class TerminalManager {
         dbg("[ExtraKeys] onData:", JSON.stringify(dedupedData), "mods:", mods);
         inputState.lastOnDataAt = performance.now();
         inputState.lastOnDataValue = dedupedData;
-        const finalData = this.applyExtraKeyModifiers(dedupedData, { log: true });
+        const finalData = this.applyExtraKeyModifiers(dedupedData, {
+          log: true,
+        });
         ws.send(JSON.stringify({ type: "input", data: finalData }));
       });
 
@@ -7704,7 +8547,11 @@ class TerminalManager {
       });
 
       // Register with session registry for reconnection persistence
-      this.sessionRegistry.register(id, { workspaceId, cwd: resolvedCwd, tabNum });
+      this.sessionRegistry.register(id, {
+        workspaceId,
+        cwd: resolvedCwd,
+        tabNum,
+      });
 
       // Only add tab for new workspaces, not splits
       if (!split) {
@@ -7799,7 +8646,8 @@ class TerminalManager {
         const currentIndex = tabs.indexOf(tab);
         if (currentIndex === -1 || tabs.length <= 1) return;
         const direction = e.key === "ArrowRight" ? 1 : -1;
-        const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+        const nextIndex =
+          (currentIndex + direction + tabs.length) % tabs.length;
         tabs[nextIndex]?.focus();
       }
     });
@@ -7928,7 +8776,10 @@ class TerminalManager {
 
     // Show the merged workspace
     this.tileManager.showWorkspace(toWorkspaceId);
-    const targetId = this.resolveWorkspaceTerminalId(toWorkspaceId, this.activeId);
+    const targetId = this.resolveWorkspaceTerminalId(
+      toWorkspaceId,
+      this.activeId,
+    );
     if (targetId) this.switchTo(targetId);
   }
 
@@ -8005,7 +8856,10 @@ class TerminalManager {
     const tab = this.tabs.querySelector(`[data-index="${index}"]`);
     if (!tab) return;
     const workspaceId = tab.dataset.workspaceId;
-    const targetId = this.resolveWorkspaceTerminalId(workspaceId, tab.dataset.id);
+    const targetId = this.resolveWorkspaceTerminalId(
+      workspaceId,
+      tab.dataset.id,
+    );
     if (targetId) this.switchTo(targetId);
   }
 
@@ -8058,9 +8912,8 @@ class TerminalManager {
 
     if (this.activeId === id) {
       const remaining = Array.from(this.terminals.keys());
-      const workspaceFallback = this.resolveWorkspaceTerminalId(
-        closingWorkspaceId,
-      );
+      const workspaceFallback =
+        this.resolveWorkspaceTerminalId(closingWorkspaceId);
       const nextId = workspaceFallback || remaining[0];
       if (nextId) this.switchTo(nextId);
       else {
@@ -8142,13 +8995,16 @@ class TerminalManager {
     const active = this.terminals.get(this.activeId);
     if (active) {
       if (this.viewportFocusTimer) clearTimeout(this.viewportFocusTimer);
-      this.viewportFocusTimer = setTimeout(() => {
-        this.focusTerminal(this.activeId, {
-          syncSize: true,
-          scrollToPrompt: isKeyboardOpen || platformDetector.hasTouch,
-        });
-        this.disableMobileKeyboardFeatures(active.element);
-      }, isKeyboardOpen ? 50 : 0);
+      this.viewportFocusTimer = setTimeout(
+        () => {
+          this.focusTerminal(this.activeId, {
+            syncSize: true,
+            scrollToPrompt: isKeyboardOpen || platformDetector.hasTouch,
+          });
+          this.disableMobileKeyboardFeatures(active.element);
+        },
+        isKeyboardOpen ? 50 : 0,
+      );
     }
   }
 
@@ -8209,6 +9065,7 @@ class TerminalManager {
       if (data.error) return alert(data.error);
 
       this.currentDirPath = data.path;
+      this.selectedDir = data.path;
       this.renderDirBreadcrumb(data.path);
       this.renderDirList(data);
     } catch (err) {
@@ -8246,6 +9103,7 @@ class TerminalManager {
       const parentEl = document.createElement("div");
       parentEl.className = "dir-item";
       parentEl.innerHTML = "📁 ..";
+      parentEl.addEventListener("click", () => this.loadDir(parent));
       parentEl.addEventListener("dblclick", () => this.loadDir(parent));
       list.appendChild(parentEl);
     }

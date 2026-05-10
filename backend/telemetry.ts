@@ -118,10 +118,7 @@ export function classifyAgentOutputPhase(
 ): AgentState | null {
   if (!agentName || !chunk) return null;
 
-  if (
-    agentName === "codex" &&
-    CODEx_TITLE_SPINNER_RE.test(chunk)
-  ) {
+  if (agentName === "codex" && CODEx_TITLE_SPINNER_RE.test(chunk)) {
     return "thinking";
   }
 
@@ -190,7 +187,8 @@ export function inferRecoveredTmuxRuntimeState({
     return {
       running: true,
       agentName,
-      agentState: classifyAgentOutputPhase(agentName, capture || "") || "responding",
+      agentState:
+        classifyAgentOutputPhase(agentName, capture || "") || "responding",
     };
   }
 
@@ -250,12 +248,10 @@ export function inferTmuxRuntimeState({
   const safeCapture = capture || "";
   const parsedCapture = parseShellIntegrationChunk(safeCapture);
   const hasRunningMarkers = parsedCapture.events.some(
-    (event) =>
-      event.type === "running-start" || event.type === "running-done",
+    (event) => event.type === "running-start" || event.type === "running-done",
   );
   const hasAgentMarkers = parsedCapture.events.some(
-    (event) =>
-      event.type === "agent-start" || event.type === "agent-done",
+    (event) => event.type === "agent-start" || event.type === "agent-done",
   );
   const recoveredState = inferRecoveredTmuxRuntimeState({
     paneCurrentCommand,
@@ -269,7 +265,8 @@ export function inferTmuxRuntimeState({
   const lastExitCode = hasRunningMarkers
     ? parsedCapture.state.lastExitCode
     : previousState.lastExitCode;
-  const recoveredAgentName = recoveredState.agentName || previousState.agentName;
+  const recoveredAgentName =
+    recoveredState.agentName || previousState.agentName;
   const agentName = hasAgentMarkers
     ? parsedCapture.state.agentName
     : recoveredAgentName;
@@ -340,7 +337,9 @@ export async function getTerminalTelemetry(
 
   return {
     busy:
-      Boolean(terminal.running) || hasRecentActivity || hasRecentBootstrapOutput,
+      Boolean(terminal.running) ||
+      hasRecentActivity ||
+      hasRecentBootstrapOutput,
     running: Boolean(terminal.running),
     lastExitCode:
       typeof terminal.lastExitCode === "number" ? terminal.lastExitCode : null,
@@ -399,7 +398,10 @@ export function parseShellIntegrationChunk(
       lastExitCode = null;
       events.push({ type: "running-start" });
     } else if (payload.startsWith("running;done;")) {
-      const codeValue = Number.parseInt(payload.slice("running;done;".length), 10);
+      const codeValue = Number.parseInt(
+        payload.slice("running;done;".length),
+        10,
+      );
       const exitCode = Number.isFinite(codeValue) ? codeValue : null;
       running = false;
       lastExitCode = exitCode;
@@ -408,7 +410,10 @@ export function parseShellIntegrationChunk(
       const [, rawAgentName, action, rawExitCode] = payload.split(";");
       const normalizedAgentName = normalizeAgentName(rawAgentName || "");
       if (!normalizedAgentName) {
-        output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+        output += input.slice(
+          prefixIndex,
+          suffixIndex + SHELL_MARKER_SUFFIX.length,
+        );
       } else if (action === "start") {
         agentName = normalizedAgentName;
         agentState = "thinking";
@@ -425,10 +430,16 @@ export function parseShellIntegrationChunk(
           exitCode,
         });
       } else {
-        output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+        output += input.slice(
+          prefixIndex,
+          suffixIndex + SHELL_MARKER_SUFFIX.length,
+        );
       }
     } else {
-      output += input.slice(prefixIndex, suffixIndex + SHELL_MARKER_SUFFIX.length);
+      output += input.slice(
+        prefixIndex,
+        suffixIndex + SHELL_MARKER_SUFFIX.length,
+      );
     }
 
     cursor = suffixIndex + SHELL_MARKER_SUFFIX.length;
@@ -520,7 +531,11 @@ async function getLinkedWorktreeRoots(
     return cached.linkedRoots;
   }
 
-  const worktreeListResult = await runGit(cwd, ["worktree", "list", "--porcelain"]);
+  const worktreeListResult = await runGit(cwd, [
+    "worktree",
+    "list",
+    "--porcelain",
+  ]);
   if (worktreeListResult.exitCode !== 0) {
     worktreeCache.delete(commonDir);
     return [];
