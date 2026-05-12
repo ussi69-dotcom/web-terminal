@@ -35,6 +35,13 @@ import {
   parseTmuxSessionName,
   resolveTmuxSessionNamespace,
 } from "./tmux-session-names";
+import {
+  bootstrapFirstAdmin,
+  initializeFoundationState,
+  isBootstrapComplete,
+  writeAuditEvent,
+  type FoundationState,
+} from "./services/foundation-state";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -564,6 +571,73 @@ function debug(...args: unknown[]) {
 }
 
 let allowedRealRootsCache: string[] | null = null;
+let foundationStatePromise: Promise<FoundationState> | null = null;
+
+function isFoundationLegacyBypassEnabled(): boolean {
+  return process.env.DECKTERM_LEGACY_NO_BOOTSTRAP === "1";
+}
+
+async function getFoundationState(): Promise<FoundationState> {
+  if (!foundationStatePromise) {
+    foundationStatePromise = initializeFoundationState({
+      stateDir: DECKTERM_STATE_DIR,
+      allowedFileRoots: ALLOWED_FILESYSTEM_ROOTS,
+      env: process.env,
+    });
+  }
+  return foundationStatePromise;
+}
+
+async function requireFoundationBootstrap({
+  actorUserId,
+  action,
+  resourceType,
+  resourceId = null,
+  data = {},
+}: {
+  actorUserId: string;
+  action: string;
+  resourceType: string;
+  resourceId?: string | null;
+  data?: Record<string, unknown>;
+}): Promise<{ ok: true } | { ok: false; status: 403; message: string }> {
+  if (isFoundationLegacyBypassEnabled()) {
+    return { ok: true };
+  }
+
+  const state = await getFoundationState();
+  if (isBootstrapComplete(state)) {
+    return { ok: true };
+  }
+
+  writeAuditEvent(state.db, {
+    actorUserId,
+    action,
+    resourceType,
+    resourceId,
+    decision: "deny",
+    reason: "bootstrap_required",
+    data: {
+      ...data,
+      bootstrapMode: state.bootstrap.mode,
+      bootstrapTokenPath: state.bootstrap.tokenPath,
+    },
+  });
+
+  return {
+    ok: false,
+    status: 403,
+    message: "DeckTerm bootstrap required",
+  };
+}
+
+function foundationBootstrapJson(error: { status: 403; message: string }) {
+  return {
+    error: error.message,
+    message:
+      "DeckTerm foundation state exists, but no admin has completed bootstrap yet.",
+  };
+}
 
 async function getAllowedRealRoots(): Promise<string[]> {
   if (allowedRealRootsCache) return allowedRealRootsCache;
@@ -1557,6 +1631,32 @@ export function createWebApp() {
     });
   });
 
+  app.post("/api/bootstrap", async (c) => {
+    const { ownerId, ownerEmail } = getCurrentUser(c);
+    const body = await c.req.json().catch(() => ({}));
+    const state = await getFoundationState();
+    const result = await bootstrapFirstAdmin({
+      state,
+      stateDir: DECKTERM_STATE_DIR,
+      actorUserId: ownerId,
+      actorEmail: ownerEmail,
+      token: typeof body.token === "string" ? body.token : null,
+      env: process.env,
+    });
+    if (!result.ok) {
+      writeAuditEvent(state.db, {
+        actorUserId: ownerId,
+        action: "bootstrap.admin.create",
+        resourceType: "server",
+        resourceId: "*",
+        decision: "deny",
+        reason: result.error,
+      });
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json({ ok: true, user: result.user });
+  });
+
   // Server stats endpoint (CPU, RAM, Disk)
   app.get("/api/stats", async (c) => {
     const os = await import("os");
@@ -1900,19 +2000,54 @@ export function createWebApp() {
   // Create new terminal running shell
   app.post("/api/terminals", async (c) => {
     const { ownerId, ownerEmail } = getCurrentUser(c);
+    const body = await c.req.json().catch(() => ({}));
+    const foundationAuth = await requireFoundationBootstrap({
+      actorUserId: ownerId,
+      action: "terminal.create",
+      resourceType: "terminal",
+      data: { cwd: body.cwd || process.env.HOME || "/" },
+    });
+    if (!foundationAuth.ok) {
+      return c.json(foundationBootstrapJson(foundationAuth), foundationAuth.status);
+    }
+
+    const requestedCwd = body.cwd || process.env.HOME || "/";
+    const resolvedCwd = await resolveAllowedPath(requestedCwd);
+    if (!resolvedCwd) {
+      const state = await getFoundationState();
+      writeAuditEvent(state.db, {
+        actorUserId: ownerId,
+        action: "terminal.create",
+        resourceType: "root",
+        decision: "deny",
+        reason: "forbidden_root",
+        data: { cwd: requestedCwd },
+      });
+      return c.json({ error: "Forbidden terminal root" }, 403);
+    }
+
     const creationError = getTerminalCreationError(ownerId);
     if (creationError) {
       return c.json(creationError.body, creationError.status);
     }
 
     rateLimitState.record();
-    const body = await c.req.json().catch(() => ({}));
     const terminal = await createOwnedTerminal({
-      cwd: body.cwd || process.env.HOME || "/",
+      cwd: resolvedCwd,
       cols: body.cols || 120,
       rows: body.rows || 30,
       ownerId,
       ownerEmail,
+    });
+
+    const state = await getFoundationState();
+    writeAuditEvent(state.db, {
+      actorUserId: ownerId,
+      action: "terminal.create",
+      resourceType: "terminal",
+      resourceId: terminal.id,
+      decision: "allow",
+      data: { cwd: resolvedCwd },
     });
 
     return c.json(serializeTerminal(terminal));
@@ -2881,11 +3016,6 @@ export async function startWebServer(host: string, port: number) {
         if (!id) {
           return new Response("Terminal ID required", { status: 400 });
         }
-        const term = terminals.get(id);
-
-        if (!term) {
-          return new Response("Terminal not found", { status: 404 });
-        }
 
         const auth = await authenticateWebSocketRequest(req);
         if (!auth.ok) {
@@ -2894,6 +3024,24 @@ export async function startWebServer(host: string, port: number) {
           });
         }
         const ownerId = auth.ownerId;
+        const foundationAuth = await requireFoundationBootstrap({
+          actorUserId: ownerId,
+          action: "terminal.attach",
+          resourceType: "terminal",
+          resourceId: id,
+        });
+        if (!foundationAuth.ok) {
+          return new Response(foundationAuth.message, {
+            status: foundationAuth.status,
+          });
+        }
+
+        const term = terminals.get(id);
+
+        if (!term) {
+          return new Response("Terminal not found", { status: 404 });
+        }
+
         const clientId = url.searchParams.get("clientId")?.trim() || null;
 
         if (term.ownerId !== ownerId) {
