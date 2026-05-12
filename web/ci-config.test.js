@@ -27,6 +27,12 @@ test("dependabot targets the dev integration branch", () => {
   expect(dependabotConfig).toContain('target-branch: "dev"');
 });
 
+test("CI smoke run uses explicit temporary bootstrap compatibility bypass", () => {
+  const ciWorkflow = readText("../.github/workflows/ci.yml");
+
+  expect(ciWorkflow).toContain("DECKTERM_LEGACY_NO_BOOTSTRAP=1");
+});
+
 test("deploy scripts target user-level systemd services", () => {
   const deployScript = readText("../scripts/deploy_release.sh");
   const rollbackScript = readText("../scripts/rollback_release.sh");
