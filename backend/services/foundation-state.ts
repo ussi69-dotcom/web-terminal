@@ -33,6 +33,19 @@ export type InitializeFoundationStateOptions = {
 };
 
 const INITIAL_MIGRATION = 1;
+const C1_AUTH_GRANTS_MIGRATION = 2;
+
+export type ScopedGrantCapability = "terminal.create" | "terminal.attach" | "root.use";
+
+const ADMIN_DEFAULT_GRANTS: Array<{
+  capability: ScopedGrantCapability;
+  resourceType: string;
+  resourceId: string;
+}> = [
+  { capability: "terminal.create", resourceType: "*", resourceId: "*" },
+  { capability: "terminal.attach", resourceType: "*", resourceId: "*" },
+  { capability: "root.use", resourceType: "*", resourceId: "*" },
+];
 
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -99,6 +112,30 @@ export function migrateFoundationDb(db: Database): void {
       data_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS auth_identities (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      provider_subject TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      email TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(provider, provider_subject),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS scoped_grants (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, capability, resource_type, resource_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
   const existing = db
@@ -108,6 +145,15 @@ export function migrateFoundationDb(db: Database): void {
     db.query(
       "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
     ).run(INITIAL_MIGRATION, new Date().toISOString());
+  }
+
+  const c1Existing = db
+    .query("SELECT version FROM schema_migrations WHERE version = ?")
+    .get(C1_AUTH_GRANTS_MIGRATION);
+  if (!c1Existing) {
+    db.query(
+      "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+    ).run(C1_AUTH_GRANTS_MIGRATION, new Date().toISOString());
   }
 }
 
@@ -265,6 +311,7 @@ export async function initializeFoundationState({
 
   const roots = await importProjectRoots({ db, allowedFileRoots, env, now });
   const bootstrap = await ensureBootstrapToken({ db, stateDir, env });
+  ensureExistingAdminGrants(db, now);
 
   return { db, bootstrap, roots };
 }
@@ -301,6 +348,93 @@ export function writeAuditEvent(
   return id;
 }
 
+export function grantScopedCapability(
+  db: Database,
+  grant: {
+    userId: string;
+    capability: ScopedGrantCapability;
+    resourceType: string;
+    resourceId: string;
+    now?: Date;
+  },
+): string {
+  const existing = db
+    .query(
+      `SELECT id FROM scoped_grants
+       WHERE user_id = ? AND capability = ? AND resource_type = ? AND resource_id = ?`,
+    )
+    .get(
+      grant.userId,
+      grant.capability,
+      grant.resourceType,
+      grant.resourceId,
+    ) as { id: string } | null;
+  const id = existing?.id || createId("grant");
+  const timestamp = isoDate(grant.now || new Date());
+  db.query(
+    `INSERT INTO scoped_grants
+      (id, user_id, capability, resource_type, resource_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, capability, resource_type, resource_id) DO UPDATE SET
+       updated_at = excluded.updated_at`,
+  ).run(
+    id,
+    grant.userId,
+    grant.capability,
+    grant.resourceType,
+    grant.resourceId,
+    timestamp,
+    timestamp,
+  );
+  return id;
+}
+
+function ensureDefaultAdminGrants(
+  db: Database,
+  userId: string,
+  now: Date = new Date(),
+): void {
+  for (const grant of ADMIN_DEFAULT_GRANTS) {
+    grantScopedCapability(db, { userId, ...grant, now });
+  }
+}
+
+function ensureExistingAdminGrants(db: Database, now: Date): void {
+  const admins = db
+    .query("SELECT id FROM users WHERE role = 'admin'")
+    .all() as Array<{ id: string }>;
+  for (const admin of admins) {
+    ensureDefaultAdminGrants(db, admin.id, now);
+  }
+}
+
+export function hasScopedGrant(
+  db: Database,
+  grant: {
+    userId: string;
+    capability: ScopedGrantCapability;
+    resourceType: string;
+    resourceId: string;
+  },
+): boolean {
+  const row = db
+    .query(
+      `SELECT 1 AS allowed FROM scoped_grants
+       WHERE user_id = ?
+         AND capability = ?
+         AND (resource_type = ? OR resource_type = '*')
+         AND (resource_id = ? OR resource_id = '*')
+       LIMIT 1`,
+    )
+    .get(
+      grant.userId,
+      grant.capability,
+      grant.resourceType,
+      grant.resourceId,
+    ) as { allowed: number } | null;
+  return Boolean(row);
+}
+
 export function isBootstrapComplete(state: FoundationState): boolean {
   return state.bootstrap.bootstrapped;
 }
@@ -311,6 +445,7 @@ export async function bootstrapFirstAdmin({
   actorUserId,
   actorEmail,
   token,
+  authIdentity,
   env = process.env,
   now = new Date(),
 }: {
@@ -319,6 +454,10 @@ export async function bootstrapFirstAdmin({
   actorUserId: string;
   actorEmail: string;
   token?: string | null;
+  authIdentity?: {
+    provider: string;
+    providerSubject: string;
+  } | null;
   env?: FoundationEnv;
   now?: Date;
 }): Promise<
@@ -374,6 +513,36 @@ export async function bootstrapFirstAdmin({
          updated_at = excluded.updated_at`,
     )
     .run(actorUserId, actorEmail, actorEmail, timestamp, timestamp);
+
+  if (authIdentity?.provider && authIdentity.providerSubject) {
+    const existingIdentity = state.db
+      .query(
+        `SELECT id FROM auth_identities
+         WHERE provider = ? AND provider_subject = ?`,
+      )
+      .get(authIdentity.provider, authIdentity.providerSubject) as { id: string } | null;
+    state.db
+      .query(
+        `INSERT INTO auth_identities
+          (id, provider, provider_subject, user_id, email, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(provider, provider_subject) DO UPDATE SET
+           user_id = excluded.user_id,
+           email = excluded.email,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        existingIdentity?.id || createId("ident"),
+        authIdentity.provider,
+        authIdentity.providerSubject,
+        actorUserId,
+        actorEmail,
+        timestamp,
+        timestamp,
+      );
+  }
+
+  ensureDefaultAdminGrants(state.db, actorUserId, now);
 
   state.bootstrap = {
     bootstrapped: true,

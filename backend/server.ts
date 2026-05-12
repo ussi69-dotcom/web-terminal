@@ -37,11 +37,17 @@ import {
 } from "./tmux-session-names";
 import {
   bootstrapFirstAdmin,
+  hasScopedGrant,
   initializeFoundationState,
   isBootstrapComplete,
   writeAuditEvent,
   type FoundationState,
+  type ScopedGrantCapability,
 } from "./services/foundation-state";
+import {
+  getRouteCapability,
+  isLegacyBootstrapBypassAllowed,
+} from "./services/foundation-authorization";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -574,7 +580,7 @@ let allowedRealRootsCache: string[] | null = null;
 let foundationStatePromise: Promise<FoundationState> | null = null;
 
 function isFoundationLegacyBypassEnabled(): boolean {
-  return process.env.DECKTERM_LEGACY_NO_BOOTSTRAP === "1";
+  return isLegacyBootstrapBypassAllowed(process.env);
 }
 
 async function getFoundationState(): Promise<FoundationState> {
@@ -588,54 +594,87 @@ async function getFoundationState(): Promise<FoundationState> {
   return foundationStatePromise;
 }
 
-async function requireFoundationBootstrap({
+async function requireFoundationCapability({
   actorUserId,
-  action,
+  capability,
   resourceType,
-  resourceId = null,
+  resourceId = "*",
   data = {},
 }: {
   actorUserId: string;
-  action: string;
+  capability: ScopedGrantCapability;
   resourceType: string;
   resourceId?: string | null;
   data?: Record<string, unknown>;
-}): Promise<{ ok: true } | { ok: false; status: 403; message: string }> {
+}): Promise<{ ok: true } | { ok: false; status: 403; message: string; reason: string }> {
   if (isFoundationLegacyBypassEnabled()) {
     return { ok: true };
   }
 
   const state = await getFoundationState();
-  if (isBootstrapComplete(state)) {
-    return { ok: true };
+  if (!isBootstrapComplete(state)) {
+    writeAuditEvent(state.db, {
+      actorUserId,
+      action: capability,
+      resourceType,
+      resourceId,
+      decision: "deny",
+      reason: "bootstrap_required",
+      data: {
+        ...data,
+        bootstrapMode: state.bootstrap.mode,
+        bootstrapTokenPath: state.bootstrap.tokenPath,
+      },
+    });
+
+    return {
+      ok: false,
+      status: 403,
+      message: "DeckTerm bootstrap required",
+      reason: "bootstrap_required",
+    };
   }
 
-  writeAuditEvent(state.db, {
-    actorUserId,
-    action,
-    resourceType,
-    resourceId,
-    decision: "deny",
-    reason: "bootstrap_required",
-    data: {
-      ...data,
-      bootstrapMode: state.bootstrap.mode,
-      bootstrapTokenPath: state.bootstrap.tokenPath,
-    },
-  });
+  if (
+    !hasScopedGrant(state.db, {
+      userId: actorUserId,
+      capability,
+      resourceType,
+      resourceId: resourceId || "*",
+    })
+  ) {
+    writeAuditEvent(state.db, {
+      actorUserId,
+      action: capability,
+      resourceType,
+      resourceId,
+      decision: "deny",
+      reason: "missing_capability",
+      data,
+    });
 
-  return {
-    ok: false,
-    status: 403,
-    message: "DeckTerm bootstrap required",
-  };
+    return {
+      ok: false,
+      status: 403,
+      message: "DeckTerm capability denied",
+      reason: "missing_capability",
+    };
+  }
+
+  return { ok: true };
 }
 
-function foundationBootstrapJson(error: { status: 403; message: string }) {
+function foundationGateJson(error: { message: string; reason: string }) {
+  if (error.reason === "bootstrap_required") {
+    return {
+      error: error.message,
+      message:
+        "DeckTerm foundation state exists, but no admin has completed bootstrap yet.",
+    };
+  }
   return {
     error: error.message,
-    message:
-      "DeckTerm foundation state exists, but no admin has completed bootstrap yet.",
+    message: "The current user is missing the required DeckTerm capability grant.",
   };
 }
 
@@ -1641,6 +1680,9 @@ export function createWebApp() {
       actorUserId: ownerId,
       actorEmail: ownerEmail,
       token: typeof body.token === "string" ? body.token : null,
+      authIdentity: ownerId === "anonymous"
+        ? null
+        : { provider: "cloudflare_access", providerSubject: ownerId },
       env: process.env,
     });
     if (!result.ok) {
@@ -2001,14 +2043,19 @@ export function createWebApp() {
   app.post("/api/terminals", async (c) => {
     const { ownerId, ownerEmail } = getCurrentUser(c);
     const body = await c.req.json().catch(() => ({}));
-    const foundationAuth = await requireFoundationBootstrap({
+    const routeCapability = getRouteCapability(c.req.method, c.req.url);
+    if (!routeCapability) {
+      return c.json({ error: "Missing route capability" }, 500);
+    }
+    const foundationAuth = await requireFoundationCapability({
       actorUserId: ownerId,
-      action: "terminal.create",
-      resourceType: "terminal",
+      capability: routeCapability.capability,
+      resourceType: routeCapability.resourceType,
+      resourceId: routeCapability.resourceId,
       data: { cwd: body.cwd || process.env.HOME || "/" },
     });
     if (!foundationAuth.ok) {
-      return c.json(foundationBootstrapJson(foundationAuth), foundationAuth.status);
+      return c.json(foundationGateJson(foundationAuth), foundationAuth.status);
     }
 
     const requestedCwd = body.cwd || process.env.HOME || "/";
@@ -2024,6 +2071,17 @@ export function createWebApp() {
         data: { cwd: requestedCwd },
       });
       return c.json({ error: "Forbidden terminal root" }, 403);
+    }
+
+    const rootAuth = await requireFoundationCapability({
+      actorUserId: ownerId,
+      capability: "root.use",
+      resourceType: "root",
+      resourceId: resolvedCwd,
+      data: { cwd: resolvedCwd },
+    });
+    if (!rootAuth.ok) {
+      return c.json(foundationGateJson(rootAuth), rootAuth.status);
     }
 
     const creationError = getTerminalCreationError(ownerId);
@@ -3024,11 +3082,15 @@ export async function startWebServer(host: string, port: number) {
           });
         }
         const ownerId = auth.ownerId;
-        const foundationAuth = await requireFoundationBootstrap({
+        const routeCapability = getRouteCapability(req.method, url.pathname);
+        if (!routeCapability) {
+          return new Response("Missing route capability", { status: 500 });
+        }
+        const foundationAuth = await requireFoundationCapability({
           actorUserId: ownerId,
-          action: "terminal.attach",
-          resourceType: "terminal",
-          resourceId: id,
+          capability: routeCapability.capability,
+          resourceType: routeCapability.resourceType,
+          resourceId: routeCapability.resourceId,
         });
         if (!foundationAuth.ok) {
           return new Response(foundationAuth.message, {
