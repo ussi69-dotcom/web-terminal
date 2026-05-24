@@ -7354,28 +7354,32 @@ class TerminalManager {
         headers: { "X-DeckTerm-Client-Id": this.clientInstanceId },
       });
       const serverTerminals = await res.json();
+      const reconnectableTerminals = serverTerminals.filter(
+        (terminal) =>
+          terminal?.sessionStatus !== "ended" && terminal?.status !== "inactive",
+      );
 
-      if (serverTerminals.length > 0) {
+      if (reconnectableTerminals.length > 0) {
         dbg(
-          `[DeckTerm] Reconnecting to ${serverTerminals.length} existing terminal(s)...`,
+          `[DeckTerm] Reconnecting to ${reconnectableTerminals.length} existing terminal(s)...`,
         );
 
         // Clean up stale sessions from registry
-        this.sessionRegistry.cleanup(serverTerminals.map((t) => t.id));
+        this.sessionRegistry.cleanup(reconnectableTerminals.map((t) => t.id));
 
         const savedSessionsById = Object.fromEntries(
-          serverTerminals
+          reconnectableTerminals
             .map((t) => [t.id, this.sessionRegistry.get(t.id)])
             .filter(([, savedSession]) => Boolean(savedSession)),
         );
         const bootstrapActions =
           window.BootstrapRouting?.planBootstrapTerminals?.({
-            serverTerminals,
+            serverTerminals: reconnectableTerminals,
             savedSessionsById,
           }) || [];
 
         for (const action of bootstrapActions) {
-          const terminalInfo = serverTerminals.find(
+          const terminalInfo = reconnectableTerminals.find(
             (terminal) => terminal.id === action.terminalId,
           );
           if (!terminalInfo) continue;

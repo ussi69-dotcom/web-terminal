@@ -412,6 +412,40 @@ export function getTerminalSession(
   };
 }
 
+export function listTerminalSessionsForActor(
+  db: Database,
+  actorUserId: string,
+): RecordedTerminalSession[] {
+  const rows = db
+    .query(
+      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at
+       FROM terminal_sessions
+       WHERE actor_user_id = ?
+       ORDER BY created_at DESC`,
+    )
+    .all(actorUserId) as Array<{
+    id: string;
+    actor_user_id: string | null;
+    root_id: string | null;
+    cwd: string;
+    status: "active" | "ended";
+    created_at: string;
+    updated_at: string;
+    ended_at: string | null;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    rootId: row.root_id,
+    cwd: row.cwd,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    endedAt: row.ended_at,
+  }));
+}
+
 export function writeAuditEvent(
   db: Database,
   event: {

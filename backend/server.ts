@@ -42,10 +42,12 @@ import {
   hasScopedGrant,
   initializeFoundationState,
   isBootstrapComplete,
+  listTerminalSessionsForActor,
   markTerminalSessionEnded,
   recordTerminalSession,
   writeAuditEvent,
   type FoundationState,
+  type RecordedTerminalSession,
   type ScopedGrantCapability,
 } from "./services/foundation-state";
 import {
@@ -241,9 +243,14 @@ const HOP_BY_HOP_HEADERS = [
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
 const terminalSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
+type TerminalReconnectState = {
+  pendingReady: boolean;
+  replaying: boolean;
+  replayMode: "tmux" | "raw" | null;
+};
 const socketReconnectState = new WeakMap<
   ServerWebSocket<WsData>,
-  { pendingReady: boolean }
+  TerminalReconnectState
 >();
 const utf8Decoder = new TextDecoder();
 let bashIntegrationRcPathPromise: Promise<string> | null = null;
@@ -585,7 +592,7 @@ async function recoverTmuxSessions(): Promise<number> {
         },
         hasUserPrompted: true,
       });
-      await createManagedTerminal({
+      const recoveredTerminal = await createManagedTerminal({
         id,
         cwd: recordedSession.cwd || cwd,
         cols,
@@ -597,6 +604,7 @@ async function recoverTmuxSessions(): Promise<number> {
         initialLastExitCode: recoveredRuntimeState.lastExitCode,
         initialScrollback: paneCapture,
       });
+      recoveredTerminal.hadSocketConnection = true;
 
       recovered++;
       console.log(
@@ -621,6 +629,73 @@ function resolveRecoveredOwnerEmail(
     .query("SELECT email FROM users WHERE id = ?")
     .get(actorUserId) as { email: string | null } | null;
   return row?.email || actorUserId;
+}
+
+async function tmuxSessionExists(sessionName: string): Promise<boolean> {
+  if (!TMUX_BACKEND) return false;
+  const proc = spawnTmux(["has-session", "-t", sessionName], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitCode = await proc.exited;
+  return exitCode === 0;
+}
+
+async function restoreRecordedTmuxSession(
+  state: FoundationState,
+  recordedSession: RecordedTerminalSession,
+): Promise<Terminal | null> {
+  if (!TMUX_BACKEND || recordedSession.status !== "active") return null;
+
+  const existing = terminals.get(recordedSession.id);
+  if (existing) return existing;
+
+  const sessionName = buildTmuxSessionName({
+    namespace: TMUX_SESSION_NAMESPACE,
+    terminalId: recordedSession.id,
+  });
+  if (!(await tmuxSessionExists(sessionName))) {
+    markTerminalSessionEnded(state.db, recordedSession.id);
+    return null;
+  }
+
+  const ownerId = recordedSession.actorUserId || "unknown";
+  const ownerEmail = resolveRecoveredOwnerEmail(
+    state,
+    recordedSession.actorUserId,
+  );
+  const { cwd, cols, rows, panePid, paneCurrentCommand } =
+    await getTmuxSessionInfo(sessionName);
+  const paneCapture = await captureTmuxPane(sessionName);
+  const processTree = panePid > 0 ? await getProcessTreeArgs(panePid) : [];
+  const recoveredRuntimeState = inferTmuxRuntimeState({
+    paneCurrentCommand,
+    processTree,
+    capture: paneCapture,
+    previousCapture: "",
+    previousState: {
+      running: false,
+      lastExitCode: null,
+      agentName: null,
+      agentState: null,
+    },
+    hasUserPrompted: true,
+  });
+
+  const restoredTerminal = await createManagedTerminal({
+    id: recordedSession.id,
+    cwd: recordedSession.cwd || cwd,
+    cols,
+    rows,
+    ownerId,
+    ownerEmail,
+    sessionName,
+    initialRuntimeState: recoveredRuntimeState,
+    initialLastExitCode: recoveredRuntimeState.lastExitCode,
+    initialScrollback: paneCapture,
+  });
+  restoredTerminal.hadSocketConnection = true;
+  return restoredTerminal;
 }
 
 // Debug logger
@@ -737,7 +812,7 @@ function ensureTerminalSessionRecorded(state: FoundationState, term: Terminal) {
     actorUserId: term.ownerId,
     rootId: resolveFoundationRootIdForPath(state, term.cwd),
     cwd: term.cwd,
-    status: term.running ? "active" : "ended",
+    status: "active",
   });
 }
 
@@ -1094,6 +1169,7 @@ function serializeTerminal(term: Terminal, requestingClientId?: string | null) {
     cols: term.cols,
     rows: term.rows,
     cwd: term.cwd,
+    createdAt: term.createdAt,
     running: term.running,
     lastExitCode: term.lastExitCode,
     agentName: term.agentName,
@@ -1103,6 +1179,53 @@ function serializeTerminal(term: Terminal, requestingClientId?: string | null) {
     sharedSessionKey: term.sessionName || null,
     activeConnectionCount: socketStats.activeConnectionCount,
     hasForeignConnection: socketStats.hasForeignConnection,
+    active: true,
+    status: "active" as const,
+    sessionStatus: "active" as const,
+  };
+}
+
+function parseSessionTimestamp(timestamp: string): number {
+  const millis = Date.parse(timestamp);
+  return Number.isFinite(millis) ? millis : 0;
+}
+
+function getRecordedSessionCatalogStatus(
+  session: RecordedTerminalSession,
+): "detached" | "inactive" {
+  return session.status === "active" ? "detached" : "inactive";
+}
+
+function serializeRecordedTerminalSession(session: RecordedTerminalSession) {
+  const status = getRecordedSessionCatalogStatus(session);
+  const sharedSessionKey =
+    TMUX_BACKEND && session.status === "active"
+      ? buildTmuxSessionName({
+          namespace: TMUX_SESSION_NAMESPACE,
+          terminalId: session.id,
+        })
+      : null;
+
+  return {
+    id: session.id,
+    cols: 120,
+    rows: 30,
+    cwd: session.cwd,
+    createdAt: parseSessionTimestamp(session.createdAt),
+    updatedAt: session.updatedAt,
+    endedAt: session.endedAt,
+    running: false,
+    lastExitCode: session.status === "ended" ? 0 : null,
+    agentName: null,
+    agentState: null,
+    backendMode: getBackendMode(),
+    supportsLinkedView: Boolean(TMUX_BACKEND && sharedSessionKey),
+    sharedSessionKey,
+    activeConnectionCount: 0,
+    hasForeignConnection: false,
+    active: false,
+    status,
+    sessionStatus: session.status,
   };
 }
 
@@ -1207,6 +1330,10 @@ function broadcastTerminalOutput(id: string, data: string) {
   if (!sockets || sockets.size === 0) return;
   debug(`PTY ${id} data (${data.length} bytes)`);
   for (const ws of sockets) {
+    const reconnectState = socketReconnectState.get(ws);
+    if (reconnectState?.pendingReady || reconnectState?.replaying) {
+      continue;
+    }
     try {
       ws.send(data);
     } catch {
@@ -1509,6 +1636,76 @@ async function sendTmuxPaneCapture(
     `[reconnect] Sent ${output.length} bytes from tmux ${reason} for ${terminalId}`,
   );
   return true;
+}
+
+function replayScrollbackFallback(
+  ws: ServerWebSocket<WsData>,
+  term: Terminal,
+  terminalId: string,
+): boolean {
+  const buffered = getScrollbackSnapshot(term);
+  if (buffered && ws.readyState === 1) {
+    ws.send(buffered);
+    debug(
+      `[reconnect] Replayed ${buffered.length} bytes from in-memory scrollback for ${terminalId}`,
+    );
+    return true;
+  }
+  return false;
+}
+
+async function completeTmuxReconnectReplay(
+  ws: ServerWebSocket<WsData>,
+  terminalId: string,
+  term: Terminal,
+  reason: "client-ready" | "timeout" = "client-ready",
+): Promise<void> {
+  const reconnectState = socketReconnectState.get(ws);
+  if (!reconnectState || reconnectState.replaying || ws.readyState !== 1) {
+    return;
+  }
+
+  reconnectState.replaying = true;
+  reconnectState.pendingReady = true;
+  try {
+    if (term.sessionName) {
+      await syncTmuxSessionSize(term.sessionName, term.cols, term.rows, {
+        waitForClient: reason === "client-ready",
+      });
+      const replayed = await sendTmuxPaneCapture(
+        ws,
+        term.sessionName,
+        terminalId,
+        {
+          waitMs: reason === "client-ready" ? 80 : 120,
+          reason,
+        },
+      );
+      if (!replayed) {
+        replayScrollbackFallback(ws, term, terminalId);
+      }
+    } else {
+      replayScrollbackFallback(ws, term, terminalId);
+    }
+
+    sendReconnectLifecycle(ws, "replay-complete", {
+      requiresRedraw: false,
+    });
+  } catch (err) {
+    debug(
+      `[reconnect] tmux replay failed for ${terminalId}, falling back to in-memory buffer`,
+      err,
+    );
+    replayScrollbackFallback(ws, term, terminalId);
+    sendReconnectLifecycle(ws, "replay-complete", {
+      requiresRedraw: false,
+    });
+  } finally {
+    reconnectState.replaying = false;
+    reconnectState.pendingReady = false;
+    sendReconnectLifecycle(ws, "ready");
+    socketReconnectState.delete(ws);
+  }
 }
 
 async function getProcessTreeArgs(rootPid: number): Promise<string[]> {
@@ -2413,20 +2610,79 @@ export function createWebApp() {
     const requestingClientId =
       c.req.header("x-deckterm-client-id")?.trim() || null;
     const backendMode = getBackendMode();
+    const state = await getFoundationState();
+    const recordedSessions = listTerminalSessionsForActor(state.db, ownerId);
+    const seenIds = new Set<string>();
+
     const list = await Promise.all(
+      recordedSessions.map(async (recordedSession) => {
+        const restoredTerm =
+          terminals.get(recordedSession.id) ||
+          (recordedSession.status === "active"
+            ? await restoreRecordedTmuxSession(state, recordedSession)
+            : null);
+
+        if (restoredTerm) {
+          seenIds.add(restoredTerm.id);
+          if (TMUX_BACKEND && restoredTerm.sessionName) {
+            await syncTmuxRuntimeState(restoredTerm).catch((err) => {
+              debug(`[tmux] runtime sync failed for ${restoredTerm.id}:`, err);
+            });
+          }
+
+          return {
+            ...serializeTerminal(restoredTerm, requestingClientId),
+            ...(await getTerminalTelemetry(restoredTerm, backendMode, {
+              detectWorktree: detectGitWorktree,
+            })),
+          };
+        }
+
+        seenIds.add(recordedSession.id);
+        const effectiveSession =
+          recordedSession.status === "active"
+            ? !TMUX_BACKEND
+              ? (markTerminalSessionEnded(state.db, recordedSession.id),
+                getTerminalSession(state.db, recordedSession.id) || recordedSession)
+              : getTerminalSession(state.db, recordedSession.id) || recordedSession
+            : recordedSession;
+        const serialized = serializeRecordedTerminalSession(effectiveSession);
+        return {
+          ...serialized,
+          ...(await getTerminalTelemetry(
+            {
+              cwd: effectiveSession.cwd,
+              createdAt: parseSessionTimestamp(effectiveSession.createdAt),
+              lastActivityAt: parseSessionTimestamp(
+                effectiveSession.updatedAt || effectiveSession.createdAt,
+              ),
+              scrollback: [],
+              running: false,
+              lastExitCode: serialized.lastExitCode,
+              agentName: null,
+              agentState: null,
+            },
+            backendMode,
+            { detectWorktree: detectGitWorktree },
+          )),
+          active: serialized.active,
+          status: serialized.status,
+          sessionStatus: serialized.sessionStatus,
+        };
+      }),
+    );
+
+    const memoryOnly = await Promise.all(
       Array.from(terminals.values())
-        .filter((t) => t.ownerId === ownerId)
+        .filter((t) => t.ownerId === ownerId && !seenIds.has(t.id))
         .map(async (t) => {
+          ensureTerminalSessionRecorded(state, t);
           if (TMUX_BACKEND && t.sessionName) {
             await syncTmuxRuntimeState(t).catch((err) => {
               debug(`[tmux] runtime sync failed for ${t.id}:`, err);
             });
           }
-
           return {
-            id: t.id,
-            cwd: t.cwd,
-            createdAt: t.createdAt,
             ...serializeTerminal(t, requestingClientId),
             ...(await getTerminalTelemetry(t, backendMode, {
               detectWorktree: detectGitWorktree,
@@ -2434,7 +2690,8 @@ export function createWebApp() {
           };
         }),
     );
-    return c.json(list);
+
+    return c.json([...list, ...memoryOnly]);
   });
 
   // Delete terminal
@@ -3365,7 +3622,14 @@ export async function startWebServer(host: string, port: number) {
           return new Response("DeckTerm bootstrap required", { status: 403 });
         }
 
-        const term = terminals.get(id);
+        let term = terminals.get(id);
+
+        if (!term) {
+          const recordedSession = getTerminalSession(state.db, id);
+          term = recordedSession
+            ? ((await restoreRecordedTmuxSession(state, recordedSession)) ?? undefined)
+            : undefined;
+        }
 
         if (!term) {
           return new Response("Terminal not found", { status: 404 });
@@ -3377,7 +3641,7 @@ export async function startWebServer(host: string, port: number) {
             actorUserId: term.ownerId,
             rootId: resolveFoundationRootIdForPath(state, term.cwd),
             cwd: term.cwd,
-            status: term.running ? "active" : "ended",
+            status: "active",
           });
         }
 
@@ -3469,54 +3733,27 @@ export async function startWebServer(host: string, port: number) {
         const socketsCount = sockets.size;
         const isReconnect = term.hadSocketConnection;
         term.hadSocketConnection = true;
-        socketReconnectState.set(ws, { pendingReady: isReconnect });
+        socketReconnectState.set(ws, {
+          pendingReady: isReconnect,
+          replaying: false,
+          replayMode: isReconnect
+            ? TMUX_BACKEND && term.sessionName
+              ? "tmux"
+              : "raw"
+            : null,
+        });
 
         console.log(
           `[ws] WebSocket connected for ${terminalId} (${term.cols}x${term.rows}), sockets: ${socketsCount}, reconnect: ${isReconnect}`,
         );
 
         if (isReconnect) {
-          const replayBufferFallback = () => {
-            const buffered = getScrollbackSnapshot(term);
-            if (buffered && ws.readyState === 1) {
-              ws.send(buffered);
-              debug(
-                `[reconnect] Replayed ${buffered.length} bytes from in-memory scrollback for ${terminalId}`,
-              );
-              return true;
+          sendReconnectLifecycle(ws, "replay-start");
+          setTimeout(() => {
+            if (socketReconnectState.get(ws)?.pendingReady) {
+              void completeTmuxReconnectReplay(ws, terminalId, term, "timeout");
             }
-            return false;
-          };
-
-          (async () => {
-            let replayed = false;
-
-            sendReconnectLifecycle(ws, "replay-start");
-
-            if (TMUX_BACKEND && term.sessionName) {
-              try {
-                replayed = await sendTmuxPaneCapture(
-                  ws,
-                  term.sessionName,
-                  terminalId,
-                  { reason: "capture" },
-                );
-              } catch (err) {
-                debug(
-                  `[reconnect] tmux capture failed for ${terminalId}, falling back to in-memory buffer`,
-                  err,
-                );
-              }
-            }
-
-            if (!replayed) {
-              replayBufferFallback();
-            }
-
-            sendReconnectLifecycle(ws, "replay-complete", {
-              requiresRedraw: !TMUX_BACKEND,
-            });
-          })();
+          }, 750);
         }
       },
 
@@ -3593,8 +3830,12 @@ export async function startWebServer(host: string, port: number) {
               if (parsed.type === "resume-ready") {
                 const reconnectState = socketReconnectState.get(ws);
                 if (!reconnectState?.pendingReady) return;
-                reconnectState.pendingReady = false;
-                void finalizeReconnectReady(ws, terminalId, term);
+                void completeTmuxReconnectReplay(
+                  ws,
+                  terminalId,
+                  term,
+                  "client-ready",
+                );
                 return;
               }
             } catch {
