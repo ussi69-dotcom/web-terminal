@@ -3721,6 +3721,20 @@ class TerminalManager {
     this.setupToolsSheet();
     this.setupTaskPanel();
     this.setupSetupPanel();
+    this.setupSessionsPanel();
+
+    // Sessions button trigger
+    const sessionsBtn = document.getElementById("sessions-btn");
+    if (sessionsBtn) {
+      sessionsBtn.addEventListener("click", () => {
+        const panel = this.getSessionsPanel();
+        if (panel && !panel.classList.contains("hidden")) {
+          this.closeSessionsPanel();
+        } else {
+          this.openSessionsPanel();
+        }
+      });
+    }
     this.setupLayoutEditor();
     this.setupDesktopTabOverflowScroll();
     this.syncToolbarOverlayOffset();
@@ -4632,6 +4646,72 @@ class TerminalManager {
 
   getSetupPanel() {
     return document.getElementById("setup-panel");
+  }
+
+  getSessionsPanel() {
+    return document.getElementById("sessions-panel");
+  }
+
+  setupSessionsPanel() {
+    const panel = this.getSessionsPanel();
+    if (!panel) return;
+    panel.querySelector(".task-panel-backdrop")?.addEventListener("click", () => this.closeSessionsPanel());
+    panel.querySelector("#sessions-panel-close")?.addEventListener("click", () => this.closeSessionsPanel());
+    panel.querySelector("#sessions-refresh-btn")?.addEventListener("click", () => this.refreshSessionsPanel());
+    panel.querySelector("#sessions-list")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-session-id]");
+      if (!button) return;
+      const sessionId = button.dataset.sessionId;
+      if (sessionId) this.switchTo(sessionId);
+    });
+  }
+
+  openSessionsPanel() {
+    const panel = this.getSessionsPanel();
+    if (!panel) return;
+    this.closeToolsSheet();
+    this.closeTaskPanel();
+    this.closeSetupPanel();
+    panel.classList.remove("hidden");
+    panel.setAttribute("aria-hidden", "false");
+    void this.refreshSessionsPanel();
+    this.syncSurfaceButtonState();
+  }
+
+  closeSessionsPanel() {
+    const panel = this.getSessionsPanel();
+    if (!panel) return;
+    panel.classList.add("hidden");
+    panel.setAttribute("aria-hidden", "true");
+    this.syncSurfaceButtonState();
+  }
+
+  async refreshSessionsPanel() {
+    const list = document.getElementById("sessions-list");
+    if (!list) return;
+    list.innerHTML = "<div class='task-item'>Loading sessions…</div>";
+    try {
+      const res = await fetch("/api/terminals", { headers: { "x-deckterm-client-id": this.clientInstanceId } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const sessions = await res.json();
+      if (!sessions.length) {
+        list.innerHTML = "<div class='task-item'>No sessions yet.</div>";
+        return;
+      }
+      list.innerHTML = sessions.map((s) => {
+        const isActive = this.terminals.has(s.id);
+        const status = s.sessionStatus || s.status || "unknown";
+        const mode = s.mode || "write";
+        const cwd = this.escapeHtml ? this.escapeHtml(s.cwd || "") : (s.cwd || "");
+        return `<button class="task-item" type="button" data-session-id="${s.id}" style="width: 100%; text-align: left;">
+          <strong>${isActive ? "●" : "○"} ${s.id.slice(0, 8)}</strong>
+          <div>${cwd}</div>
+          <small>${status} · ${mode}${s.sessionName ? " · tmux" : ""}</small>
+        </button>`;
+      }).join("");
+    } catch (err) {
+      list.innerHTML = `<div class='task-item'>Failed to load sessions: ${err.message}</div>`;
+    }
   }
 
   setTaskStatus(message) {

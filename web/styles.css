@@ -402,6 +402,18 @@ body {
   display: none;
 }
 
+.tab[data-mode="read"] {
+  border-color: #f59e0b !important;
+}
+
+.tab[data-mode="read"] .tab-label::after {
+  content: " (Monitor)";
+  color: #f59e0b;
+  font-weight: bold;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
 .tab[data-primary-signal="running"] {
   border-color: rgba(248, 81, 73, 0.35);
 }

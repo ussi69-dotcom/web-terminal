@@ -37,6 +37,11 @@
             <span class="btn-label">New</span>
           </button>
 
+          <button id="sessions-btn" class="btn btn-secondary" title="Sessions (C1b)" style="margin-left: 5px;">
+            <i data-lucide="terminal"></i>
+            <span class="btn-label">Sessions</span>
+          </button>
+
           <div
             id="terminals-tabs"
             class="tabs"
@@ -331,6 +336,40 @@
             <h4>Doctor Output</h4>
             <pre id="setup-output-text"></pre>
           </section>
+        </section>
+      </div>
+
+      <!-- Sessions Panel (C1b) -->
+      <div id="sessions-panel" class="task-panel hidden" aria-hidden="true">
+        <div class="task-panel-backdrop"></div>
+        <section
+          class="task-panel-shell"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sessions-panel-title"
+        >
+          <div class="task-panel-header">
+            <div>
+              <div class="task-panel-kicker">Session Manager</div>
+              <h3 id="sessions-panel-title">Sessions</h3>
+            </div>
+            <button
+              id="sessions-panel-close"
+              class="btn-icon"
+              title="Close sessions panel"
+              aria-label="Close"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div style="padding: 15px; display: flex; flex-direction: column; gap: 12px; height: calc(100% - 70px); overflow-y: auto;">
+            <button id="sessions-refresh-btn" class="btn btn-secondary btn-block">
+              Refresh Catalog
+            </button>
+            <div id="sessions-list" class="task-list" style="margin-top: 10px;">
+              <!-- Dynamically loaded sessions -->
+            </div>
+          </div>
         </section>
       </div>
 
