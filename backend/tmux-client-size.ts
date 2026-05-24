@@ -7,6 +7,7 @@ type SyncTmuxSessionClientsOptions = {
   waitForClient?: boolean;
   maxAttempts?: number;
   delayMs?: number;
+  socketPath?: string;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -69,14 +70,17 @@ export function buildTmuxClientResizeCommands(
 
 async function listTmuxSessionClients(
   sessionName: string,
+  socketPath?: string,
 ): Promise<TmuxSessionClient[]> {
+  const command = [
+    "tmux",
+    ...(socketPath ? ["-S", socketPath] : []),
+    "list-clients",
+    "-F",
+    "#{client_tty}\t#{client_pid}\t#{session_name}",
+  ];
   const clientProc = Bun.spawn(
-    [
-      "tmux",
-      "list-clients",
-      "-F",
-      "#{client_tty}\t#{client_pid}\t#{session_name}",
-    ],
+    command,
     { stdout: "pipe", stderr: "pipe" },
   );
   const output = await new Response(clientProc.stdout).text();
@@ -90,13 +94,18 @@ export async function syncTmuxSessionClients(
   rows: number,
   options: SyncTmuxSessionClientsOptions = {},
 ): Promise<number> {
-  const { waitForClient = false, maxAttempts = 6, delayMs = 25 } = options;
+  const {
+    waitForClient = false,
+    maxAttempts = 6,
+    delayMs = 25,
+    socketPath,
+  } = options;
 
   let clients: TmuxSessionClient[] = [];
   const attempts = waitForClient ? Math.max(1, maxAttempts) : 1;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
-    clients = await listTmuxSessionClients(sessionName);
+    clients = await listTmuxSessionClients(sessionName, socketPath);
     if (clients.length > 0) break;
     if (attempt + 1 < attempts) {
       await sleep(delayMs);

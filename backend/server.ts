@@ -6,7 +6,7 @@ import {
   cloudflareAccess,
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
-import { mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   classifyAgentOutputPhase,
@@ -31,6 +31,7 @@ import {
 import { syncTmuxSessionClients } from "./tmux-client-size";
 import {
   buildTmuxSessionName,
+  getTmuxSocketPath,
   getTmuxSessionPrefix,
   parseTmuxSessionName,
   resolveTmuxSessionNamespace,
@@ -193,6 +194,7 @@ const TMUX_SESSION_NAMESPACE = resolveTmuxSessionNamespace({
   port: process.env.PORT,
 });
 const TMUX_SESSION_PREFIX = getTmuxSessionPrefix(TMUX_SESSION_NAMESPACE);
+const TMUX_SOCKET_PATH = getTmuxSocketPath(TMUX_SESSION_NAMESPACE);
 const TMUX_PIPE_DIR = "/tmp/deckterm-tmux-pipes";
 const SCROLLBACK_MAX_LINES = parseInt(
   process.env.SCROLLBACK_MAX_LINES || "2000",
@@ -247,6 +249,10 @@ const utf8Decoder = new TextDecoder();
 let bashIntegrationRcPathPromise: Promise<string> | null = null;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function spawnTmux(args: string[], options?: any) {
+  return Bun.spawn(["tmux", "-S", TMUX_SOCKET_PATH, ...args], options);
+}
 
 function hasVisibleUserInput(data: string | Uint8Array) {
   const text = typeof data === "string" ? data : utf8Decoder.decode(data);
@@ -517,8 +523,10 @@ async function recoverTmuxSessions(): Promise<number> {
   if (!TMUX_BACKEND) return 0;
 
   try {
-    const result = Bun.spawn([
-      "tmux",
+    await mkdir("/tmp/deckterm", { recursive: true });
+    await chmod("/tmp/deckterm", 0o700);
+
+    const result = spawnTmux([
       "list-sessions",
       "-F",
       "#{session_name}",
@@ -1339,7 +1347,7 @@ async function killTmuxSessionIfLast(
   }
 
   debug(`[tmux] Killing session ${sessionName}`);
-  const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName]);
+  const killProc = spawnTmux(["kill-session", "-t", sessionName]);
   const exitCode = await killProc.exited;
   if (exitCode !== 0) {
     debug(`[tmux] kill-session returned ${exitCode} for ${sessionName}`);
@@ -1349,8 +1357,7 @@ async function killTmuxSessionIfLast(
 }
 
 async function hideTmuxStatusBar(sessionName: string) {
-  const hideStatusProc = Bun.spawn([
-    "tmux",
+  const hideStatusProc = spawnTmux([
     "set-option",
     "-t",
     sessionName,
@@ -1367,8 +1374,7 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
   panePid: number;
   paneCurrentCommand: string;
 }> {
-  const infoResult = Bun.spawn([
-    "tmux",
+  const infoResult = spawnTmux([
     "display-message",
     "-t",
     sessionName,
@@ -1394,8 +1400,8 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
 }
 
 async function captureTmuxPane(sessionName: string): Promise<string> {
-  const captureProc = Bun.spawn(
-    ["tmux", "capture-pane", "-ep", "-S", "-2000", "-t", sessionName],
+  const captureProc = spawnTmux(
+    ["capture-pane", "-ep", "-S", "-2000", "-t", sessionName],
     { stdout: "pipe", stderr: "pipe" },
   );
   const output = await new Response(captureProc.stdout).text();
@@ -1412,8 +1418,8 @@ async function ensureTmuxPipeCapture(
   pipePath: string,
 ): Promise<void> {
   await mkdir(TMUX_PIPE_DIR, { recursive: true });
-  const pipeProc = Bun.spawn(
-    ["tmux", "pipe-pane", "-o", "-t", sessionName, `cat >> ${pipePath}`],
+  const pipeProc = spawnTmux(
+    ["pipe-pane", "-o", "-t", sessionName, `cat >> ${pipePath}`],
     { stdout: "pipe", stderr: "pipe" },
   );
   await pipeProc.exited;
@@ -1448,8 +1454,7 @@ async function syncTmuxSessionSize(
   rows: number,
   options: { waitForClient?: boolean } = {},
 ): Promise<void> {
-  const resizeWindowProc = Bun.spawn([
-    "tmux",
+  const resizeWindowProc = spawnTmux([
     "resize-window",
     "-t",
     sessionName,
@@ -1460,8 +1465,7 @@ async function syncTmuxSessionSize(
   ]);
   await resizeWindowProc.exited;
 
-  const resizePaneProc = Bun.spawn([
-    "tmux",
+  const resizePaneProc = spawnTmux([
     "resize-pane",
     "-t",
     sessionName,
@@ -1474,6 +1478,7 @@ async function syncTmuxSessionSize(
 
   await syncTmuxSessionClients(sessionName, cols, rows, {
     waitForClient: options.waitForClient,
+    socketPath: TMUX_SOCKET_PATH,
   });
 }
 
@@ -1667,9 +1672,8 @@ async function createManagedTerminal({
   if (TMUX_BACKEND && sessionName) {
     if (createTmuxSession) {
       debug(`Creating tmux session: ${sessionName}`);
-      const createProc = Bun.spawn(
+      const createProc = spawnTmux(
         [
-          "tmux",
           "new-session",
           "-d",
           "-s",
@@ -1703,7 +1707,7 @@ async function createManagedTerminal({
       tmuxPipeOffset = 0;
     }
 
-    proc = Bun.spawn(["tmux", "attach-session", "-t", sessionName], {
+    proc = spawnTmux(["attach-session", "-t", sessionName], {
       cwd,
       env: {
         ...process.env,

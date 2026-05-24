@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildTmuxSessionName,
+  getTmuxSocketPath,
   getTmuxSessionPrefix,
   parseTmuxSessionName,
   resolveTmuxSessionNamespace,
@@ -18,6 +19,15 @@ test("resolveTmuxSessionNamespace honors explicit override", () => {
       port: 4174,
     }),
   ).toBe("devalpha");
+});
+
+test("getTmuxSocketPath derives isolated socket path from namespace", () => {
+  expect(getTmuxSocketPath("Dev Alpha")).toBe(
+    "/tmp/deckterm/deckterm_devalpha.sock",
+  );
+  expect(getTmuxSocketPath("!!!")).toBe(
+    "/tmp/deckterm/deckterm_default.sock",
+  );
 });
 
 test("buildTmuxSessionName includes namespace and opaque id only", () => {

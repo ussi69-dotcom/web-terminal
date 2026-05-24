@@ -37,6 +37,14 @@ export function getTmuxSessionPrefix(namespace: unknown) {
   })}`;
 }
 
+export function getTmuxSocketPath(namespace: unknown): string {
+  const safeNamespace = sanitizeTmuxToken(namespace, {
+    fallback: "default",
+    maxLength: 24,
+  });
+  return `/tmp/deckterm/deckterm_${safeNamespace}.sock`;
+}
+
 export function buildTmuxSessionName({
   namespace,
   terminalId,
