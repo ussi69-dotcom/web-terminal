@@ -2018,30 +2018,36 @@ body.touch-input-mode .xterm .composition-view.active {
 
 .setup-state-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+  gap: 8px;
 }
 
 .setup-state-row {
   display: grid;
-  gap: 3px;
+  gap: 6px;
   min-width: 0;
-  padding: 7px 9px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.14);
+  align-content: start;
+}
+
+.setup-state-row-wide {
+  grid-column: 1 / -1;
 }
 
 .setup-state-row span {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .setup-state-row strong {
   color: var(--text-primary);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: break-word;
 }
 
 .setup-remediation-detail {

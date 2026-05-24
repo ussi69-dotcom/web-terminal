@@ -402,7 +402,7 @@ test.describe("Workspace telemetry contract", () => {
       })
       .toEqual({
         primarySignal: "agent-responding",
-        badgeText: "Codex Responding",
+        badgeText: "Codex",
       });
 
     await page.waitForTimeout(500);
@@ -417,7 +417,7 @@ test.describe("Workspace telemetry contract", () => {
       })
       .toEqual({
         primarySignal: "agent-responding",
-        badgeText: "Codex Responding",
+        badgeText: "Codex",
       });
 
     await page.waitForTimeout(900);
@@ -504,7 +504,7 @@ test.describe("Workspace telemetry contract", () => {
       })
       .toEqual({
         primarySignal: "agent-responding",
-        badgeText: "Claude Responding",
+        badgeText: "Claude",
       });
 
     await page.waitForTimeout(1100);
@@ -517,7 +517,7 @@ test.describe("Workspace telemetry contract", () => {
       })),
     ).resolves.toEqual({
       primarySignal: "agent-responding",
-      badgeText: "Claude Responding",
+      badgeText: "Claude",
     });
   });
 
@@ -710,13 +710,13 @@ test.describe("Workspace telemetry contract", () => {
     expect(merged.folderSummary).toContain("alpha-service");
     expect(merged.folderSummary).toContain("beta-worker");
     expect(merged.statusSummary).toContain("Running");
-    expect(merged.statusSummary).toContain("Codex Responding");
+    expect(merged.statusSummary).toContain("Codex");
     expect(merged.badgeHidden).toBe(true);
     expect(merged.title).toContain("/tmp/alpha-service");
     expect(merged.title).toContain("/tmp/beta-worker");
     expect(merged.title).toContain("/tmp/gamma-ui");
     expect(merged.title).toContain("Running");
-    expect(merged.title).toContain("Codex Responding");
+    expect(merged.title).toContain("Codex");
     expect(merged.title).toContain("Ports 4174");
     expect(merged.title).toContain("Worktree");
   });

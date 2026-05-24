@@ -3,10 +3,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   bootstrapFirstAdmin,
+  getTerminalSession,
+  grantScopedCapability,
   hasScopedGrant,
   initializeFoundationState,
+  markTerminalSessionEnded,
+  recordTerminalSession,
 } from "./services/foundation-state";
 import {
+  authorizeTerminalSessionAccess,
   getRouteCapability,
   isLegacyBootstrapBypassAllowed,
 } from "./services/foundation-authorization";
@@ -82,7 +87,7 @@ test("foundation C1 bootstraps admin identity and seeds terminal/root grants", a
   };
   expect(identity).toEqual({ user_id: "user_admin", email: "admin@example.com" });
 
-  for (const capability of ["terminal.create", "terminal.attach", "root.use"] as const) {
+  for (const capability of ["terminal.create", "terminal.attach", "terminal.manage", "root.use"] as const) {
     expect(
       hasScopedGrant(state.db, {
         userId: "user_admin",
@@ -104,6 +109,136 @@ test("foundation C1 bootstraps admin identity and seeds terminal/root grants", a
   state.db.close();
 });
 
+test("foundation C1 records and ends terminal session metadata", async () => {
+  const stateDir = await createTempDir(".deckterm-c1-session-state-");
+  const projectRoot = await createTempDir(".deckterm-c1-session-root-");
+  const now = new Date("2026-05-13T10:00:00Z");
+  const state = await initializeFoundationState({
+    stateDir,
+    allowedFileRoots: [projectRoot],
+    env: {},
+    now,
+  });
+  const rootId = state.roots[0]?.id;
+  expect(rootId).toBeTruthy();
+
+  recordTerminalSession(state.db, {
+    id: "term_abc",
+    actorUserId: "user_admin",
+    rootId,
+    cwd: projectRoot,
+    status: "active",
+    now,
+  });
+
+  expect(getTerminalSession(state.db, "term_abc")).toEqual({
+    id: "term_abc",
+    actorUserId: "user_admin",
+    rootId,
+    cwd: projectRoot,
+    status: "active",
+    createdAt: "2026-05-13T10:00:00.000Z",
+    updatedAt: "2026-05-13T10:00:00.000Z",
+    endedAt: null,
+  });
+
+  markTerminalSessionEnded(state.db, "term_abc", new Date("2026-05-13T10:05:00Z"));
+  expect(getTerminalSession(state.db, "term_abc")).toMatchObject({
+    id: "term_abc",
+    status: "ended",
+    updatedAt: "2026-05-13T10:05:00.000Z",
+    endedAt: "2026-05-13T10:05:00.000Z",
+  });
+
+  state.db.close();
+});
+
+test("foundation C1 authorizes terminal session access by owner or scoped grant", async () => {
+  const stateDir = await createTempDir(".deckterm-c1-attach-state-");
+  const projectRoot = await createTempDir(".deckterm-c1-attach-root-");
+  const state = await initializeFoundationState({
+    stateDir,
+    allowedFileRoots: [projectRoot],
+    env: {},
+    now: new Date("2026-05-13T11:00:00Z"),
+  });
+  recordTerminalSession(state.db, {
+    id: "term_owned",
+    actorUserId: "user_owner",
+    rootId: state.roots[0]?.id,
+    cwd: projectRoot,
+    now: new Date("2026-05-13T11:01:00Z"),
+  });
+  state.db
+    .query(
+      `INSERT INTO users (id, email, display_name, role, created_at, updated_at)
+       VALUES (?, ?, ?, 'user', ?, ?)`,
+    )
+    .run(
+      "user_other",
+      "other@example.com",
+      "other@example.com",
+      "2026-05-13T11:01:00.000Z",
+      "2026-05-13T11:01:00.000Z",
+    );
+
+  expect(
+    authorizeTerminalSessionAccess(state.db, {
+      actorUserId: "user_owner",
+      terminalId: "term_owned",
+      capability: "terminal.manage",
+    }),
+  ).toEqual({ allow: true, reason: "owner" });
+
+  expect(
+    authorizeTerminalSessionAccess(state.db, {
+      actorUserId: "user_other",
+      terminalId: "term_owned",
+      capability: "terminal.manage",
+    }),
+  ).toEqual({ allow: false, reason: "missing_capability" });
+
+  grantScopedCapability(state.db, {
+    userId: "user_other",
+    capability: "terminal.attach",
+    resourceType: "terminal",
+    resourceId: "term_owned",
+    now: new Date("2026-05-13T11:02:00Z"),
+  });
+  expect(
+    authorizeTerminalSessionAccess(state.db, {
+      actorUserId: "user_other",
+      terminalId: "term_owned",
+      capability: "terminal.attach",
+    }),
+  ).toEqual({ allow: true, reason: "granted" });
+
+  expect(
+    authorizeTerminalSessionAccess(state.db, {
+      actorUserId: "user_other",
+      terminalId: "term_owned",
+      capability: "terminal.manage",
+    }),
+  ).toEqual({ allow: false, reason: "missing_capability" });
+
+  grantScopedCapability(state.db, {
+    userId: "user_other",
+    capability: "terminal.manage",
+    resourceType: "terminal",
+    resourceId: "term_owned",
+    now: new Date("2026-05-13T11:03:00Z"),
+  });
+  expect(
+    authorizeTerminalSessionAccess(state.db, {
+      actorUserId: "user_other",
+      terminalId: "term_owned",
+      capability: "terminal.manage",
+    }),
+  ).toEqual({ allow: true, reason: "granted" });
+
+  state.db.close();
+});
+
 test("foundation C1 exposes a minimal route capability registry", () => {
   expect(getRouteCapability("POST", "/api/terminals")).toEqual({
     capability: "terminal.create",
@@ -111,6 +246,16 @@ test("foundation C1 exposes a minimal route capability registry", () => {
   });
   expect(getRouteCapability("GET", "/ws/terminals/term_123")).toEqual({
     capability: "terminal.attach",
+    resourceType: "terminal",
+    resourceId: "term_123",
+  });
+  expect(getRouteCapability("POST", "/api/terminals/term_123/resize")).toEqual({
+    capability: "terminal.manage",
+    resourceType: "terminal",
+    resourceId: "term_123",
+  });
+  expect(getRouteCapability("DELETE", "/api/terminals/term_123")).toEqual({
+    capability: "terminal.manage",
     resourceType: "terminal",
     resourceId: "term_123",
   });

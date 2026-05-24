@@ -5,11 +5,13 @@ import { join } from "node:path";
 
 const tempDirs: string[] = [];
 const servers: Array<{ stop: () => void }> = [];
+const openSockets: WebSocket[] = [];
 const ISOLATED_ENV_KEYS = [
   "DECKTERM_STATE_DIR",
   "ALLOWED_FILE_ROOTS",
   "TMUX_BACKEND",
   "CF_ACCESS_REQUIRED",
+  "DECKTERM_RUNTIME_ENV",
   "SHELL",
 ] as const;
 const previousEnv: Record<string, string | undefined> = {};
@@ -23,7 +25,40 @@ async function createTempDir(prefix: string) {
   return dir;
 }
 
+async function openWebSocket(url: URL): Promise<WebSocket> {
+  const wsUrl = url.toString().replace(/^http/, "ws");
+  const socket = new WebSocket(wsUrl);
+  openSockets.push(socket);
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Timed out opening WebSocket ${wsUrl}`));
+    }, 2000);
+    socket.onopen = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    socket.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error(`WebSocket failed to open ${wsUrl}`));
+    };
+    socket.onclose = (event) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        clearTimeout(timeout);
+        reject(new Error(`WebSocket closed before open ${event.code}`));
+      }
+    };
+  });
+  return socket;
+}
+
 afterEach(async () => {
+  for (const socket of openSockets.splice(0)) {
+    try {
+      socket.close();
+    } catch {
+      // Best-effort cleanup for failed WebSocket assertions.
+    }
+  }
   for (const server of servers.splice(0)) {
     server.stop();
   }
@@ -48,10 +83,32 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
   process.env.ALLOWED_FILE_ROOTS = projectRoot;
   process.env.TMUX_BACKEND = "0";
   process.env.CF_ACCESS_REQUIRED = "0";
-  process.env.SHELL = "/bin/false";
+  process.env.DECKTERM_RUNTIME_ENV = "development";
+  process.env.SHELL = "/bin/bash";
 
   const { createWebApp, startWebServer } = await import("./server");
   const app = createWebApp();
+
+  const statusRes = await app.fetch(
+    new Request("http://deckterm.test/api/foundation/status"),
+  );
+  expect(statusRes.status).toBe(200);
+  await expect(statusRes.json()).resolves.toMatchObject({
+    runtime: { environment: "development", backendMode: "raw" },
+    auth: {
+      actor: { id: "anonymous", email: "anonymous", source: "legacy_dev" },
+      cloudflareAccessRequired: false,
+    },
+    bootstrap: { bootstrapped: false, mode: "token" },
+    roots: [
+      {
+        name: projectRoot.split("/").pop(),
+        path: projectRoot,
+        status: "active",
+        warning: null,
+      },
+    ],
+  });
 
   const blockedRes = await app.fetch(
     new Request("http://deckterm.test/api/terminals", {
@@ -109,11 +166,68 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
   expect(createRes.status).toBe(200);
   const created = (await createRes.json()) as { id: string; cwd: string };
   expect(created.cwd).toBe(projectRoot);
-  await app.fetch(
+
+  const writeDb = new Database(join(stateDir, "deckterm.db"));
+  expect(
+    writeDb
+      .query(
+        "SELECT actor_user_id, cwd, status, ended_at FROM terminal_sessions WHERE id = ?",
+      )
+      .get(created.id),
+  ).toEqual({
+    actor_user_id: "anonymous",
+    cwd: projectRoot,
+    status: "active",
+    ended_at: null,
+  });
+
+  writeDb
+    .query("DELETE FROM scoped_grants WHERE user_id = ? AND capability = ?")
+    .run("anonymous", "terminal.attach");
+  writeDb
+    .query("UPDATE terminal_sessions SET actor_user_id = ? WHERE id = ?")
+    .run("user_other", created.id);
+
+  const deniedAttachRes = await fetch(new URL(`/ws/terminals/${created.id}`, server.url), {
+    headers: {
+      connection: "Upgrade",
+      upgrade: "websocket",
+    },
+  });
+  expect(deniedAttachRes.status).toBe(403);
+  await expect(deniedAttachRes.text()).resolves.toContain("Forbidden");
+
+  writeDb
+    .query(
+      `INSERT INTO scoped_grants (id, user_id, capability, resource_type, resource_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `grant_${crypto.randomUUID().replace(/-/g, "")}`,
+      "anonymous",
+      "terminal.attach",
+      "terminal",
+      created.id,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+  const socket = await openWebSocket(new URL(`/ws/terminals/${created.id}`, server.url));
+  expect(socket.readyState).toBe(WebSocket.OPEN);
+  socket.close();
+
+  const deleteRes = await app.fetch(
     new Request(`http://deckterm.test/api/terminals/${created.id}`, {
       method: "DELETE",
     }),
   );
+  expect(deleteRes.status).toBe(200);
+
+  expect(
+    writeDb
+      .query("SELECT status, ended_at FROM terminal_sessions WHERE id = ?")
+      .get(created.id),
+  ).toMatchObject({ status: "ended" });
+  writeDb.close();
 
   const db = new Database(join(stateDir, "deckterm.db"), { readonly: true });
   const auditRows = db
@@ -137,6 +251,26 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
       resource_type: "terminal",
       resource_id: created.id,
       decision: "allow",
+    }),
+  );
+  expect(auditRows).toContainEqual(
+    expect.objectContaining({
+      actor_user_id: "anonymous",
+      action: "terminal.attach",
+      resource_type: "terminal",
+      resource_id: created.id,
+      decision: "deny",
+      reason: "missing_capability",
+    }),
+  );
+  expect(auditRows).toContainEqual(
+    expect.objectContaining({
+      actor_user_id: "anonymous",
+      action: "terminal.attach",
+      resource_type: "terminal",
+      resource_id: created.id,
+      decision: "allow",
+      reason: "granted",
     }),
   );
 });

@@ -23,10 +23,27 @@ test.describe("Onboarding setup surface", () => {
     await expect(panel.locator(".setup-current")).toContainText(
       "Current config",
     );
-    await expect(panel.locator(".setup-current")).toContainText("Public bind");
+    await expect(panel.locator(".setup-current")).toContainText("Network bind");
     await expect(panel.locator(".setup-current")).toContainText("Access path");
     await expect(panel.locator(".setup-current")).toContainText(
       "CF Access validation",
+    );
+    await expect(panel.locator(".setup-current")).toContainText("Identity");
+    await expect(panel.locator(".setup-current")).toContainText("anonymous");
+    await expect(panel.locator(".setup-current")).toContainText("Runtime env");
+    await expect(panel.locator(".setup-current")).toContainText(
+      "Registered project roots",
+    );
+    await expect(
+      panel.locator(".setup-state-row-wide").filter({
+        hasText: "Registered project roots",
+      }),
+    ).toBeVisible();
+    await expect(panel.locator(".setup-current")).toContainText(
+      "home root grant",
+    );
+    await expect(panel.locator(".setup-current")).not.toContainText(
+      "broad_home_root",
     );
     await expect(panel.locator(".setup-target")).toContainText(
       "Target profile",
@@ -47,7 +64,7 @@ test.describe("Onboarding setup surface", () => {
 
     const panel = page.locator("#setup-panel");
     await expect(panel).toBeVisible();
-    await panel.getByLabel("Publishing profile").selectOption("cloudflare");
+    await panel.getByLabel("Publishing profile").selectOption("cloudflare-access");
     await panel.getByRole("button", { name: "Check" }).click();
 
     await expect(panel.locator(".setup-current")).toContainText(
@@ -57,7 +74,7 @@ test.describe("Onboarding setup surface", () => {
       "Cloudflare Tunnel",
     );
     await expect(panel.locator(".setup-next-steps")).toContainText(
-      "Bind DeckTerm to localhost",
+      "Use Cloudflare Tunnel + Access JWT (strict) profile",
     );
     await expect(panel.locator(".setup-next-steps")).toContainText(
       "Configure Cloudflare Access",
@@ -68,7 +85,7 @@ test.describe("Onboarding setup surface", () => {
     await expect(panel.locator(".setup-snippets")).not.toBeVisible();
     await panel.getByRole("button", { name: "Show details" }).click();
     await expect(panel.locator(".setup-snippets")).toContainText(
-      "DECKTERM_PUBLISH_MODE=cloudflare",
+      "DECKTERM_PUBLISH_MODE=cloudflare-access",
     );
     await expect(panel.locator(".setup-snippets")).toContainText(
       "service: http://127.0.0.1:4174",

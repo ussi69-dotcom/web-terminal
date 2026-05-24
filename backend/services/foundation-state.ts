@@ -35,7 +35,18 @@ export type InitializeFoundationStateOptions = {
 const INITIAL_MIGRATION = 1;
 const C1_AUTH_GRANTS_MIGRATION = 2;
 
-export type ScopedGrantCapability = "terminal.create" | "terminal.attach" | "root.use";
+export type ScopedGrantCapability = "terminal.create" | "terminal.attach" | "terminal.manage" | "root.use";
+
+export type RecordedTerminalSession = {
+  id: string;
+  actorUserId: string | null;
+  rootId: string | null;
+  cwd: string;
+  status: "active" | "ended";
+  createdAt: string;
+  updatedAt: string;
+  endedAt: string | null;
+};
 
 const ADMIN_DEFAULT_GRANTS: Array<{
   capability: ScopedGrantCapability;
@@ -44,6 +55,7 @@ const ADMIN_DEFAULT_GRANTS: Array<{
 }> = [
   { capability: "terminal.create", resourceType: "*", resourceId: "*" },
   { capability: "terminal.attach", resourceType: "*", resourceId: "*" },
+  { capability: "terminal.manage", resourceType: "*", resourceId: "*" },
   { capability: "root.use", resourceType: "*", resourceId: "*" },
 ];
 
@@ -314,6 +326,90 @@ export async function initializeFoundationState({
   ensureExistingAdminGrants(db, now);
 
   return { db, bootstrap, roots };
+}
+
+export function recordTerminalSession(
+  db: Database,
+  session: {
+    id: string;
+    actorUserId?: string | null;
+    rootId?: string | null;
+    cwd: string;
+    status?: "active" | "ended";
+    now?: Date;
+  },
+): void {
+  const timestamp = isoDate(session.now || new Date());
+  db.query(
+    `INSERT INTO terminal_sessions
+      (id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       actor_user_id = excluded.actor_user_id,
+       root_id = excluded.root_id,
+       cwd = excluded.cwd,
+       status = excluded.status,
+       updated_at = excluded.updated_at,
+       ended_at = excluded.ended_at`,
+  ).run(
+    session.id,
+    session.actorUserId || null,
+    session.rootId || null,
+    session.cwd,
+    session.status || "active",
+    timestamp,
+    timestamp,
+    session.status === "ended" ? timestamp : null,
+  );
+}
+
+export function markTerminalSessionEnded(
+  db: Database,
+  id: string,
+  now: Date = new Date(),
+): void {
+  const timestamp = isoDate(now);
+  db.query(
+    `UPDATE terminal_sessions
+     SET status = 'ended', updated_at = ?, ended_at = COALESCE(ended_at, ?)
+     WHERE id = ?`,
+  ).run(timestamp, timestamp, id);
+}
+
+export function getTerminalSession(
+  db: Database,
+  id: string,
+): RecordedTerminalSession | null {
+  const row = db
+    .query(
+      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at
+       FROM terminal_sessions
+       WHERE id = ?`,
+    )
+    .get(id) as
+    | {
+        id: string;
+        actor_user_id: string | null;
+        root_id: string | null;
+        cwd: string;
+        status: "active" | "ended";
+        created_at: string;
+        updated_at: string;
+        ended_at: string | null;
+      }
+    | null;
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    rootId: row.root_id,
+    cwd: row.cwd,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    endedAt: row.ended_at,
+  };
 }
 
 export function writeAuditEvent(

@@ -37,17 +37,26 @@ import {
 } from "./tmux-session-names";
 import {
   bootstrapFirstAdmin,
+  getTerminalSession,
   hasScopedGrant,
   initializeFoundationState,
   isBootstrapComplete,
+  markTerminalSessionEnded,
+  recordTerminalSession,
   writeAuditEvent,
   type FoundationState,
   type ScopedGrantCapability,
 } from "./services/foundation-state";
 import {
+  authorizeTerminalAttach,
+  authorizeTerminalSessionAccess,
   getRouteCapability,
   isLegacyBootstrapBypassAllowed,
 } from "./services/foundation-authorization";
+import {
+  resolveActorFromAccessPayload,
+  type DeckTermActor,
+} from "./services/foundation-actors";
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS - Prevent 502 from uncaught exceptions
@@ -678,6 +687,79 @@ function foundationGateJson(error: { message: string; reason: string }) {
   };
 }
 
+function ensureTerminalSessionRecorded(state: FoundationState, term: Terminal) {
+  if (getTerminalSession(state.db, term.id)) return;
+  recordTerminalSession(state.db, {
+    id: term.id,
+    actorUserId: term.ownerId,
+    rootId: resolveFoundationRootIdForPath(state, term.cwd),
+    cwd: term.cwd,
+    status: term.running ? "active" : "ended",
+  });
+}
+
+async function requireTerminalSessionAccess({
+  actorUserId,
+  term,
+  capability,
+}: {
+  actorUserId: string;
+  term: Terminal;
+  capability: "terminal.attach" | "terminal.manage";
+}): Promise<{ ok: true } | { ok: false; status: 403; reason: string; message: string }> {
+  if (isFoundationLegacyBypassEnabled()) {
+    return term.ownerId === actorUserId
+      ? { ok: true }
+      : {
+          ok: false,
+          status: 403,
+          reason: "legacy_owner_mismatch",
+          message: "DeckTerm capability denied",
+        };
+  }
+  const state = await getFoundationState();
+  if (!isBootstrapComplete(state)) {
+    writeAuditEvent(state.db, {
+      actorUserId,
+      action: capability,
+      resourceType: "terminal",
+      resourceId: term.id,
+      decision: "deny",
+      reason: "bootstrap_required",
+    });
+    return {
+      ok: false,
+      status: 403,
+      reason: "bootstrap_required",
+      message: "DeckTerm bootstrap required",
+    };
+  }
+
+  ensureTerminalSessionRecorded(state, term);
+  const decision = authorizeTerminalSessionAccess(state.db, {
+    actorUserId,
+    terminalId: term.id,
+    capability,
+  });
+  writeAuditEvent(state.db, {
+    actorUserId,
+    action: capability,
+    resourceType: "terminal",
+    resourceId: term.id,
+    decision: decision.allow ? "allow" : "deny",
+    reason: decision.reason,
+  });
+  if (!decision.allow) {
+    return {
+      ok: false,
+      status: 403,
+      reason: decision.reason,
+      message: "DeckTerm capability denied",
+    };
+  }
+  return { ok: true };
+}
+
 async function getAllowedRealRoots(): Promise<string[]> {
   if (allowedRealRootsCache) return allowedRealRootsCache;
   const fs = await import("fs/promises");
@@ -734,6 +816,16 @@ async function resolveAllowedPath(
   }
 }
 
+function resolveFoundationRootIdForPath(
+  state: FoundationState,
+  pathValue: string,
+): string | null {
+  const matchingRoots = state.roots
+    .filter((root) => pathValue === root.path || pathValue.startsWith(`${root.path}/`))
+    .sort((a, b) => b.path.length - a.path.length);
+  return matchingRoots[0]?.id || null;
+}
+
 async function getDefaultBrowseRoot(): Promise<string> {
   const roots = await getAllowedRealRoots();
   return roots[0] || resolve(DEFAULT_ALLOWED_ROOT || "/");
@@ -748,38 +840,76 @@ async function authenticateWebSocketRequest(req: Request): Promise<{
   status?: number;
   message?: string;
   ownerId: string;
+  ownerEmail: string;
+  actor?: DeckTermActor;
 }> {
   const jwt = req.headers.get("cf-access-jwt-assertion");
   if (CF_ACCESS_REQUIRED && !jwt) {
-    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
-  }
-  if (!jwt || !CF_ACCESS_TEAM_NAME) {
-    return { ok: true, ownerId: "anonymous" };
-  }
-  try {
-    const { cloudflareAccess: verifyJWT } =
-      await import("@hono/cloudflare-access");
-    let ownerId = "anonymous";
-    let accessPayload: CloudflareAccessPayload | null = null;
-    const mockContext = {
-      req: { header: (name: string) => req.headers.get(name) },
-      set: (key: string, value: CloudflareAccessPayload) => {
-        if (key === "accessPayload") {
-          accessPayload = value;
-          ownerId = value.sub || "anonymous";
-        }
-      },
+    return {
+      ok: false,
+      status: 401,
+      message: "Unauthorized",
+      ownerId: "",
+      ownerEmail: "",
     };
-    const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
-    await middleware(mockContext as never, async () => {});
-    if (!isCloudflareAudienceAllowed(accessPayload?.aud, CF_ACCESS_AUD)) {
-      return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
-    }
-    return { ok: true, ownerId };
-  } catch (err) {
-    debug("WebSocket JWT verification failed:", err);
-    return { ok: false, status: 401, message: "Unauthorized", ownerId: "" };
   }
+
+  let accessPayload: CloudflareAccessPayload | null = null;
+  if (jwt && CF_ACCESS_TEAM_NAME) {
+    try {
+      const { cloudflareAccess: verifyJWT } =
+        await import("@hono/cloudflare-access");
+      const mockContext = {
+        req: { header: (name: string) => req.headers.get(name) },
+        set: (key: string, value: CloudflareAccessPayload) => {
+          if (key === "accessPayload") {
+            accessPayload = value;
+          }
+        },
+      };
+      const middleware = verifyJWT(CF_ACCESS_TEAM_NAME);
+      await middleware(mockContext as never, async () => {});
+      if (!isCloudflareAudienceAllowed(accessPayload?.aud, CF_ACCESS_AUD)) {
+        return {
+          ok: false,
+          status: 401,
+          message: "Unauthorized",
+          ownerId: "",
+          ownerEmail: "",
+        };
+      }
+    } catch (err) {
+      debug("WebSocket JWT verification failed:", err);
+      return {
+        ok: false,
+        status: 401,
+        message: "Unauthorized",
+        ownerId: "",
+        ownerEmail: "",
+      };
+    }
+  }
+
+  const actorResult = resolveActorFromAccessPayload({
+    accessPayload,
+    env: process.env,
+  });
+  if (!actorResult.ok) {
+    return {
+      ok: false,
+      status: actorResult.status,
+      message: "Unauthorized",
+      ownerId: "",
+      ownerEmail: "",
+    };
+  }
+
+  return {
+    ok: true,
+    ownerId: actorResult.actor.id,
+    ownerEmail: actorResult.actor.email,
+    actor: actorResult.actor,
+  };
 }
 
 function appendScrollback(terminalId: string, data: string) {
@@ -808,16 +938,68 @@ function getScrollbackSnapshot(term: Terminal): string {
   return term.scrollback.join("");
 }
 
+class UnauthorizedRequestError extends Error {
+  status = 401 as const;
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedRequestError";
+  }
+}
+
+function getCurrentActor(c: {
+  get: (key: string) => CloudflareAccessPayload | undefined;
+}): DeckTermActor {
+  const actorResult = resolveActorFromAccessPayload({
+    accessPayload: c.get("accessPayload") || null,
+    env: process.env,
+  });
+  if (!actorResult.ok) {
+    throw new UnauthorizedRequestError();
+  }
+  return actorResult.actor;
+}
+
 function getCurrentUser(c: {
   get: (key: string) => CloudflareAccessPayload | undefined;
-}): { ownerId: string; ownerEmail: string } {
-  const accessPayload = c.get("accessPayload");
-  if (CF_ACCESS_REQUIRED && !accessPayload) {
-    throw new Error("Unauthorized");
-  }
+}): { ownerId: string; ownerEmail: string; ownerSource: DeckTermActor["source"] } {
+  const actor = getCurrentActor(c);
   return {
-    ownerId: accessPayload?.sub || "anonymous",
-    ownerEmail: accessPayload?.email || "anonymous",
+    ownerId: actor.id,
+    ownerEmail: actor.email,
+    ownerSource: actor.source,
+  };
+}
+
+async function getFoundationStatus(c: {
+  get: (key: string) => CloudflareAccessPayload | undefined;
+}) {
+  const actor = getCurrentActor(c);
+  const state = await getFoundationState();
+  return {
+    runtime: {
+      environment:
+        process.env.DECKTERM_RUNTIME_ENV || process.env.NODE_ENV || "production",
+      backendMode: getBackendMode(),
+      port: process.env.PORT || "4174",
+    },
+    auth: {
+      actor,
+      cloudflareAccessRequired: CF_ACCESS_REQUIRED,
+      cloudflareAccessTeamConfigured: Boolean(CF_ACCESS_TEAM_NAME),
+      cloudflareAccessAudienceConfigured: Boolean(CF_ACCESS_AUD),
+    },
+    bootstrap: {
+      bootstrapped: state.bootstrap.bootstrapped,
+      mode: state.bootstrap.mode,
+      expectedEmail: state.bootstrap.expectedEmail,
+    },
+    roots: state.roots.map((root) => ({
+      id: root.id,
+      name: root.name,
+      path: root.path,
+      status: root.status,
+      warning: root.warning,
+    })),
   };
 }
 
@@ -1436,6 +1618,9 @@ async function createManagedTerminal({
       `Terminal ${id}${sessionName ? ` (tmux: ${sessionName})` : ""} exited: code=${exitCode}, signal=${signalCode}`,
     );
     closeTerminalSockets(id, JSON.stringify({ type: "exit", code: exitCode }));
+    getFoundationState()
+      .then((state) => markTerminalSessionEnded(state.db, id))
+      .catch((err) => debug("Failed to mark terminal session ended:", err));
     removeTerminalState(id);
     terminal.close();
   };
@@ -1616,6 +1801,9 @@ export function createWebApp() {
   });
 
   app.onError((err, c) => {
+    if (err instanceof UnauthorizedRequestError) {
+      return c.text(err.message, err.status);
+    }
     console.error("[Hono] Route error:", err);
     const response: { error: string; message?: string } = {
       error: "Internal server error",
@@ -1671,7 +1859,7 @@ export function createWebApp() {
   });
 
   app.post("/api/bootstrap", async (c) => {
-    const { ownerId, ownerEmail } = getCurrentUser(c);
+    const { ownerId, ownerEmail, ownerSource } = getCurrentUser(c);
     const body = await c.req.json().catch(() => ({}));
     const state = await getFoundationState();
     const result = await bootstrapFirstAdmin({
@@ -1680,9 +1868,9 @@ export function createWebApp() {
       actorUserId: ownerId,
       actorEmail: ownerEmail,
       token: typeof body.token === "string" ? body.token : null,
-      authIdentity: ownerId === "anonymous"
-        ? null
-        : { provider: "cloudflare_access", providerSubject: ownerId },
+      authIdentity: ownerSource === "cloudflare_access"
+        ? { provider: "cloudflare_access", providerSubject: ownerId }
+        : null,
       env: process.env,
     });
     if (!result.ok) {
@@ -1697,6 +1885,10 @@ export function createWebApp() {
       return c.json({ error: result.error }, result.status);
     }
     return c.json({ ok: true, user: result.user });
+  });
+
+  app.get("/api/foundation/status", async (c) => {
+    return c.json(await getFoundationStatus(c));
   });
 
   // Server stats endpoint (CPU, RAM, Disk)
@@ -1753,25 +1945,27 @@ export function createWebApp() {
       cfVisitor.match(/"scheme"\s*:\s*"([^"]+)"/)?.[1] || "";
     const host = c.req.header("x-forwarded-host") || c.req.header("host") || "";
     const forwardedProto = c.req.header("x-forwarded-proto") || cfVisitorScheme;
-    return c.json(
-      await runOnboardingDoctor({
-        profile: c.req.query("profile"),
-        publicOrigin: c.req.query("publicOrigin"),
-        requestContext: {
-          viaCloudflare: Boolean(
-            c.req.header("cf-ray") ||
-            c.req.header("cf-connecting-ip") ||
-            c.req.header("cf-visitor"),
-          ),
-          cfAccessJwtPresent: Boolean(c.req.header("cf-access-jwt-assertion")),
-          publicOrigin:
-            c.req.query("publicOrigin") ||
-            (host && forwardedProto ? `${forwardedProto}://${host}` : ""),
-          host,
-          forwardedProto,
-        },
-      }),
-    );
+    const report = await runOnboardingDoctor({
+      profile: c.req.query("profile"),
+      publicOrigin: c.req.query("publicOrigin"),
+      requestContext: {
+        viaCloudflare: Boolean(
+          c.req.header("cf-ray") ||
+          c.req.header("cf-connecting-ip") ||
+          c.req.header("cf-visitor"),
+        ),
+        cfAccessJwtPresent: Boolean(c.req.header("cf-access-jwt-assertion")),
+        publicOrigin:
+          c.req.query("publicOrigin") ||
+          (host && forwardedProto ? `${forwardedProto}://${host}` : ""),
+        host,
+        forwardedProto,
+      },
+    });
+    return c.json({
+      ...report,
+      foundation: await getFoundationStatus(c),
+    });
   });
 
   app.post("/api/onboarding/apply", async (c) => {
@@ -2099,6 +2293,14 @@ export function createWebApp() {
     });
 
     const state = await getFoundationState();
+    const rootId = resolveFoundationRootIdForPath(state, resolvedCwd);
+    recordTerminalSession(state.db, {
+      id: terminal.id,
+      actorUserId: ownerId,
+      rootId,
+      cwd: resolvedCwd,
+      status: "active",
+    });
     writeAuditEvent(state.db, {
       actorUserId: ownerId,
       action: "terminal.create",
@@ -2119,8 +2321,13 @@ export function createWebApp() {
     if (!sourceTerm) {
       return c.json({ error: "Terminal not found" }, 404);
     }
-    if (sourceTerm.ownerId !== ownerId) {
-      return c.json({ error: "Forbidden" }, 403);
+    const sourceAccess = await requireTerminalSessionAccess({
+      actorUserId: ownerId,
+      term: sourceTerm,
+      capability: "terminal.attach",
+    });
+    if (!sourceAccess.ok) {
+      return c.json(foundationGateJson(sourceAccess), sourceAccess.status);
     }
     if (!TMUX_BACKEND) {
       return c.json({ error: "Linked view requires tmux backend" }, 400);
@@ -2149,6 +2356,14 @@ export function createWebApp() {
       ownerId,
       ownerEmail,
       sessionName: sourceTerm.sessionName,
+    });
+    const state = await getFoundationState();
+    recordTerminalSession(state.db, {
+      id: terminal.id,
+      actorUserId: ownerId,
+      rootId: resolveFoundationRootIdForPath(state, terminal.cwd),
+      cwd: terminal.cwd,
+      status: "active",
     });
 
     return c.json(serializeTerminal(terminal));
@@ -2192,10 +2407,17 @@ export function createWebApp() {
     if (!term) {
       return c.json({ error: "Terminal not found" }, 404);
     }
-    if (term.ownerId !== ownerId) {
-      return c.json({ error: "Forbidden" }, 403);
+    const access = await requireTerminalSessionAccess({
+      actorUserId: ownerId,
+      term,
+      capability: "terminal.manage",
+    });
+    if (!access.ok) {
+      return c.json(foundationGateJson(access), access.status);
     }
 
+    const state = await getFoundationState();
+    markTerminalSessionEnded(state.db, id);
     closeTerminalSockets(id);
     removeTerminalState(id);
     await killTmuxSessionIfLast(term.sessionName);
@@ -2213,8 +2435,13 @@ export function createWebApp() {
     if (!term) {
       return c.json({ error: "Terminal not found" }, 404);
     }
-    if (term.ownerId !== ownerId) {
-      return c.json({ error: "Forbidden" }, 403);
+    const access = await requireTerminalSessionAccess({
+      actorUserId: ownerId,
+      term,
+      capability: "terminal.manage",
+    });
+    if (!access.ok) {
+      return c.json(foundationGateJson(access), access.status);
     }
 
     const body = await c.req.json();
@@ -3086,16 +3313,18 @@ export async function startWebServer(host: string, port: number) {
         if (!routeCapability) {
           return new Response("Missing route capability", { status: 500 });
         }
-        const foundationAuth = await requireFoundationCapability({
-          actorUserId: ownerId,
-          capability: routeCapability.capability,
-          resourceType: routeCapability.resourceType,
-          resourceId: routeCapability.resourceId,
-        });
-        if (!foundationAuth.ok) {
-          return new Response(foundationAuth.message, {
-            status: foundationAuth.status,
+
+        const state = await getFoundationState();
+        if (!isFoundationLegacyBypassEnabled() && !isBootstrapComplete(state)) {
+          writeAuditEvent(state.db, {
+            actorUserId: ownerId,
+            action: routeCapability.capability,
+            resourceType: routeCapability.resourceType,
+            resourceId: id,
+            decision: "deny",
+            reason: "bootstrap_required",
           });
+          return new Response("DeckTerm bootstrap required", { status: 403 });
         }
 
         const term = terminals.get(id);
@@ -3104,11 +3333,41 @@ export async function startWebServer(host: string, port: number) {
           return new Response("Terminal not found", { status: 404 });
         }
 
-        const clientId = url.searchParams.get("clientId")?.trim() || null;
+        if (!getTerminalSession(state.db, id)) {
+          recordTerminalSession(state.db, {
+            id,
+            actorUserId: term.ownerId,
+            rootId: resolveFoundationRootIdForPath(state, term.cwd),
+            cwd: term.cwd,
+            status: term.running ? "active" : "ended",
+          });
+        }
 
-        if (term.ownerId !== ownerId) {
+        const attachDecision = authorizeTerminalAttach(state.db, {
+          actorUserId: ownerId,
+          terminalId: id,
+        });
+        if (!attachDecision.allow) {
+          writeAuditEvent(state.db, {
+            actorUserId: ownerId,
+            action: routeCapability.capability,
+            resourceType: routeCapability.resourceType,
+            resourceId: id,
+            decision: "deny",
+            reason: attachDecision.reason,
+          });
           return new Response("Forbidden", { status: 403 });
         }
+        writeAuditEvent(state.db, {
+          actorUserId: ownerId,
+          action: routeCapability.capability,
+          resourceType: routeCapability.resourceType,
+          resourceId: id,
+          decision: "allow",
+          reason: attachDecision.reason,
+        });
+
+        const clientId = url.searchParams.get("clientId")?.trim() || null;
 
         const success = server.upgrade(req, {
           data: {

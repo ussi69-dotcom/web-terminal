@@ -1,8 +1,12 @@
+import type { Database } from "bun:sqlite";
+import { getTerminalSession, hasScopedGrant } from "./foundation-state";
+
 export type FoundationEnv = Record<string, string | undefined>;
 
 export type FoundationCapability =
   | "terminal.create"
   | "terminal.attach"
+  | "terminal.manage"
   | "root.use";
 
 export type RouteCapability = {
@@ -23,6 +27,46 @@ export function isLegacyBootstrapBypassAllowed(env: FoundationEnv): boolean {
   );
 }
 
+export function authorizeTerminalSessionAccess(
+  db: Database,
+  request: {
+    actorUserId: string;
+    terminalId: string;
+    capability: "terminal.attach" | "terminal.manage";
+  },
+):
+  | { allow: true; reason: "owner" | "granted" }
+  | { allow: false; reason: "missing_capability" | "terminal_session_not_found" } {
+  const session = getTerminalSession(db, request.terminalId);
+  if (!session) {
+    return { allow: false, reason: "terminal_session_not_found" };
+  }
+  if (session.actorUserId === request.actorUserId) {
+    return { allow: true, reason: "owner" };
+  }
+  if (
+    hasScopedGrant(db, {
+      userId: request.actorUserId,
+      capability: request.capability,
+      resourceType: "terminal",
+      resourceId: request.terminalId,
+    })
+  ) {
+    return { allow: true, reason: "granted" };
+  }
+  return { allow: false, reason: "missing_capability" };
+}
+
+export function authorizeTerminalAttach(
+  db: Database,
+  request: { actorUserId: string; terminalId: string },
+) {
+  return authorizeTerminalSessionAccess(db, {
+    ...request,
+    capability: "terminal.attach",
+  });
+}
+
 export function getRouteCapability(
   method: string,
   pathname: string,
@@ -37,6 +81,19 @@ export function getRouteCapability(
 
   if (normalizedMethod === "POST" && normalizedPath === "/api/terminals") {
     return { capability: "terminal.create", resourceType: "terminal" };
+  }
+
+  const terminalApiMatch = normalizedPath.match(/^\/api\/terminals\/([^/]+)(?:\/([^/]+))?$/);
+  if (terminalApiMatch) {
+    const resourceId = terminalApiMatch[1]?.trim();
+    const action = terminalApiMatch[2]?.trim();
+    if (!resourceId) return null;
+    if (normalizedMethod === "DELETE" && !action) {
+      return { capability: "terminal.manage", resourceType: "terminal", resourceId };
+    }
+    if (normalizedMethod === "POST" && action === "resize") {
+      return { capability: "terminal.manage", resourceType: "terminal", resourceId };
+    }
   }
 
   if (normalizedMethod === "GET" && normalizedPath.startsWith("/ws/terminals/")) {

@@ -4806,6 +4806,38 @@ class TerminalManager {
       : "Not required by DeckTerm";
     const liveTunnel =
       requestContext.viaCloudflare && requestContext.cfAccessJwtPresent;
+    const foundation = report.foundation || {};
+    const actor = foundation.auth?.actor || null;
+    const actorSource =
+      actor?.source === "cloudflare_access"
+        ? "Cloudflare Access"
+        : actor?.source === "legacy_dev"
+          ? "Dev anonymous"
+          : "Unknown";
+    const identity = actor
+      ? `${actor.email || actor.id || "unknown"} (${actorSource})`
+      : "Unknown";
+    const runtimeEnv = foundation.runtime?.environment || "unknown";
+    const backendMode = foundation.runtime?.backendMode || "unknown";
+    const bootstrap = foundation.bootstrap
+      ? foundation.bootstrap.bootstrapped
+        ? "Complete"
+        : `Pending (${foundation.bootstrap.mode || "token"})`
+      : "Unknown";
+    const warningLabels = {
+      broad_home_root: "home root grant",
+    };
+    const roots = Array.isArray(foundation.roots) ? foundation.roots : [];
+    const rootSummary = roots.length
+      ? roots
+          .map((root) => {
+            const warning = root.warning
+              ? `, ${warningLabels[root.warning] || root.warning}`
+              : "";
+            return `${root.name || "root"}: ${root.path || "?"} (${root.status || "unknown"}${warning})`;
+          })
+          .join(" · ")
+      : "No registered roots";
     const stateRows = [
       ["Publishing mode", report.config?.publishMode || "local"],
       [
@@ -4814,6 +4846,10 @@ class TerminalManager {
       ],
       ["Access path", accessPath],
       ["CF Access validation", accessValidation],
+      ["Identity", identity],
+      ["Runtime env", `${runtimeEnv} / ${backendMode}`],
+      ["Bootstrap", bootstrap],
+      ["Registered project roots", rootSummary],
       [
         "Persistent terminals",
         report.config?.tmuxBackend ? "tmux on" : "tmux off",
@@ -4825,6 +4861,9 @@ class TerminalManager {
     stateRows.forEach(([label, value]) => {
       const row = document.createElement("div");
       row.className = "setup-state-row";
+      if (label === "Registered project roots") {
+        row.classList.add("setup-state-row-wide");
+      }
       const rowLabel = document.createElement("span");
       rowLabel.textContent = label;
       const rowValue = document.createElement("strong");
