@@ -6,7 +6,7 @@ import {
   cloudflareAccess,
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
-import { chmod, mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   classifyAgentOutputPhase,
@@ -22,6 +22,9 @@ import {
   runOnboardingDoctor,
 } from "./onboarding-doctor";
 import { supportsLinkedView as supportsTerminalLinkedView } from "./terminal-capabilities";
+import { RawTerminalBackend } from "./services/raw-terminal-backend";
+import { TmuxTerminalBackend } from "./services/tmux-terminal-backend";
+import type { TerminalBackend } from "./services/terminal-backend";
 import {
   TaskRunnerError,
   buildJudgeCommand,
@@ -198,6 +201,22 @@ const TMUX_SESSION_NAMESPACE = resolveTmuxSessionNamespace({
 const TMUX_SESSION_PREFIX = getTmuxSessionPrefix(TMUX_SESSION_NAMESPACE);
 const TMUX_SOCKET_PATH = getTmuxSocketPath(TMUX_SESSION_NAMESPACE);
 const TMUX_PIPE_DIR = "/tmp/deckterm-tmux-pipes";
+const terminalBackend: TerminalBackend = TMUX_BACKEND
+  ? new TmuxTerminalBackend({
+      namespace: TMUX_SESSION_NAMESPACE,
+      socketPath: TMUX_SOCKET_PATH,
+      pipeDir: TMUX_PIPE_DIR,
+      shellCommandResolver: resolveShellCommand,
+      env: process.env,
+    })
+  : new RawTerminalBackend({
+      shellCommandResolver: resolveShellCommand,
+      env: process.env,
+    });
+const tmuxTerminalBackend =
+  terminalBackend.mode === "tmux"
+    ? (terminalBackend as TmuxTerminalBackend)
+    : null;
 const SCROLLBACK_MAX_LINES = parseInt(
   process.env.SCROLLBACK_MAX_LINES || "2000",
   10,
@@ -256,10 +275,6 @@ const utf8Decoder = new TextDecoder();
 let bashIntegrationRcPathPromise: Promise<string> | null = null;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function spawnTmux(args: string[], options?: any) {
-  return Bun.spawn(["tmux", "-S", TMUX_SOCKET_PATH, ...args], options);
-}
 
 function hasVisibleUserInput(data: string | Uint8Array) {
   const text = typeof data === "string" ? data : utf8Decoder.decode(data);
@@ -530,21 +545,7 @@ async function recoverTmuxSessions(): Promise<number> {
   if (!TMUX_BACKEND) return 0;
 
   try {
-    await mkdir("/tmp/deckterm", { recursive: true });
-    await chmod("/tmp/deckterm", 0o700);
-
-    const result = spawnTmux([
-      "list-sessions",
-      "-F",
-      "#{session_name}",
-    ]);
-    const output = await new Response(result.stdout).text();
-    await result.exited;
-
-    const sessions = output
-      .trim()
-      .split("\n")
-      .filter((s) => s.startsWith(`${TMUX_SESSION_PREFIX}_`));
+    const sessions = (await tmuxTerminalBackend!.listSessions(TMUX_SESSION_PREFIX));
     if (sessions.length === 0) return 0;
 
     let recovered = 0;
@@ -632,13 +633,8 @@ function resolveRecoveredOwnerEmail(
 }
 
 async function tmuxSessionExists(sessionName: string): Promise<boolean> {
-  if (!TMUX_BACKEND) return false;
-  const proc = spawnTmux(["has-session", "-t", sessionName], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const exitCode = await proc.exited;
-  return exitCode === 0;
+  if (!TMUX_BACKEND || !tmuxTerminalBackend) return false;
+  return tmuxTerminalBackend.sessionExists(sessionName);
 }
 
 async function restoreRecordedTmuxSession(
@@ -1122,7 +1118,7 @@ async function getFoundationStatus(c: {
 }
 
 function getBackendMode(): "tmux" | "raw" {
-  return TMUX_BACKEND ? "tmux" : "raw";
+  return terminalBackend.mode;
 }
 
 function getTerminalSocketStats(
@@ -1412,6 +1408,15 @@ async function ensureBashIntegrationRc(): Promise<string> {
   return bashIntegrationRcPathPromise;
 }
 
+async function resolveShellCommand(): Promise<string[]> {
+  const shell = process.env.SHELL || "/bin/bash";
+  const isBashShell = basename(shell) === "bash";
+  const bashRcPath = isBashShell ? await ensureBashIntegrationRc() : null;
+  return bashRcPath && isBashShell
+    ? [shell, "--rcfile", bashRcPath, "-i"]
+    : [shell, "-il"];
+}
+
 function createTerminalHandle(id: string, cols: number, rows: number) {
   return new BunTerminal({
     cols,
@@ -1465,7 +1470,7 @@ async function killTmuxSessionIfLast(
   sessionName: string | undefined,
   excludedTerminalId?: string,
 ) {
-  if (!TMUX_BACKEND || !sessionName) return false;
+  if (!TMUX_BACKEND || !tmuxTerminalBackend || !sessionName) return false;
   if (hasOtherTerminalForSession(sessionName, excludedTerminalId)) {
     debug(
       `[tmux] Preserving shared session ${sessionName} for other attached DeckTerm views`,
@@ -1474,24 +1479,13 @@ async function killTmuxSessionIfLast(
   }
 
   debug(`[tmux] Killing session ${sessionName}`);
-  const killProc = spawnTmux(["kill-session", "-t", sessionName]);
-  const exitCode = await killProc.exited;
-  if (exitCode !== 0) {
-    debug(`[tmux] kill-session returned ${exitCode} for ${sessionName}`);
+  try {
+    await tmuxTerminalBackend.kill(sessionName);
+  } catch (err) {
+    debug(`[tmux] kill-session failed for ${sessionName}`, err);
     return false;
   }
   return true;
-}
-
-async function hideTmuxStatusBar(sessionName: string) {
-  const hideStatusProc = spawnTmux([
-    "set-option",
-    "-t",
-    sessionName,
-    "status",
-    "off",
-  ]);
-  await hideStatusProc.exited;
 }
 
 async function getTmuxSessionInfo(sessionName: string): Promise<{
@@ -1501,78 +1495,30 @@ async function getTmuxSessionInfo(sessionName: string): Promise<{
   panePid: number;
   paneCurrentCommand: string;
 }> {
-  const infoResult = spawnTmux([
-    "display-message",
-    "-t",
-    sessionName,
-    "-p",
-    "#{pane_current_path}\t#{window_width}\t#{window_height}\t#{pane_pid}\t#{pane_current_command}",
-  ]);
-  const infoOutput = await new Response(infoResult.stdout).text();
-  await infoResult.exited;
-  const [
-    cwd = "/home/deploy",
-    colsStr = "120",
-    rowsStr = "30",
-    panePidStr = "0",
-    paneCurrentCommand = "",
-  ] = infoOutput.trim().split("\t");
-  return {
-    cwd,
-    cols: parseInt(colsStr, 10) || 120,
-    rows: parseInt(rowsStr, 10) || 30,
-    panePid: parseInt(panePidStr, 10) || 0,
-    paneCurrentCommand,
-  };
+  if (!tmuxTerminalBackend) {
+    return {
+      cwd: process.env.HOME || "/home/deploy",
+      cols: 120,
+      rows: 30,
+      panePid: 0,
+      paneCurrentCommand: "",
+    };
+  }
+  return tmuxTerminalBackend.getSessionInfo(sessionName);
 }
 
 async function captureTmuxPane(sessionName: string): Promise<string> {
-  const captureProc = spawnTmux(
-    ["capture-pane", "-ep", "-S", "-2000", "-t", sessionName],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const output = await new Response(captureProc.stdout).text();
-  await captureProc.exited;
-  return output;
-}
-
-function getTmuxPipePath(sessionName: string): string {
-  return join(TMUX_PIPE_DIR, `${sessionName}.log`);
-}
-
-async function ensureTmuxPipeCapture(
-  sessionName: string,
-  pipePath: string,
-): Promise<void> {
-  await mkdir(TMUX_PIPE_DIR, { recursive: true });
-  const pipeProc = spawnTmux(
-    ["pipe-pane", "-o", "-t", sessionName, `cat >> ${pipePath}`],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  await pipeProc.exited;
+  return tmuxTerminalBackend ? tmuxTerminalBackend.capture(sessionName) : "";
 }
 
 async function readTmuxPipeDelta(term: Terminal): Promise<string> {
-  if (!term.tmuxPipePath) return "";
-
-  try {
-    const fileStat = await stat(term.tmuxPipePath);
-    if (fileStat.size < term.tmuxPipeOffset) {
-      term.tmuxPipeOffset = 0;
-    }
-    if (fileStat.size === term.tmuxPipeOffset) {
-      return "";
-    }
-
-    const nextOffset = fileStat.size;
-    const chunk = await Bun.file(term.tmuxPipePath)
-      .slice(term.tmuxPipeOffset, nextOffset)
-      .text();
-    term.tmuxPipeOffset = nextOffset;
-    return chunk;
-  } catch {
-    return "";
-  }
+  if (!tmuxTerminalBackend || !term.tmuxPipePath) return "";
+  const delta = await tmuxTerminalBackend.readPipeDelta(
+    term.tmuxPipePath,
+    term.tmuxPipeOffset,
+  );
+  term.tmuxPipeOffset = delta.offset;
+  return delta.chunk;
 }
 
 async function syncTmuxSessionSize(
@@ -1581,32 +1527,8 @@ async function syncTmuxSessionSize(
   rows: number,
   options: { waitForClient?: boolean } = {},
 ): Promise<void> {
-  const resizeWindowProc = spawnTmux([
-    "resize-window",
-    "-t",
-    sessionName,
-    "-x",
-    String(cols),
-    "-y",
-    String(rows),
-  ]);
-  await resizeWindowProc.exited;
-
-  const resizePaneProc = spawnTmux([
-    "resize-pane",
-    "-t",
-    sessionName,
-    "-x",
-    String(cols),
-    "-y",
-    String(rows),
-  ]);
-  await resizePaneProc.exited;
-
-  await syncTmuxSessionClients(sessionName, cols, rows, {
-    waitForClient: options.waitForClient,
-    socketPath: TMUX_SOCKET_PATH,
-  });
+  if (!tmuxTerminalBackend) return;
+  await tmuxTerminalBackend.resize(sessionName, cols, rows, options);
 }
 
 async function sendTmuxPaneCapture(
@@ -1837,22 +1759,15 @@ async function createManagedTerminal({
   initialLastExitCode?: number | null;
   initialScrollback?: string;
 }): Promise<Terminal> {
-  const home = process.env.HOME || "/home/deploy";
-  const shell = process.env.SHELL || "/bin/bash";
-  const isBashShell = basename(shell) === "bash";
-  const bashRcPath = isBashShell ? await ensureBashIntegrationRc() : null;
-  const shellCommand =
-    bashRcPath && isBashShell
-      ? [shell, "--rcfile", bashRcPath, "-i"]
-      : [shell, "-il"];
   const terminal = createTerminalHandle(id, cols, rows);
+  let activeSessionName = sessionName;
 
   const closeAndRemoveTerminal = (
     exitCode: number,
     signalCode?: number | null,
   ) => {
     debug(
-      `Terminal ${id}${sessionName ? ` (tmux: ${sessionName})` : ""} exited: code=${exitCode}, signal=${signalCode}`,
+      `Terminal ${id}${activeSessionName ? ` (tmux: ${activeSessionName})` : ""} exited: code=${exitCode}, signal=${signalCode}`,
     );
     closeTerminalSockets(id, JSON.stringify({ type: "exit", code: exitCode }));
     getFoundationState()
@@ -1862,83 +1777,39 @@ async function createManagedTerminal({
     terminal.close();
   };
 
-  let proc: Subprocess;
   let tmuxPipePath: string | null = null;
   let tmuxPipeOffset = 0;
 
-  if (TMUX_BACKEND && sessionName) {
-    if (createTmuxSession) {
-      debug(`Creating tmux session: ${sessionName}`);
-      const createProc = spawnTmux(
-        [
-          "new-session",
-          "-d",
-          "-s",
-          sessionName,
-          "-x",
-          String(cols),
-          "-y",
-          String(rows),
-          "-c",
-          cwd,
-          ...shellCommand,
-        ],
-        {
-          env: {
-            ...process.env,
-            TERM: "xterm-256color",
-            COLORTERM: "truecolor",
-          },
-        },
-      );
-      await createProc.exited;
-    }
-
-    await hideTmuxStatusBar(sessionName);
-    await syncTmuxSessionSize(sessionName, cols, rows);
-    tmuxPipePath = getTmuxPipePath(sessionName);
-    await ensureTmuxPipeCapture(sessionName, tmuxPipePath);
-    try {
-      tmuxPipeOffset = (await stat(tmuxPipePath)).size;
-    } catch {
-      tmuxPipeOffset = 0;
-    }
-
-    proc = spawnTmux(["attach-session", "-t", sessionName], {
+  if (createTmuxSession || !TMUX_BACKEND) {
+    const backendSession = await terminalBackend.createSession(
+      id,
       cwd,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-        COLUMNS: String(cols),
-        LINES: String(rows),
-      },
-      // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
-      terminal,
-      onExit(proc, exitCode, signalCode) {
-        closeAndRemoveTerminal(exitCode, signalCode);
-      },
-    });
-
-    await syncTmuxSessionSize(sessionName, cols, rows, { waitForClient: true });
-  } else {
-    proc = Bun.spawn(shellCommand, {
-      cwd,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-        COLUMNS: String(cols),
-        LINES: String(rows),
-        PATH: `${home}/.opencode/bin:${process.env.PATH || "/usr/bin"}`,
-      },
-      // @ts-expect-error - terminal option is Bun 1.3.5+ API, not yet in bun-types
-      terminal,
-      onExit(proc, exitCode, signalCode) {
-        closeAndRemoveTerminal(exitCode, signalCode);
-      },
-    });
+      cols,
+      rows,
+      ownerId,
+      ownerEmail,
+    );
+    if (TMUX_BACKEND) {
+      activeSessionName = backendSession.sessionName;
+    }
+    tmuxPipePath = backendSession.pipePath || null;
+    tmuxPipeOffset = backendSession.pipeOffset || 0;
   }
+
+  const attachSessionName = activeSessionName || id;
+  const attachResult = await terminalBackend.attach(attachSessionName, {
+    cwd,
+    cols,
+    rows,
+    terminal,
+    waitForClient: TMUX_BACKEND,
+    onExit(_proc: Subprocess, exitCode: number | null, signalCode?: number | null) {
+      closeAndRemoveTerminal(exitCode ?? 0, signalCode);
+    },
+  });
+  const proc = attachResult.proc as Subprocess;
+  tmuxPipePath = attachResult.pipePath ?? tmuxPipePath;
+  tmuxPipeOffset = attachResult.pipeOffset ?? tmuxPipeOffset;
 
   const now = Date.now();
   const managedTerminal: Terminal = {
