@@ -20,28 +20,28 @@ test("resolveTmuxSessionNamespace honors explicit override", () => {
   ).toBe("devalpha");
 });
 
-test("buildTmuxSessionName includes namespace, owner, and id", () => {
-  expect(
-    buildTmuxSessionName({
-      namespace: "p4174",
-      ownerId: "anonymous",
-      terminalId: "1234-5678",
-    }),
-  ).toBe("deckterm_p4174_anonymous_1234-5678");
+test("buildTmuxSessionName includes namespace and opaque id only", () => {
+  const ownerLikeValue = "user@example.com";
+  const sessionName = buildTmuxSessionName({
+    namespace: "p4174",
+    terminalId: "1234-5678",
+  });
+
+  expect(sessionName).toBe("deckterm_p4174_1234-5678");
+  expect(sessionName).not.toContain(ownerLikeValue);
 });
 
 test("parseTmuxSessionName accepts only the active prefix", () => {
   const prefix = getTmuxSessionPrefix("p4174");
   expect(
-    parseTmuxSessionName("deckterm_p4174_anonymous_1234-5678", prefix),
+    parseTmuxSessionName("deckterm_p4174_1234-5678", prefix),
   ).toEqual({
-    ownerId: "anonymous",
     terminalId: "1234-5678",
   });
   expect(
-    parseTmuxSessionName("deckterm_p4173_anonymous_1234-5678", prefix),
+    parseTmuxSessionName("deckterm_p4173_1234-5678", prefix),
   ).toBeNull();
   expect(
-    parseTmuxSessionName("deckterm_anonymous_1234-5678", prefix),
+    parseTmuxSessionName("deckterm_1234-5678", prefix),
   ).toBeNull();
 });

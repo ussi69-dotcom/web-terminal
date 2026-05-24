@@ -39,19 +39,13 @@ export function getTmuxSessionPrefix(namespace: unknown) {
 
 export function buildTmuxSessionName({
   namespace,
-  ownerId,
   terminalId,
 }: {
   namespace: unknown;
-  ownerId: unknown;
   terminalId: unknown;
 }) {
   const prefix = getTmuxSessionPrefix(namespace);
-  const safeOwnerId = sanitizeTmuxToken(ownerId, {
-    fallback: "anonymous",
-    maxLength: 20,
-  });
-  return `${prefix}_${safeOwnerId}_${String(terminalId || "").trim()}`;
+  return `${prefix}_${String(terminalId || "").trim()}`;
 }
 
 export function parseTmuxSessionName(sessionName: unknown, prefix: unknown) {
@@ -60,13 +54,8 @@ export function parseTmuxSessionName(sessionName: unknown, prefix: unknown) {
   if (!normalizedSession || !normalizedPrefix) return null;
   if (!normalizedSession.startsWith(`${normalizedPrefix}_`)) return null;
 
-  const remainder = normalizedSession.slice(normalizedPrefix.length + 1);
-  const separatorIndex = remainder.indexOf("_");
-  if (separatorIndex === -1) return null;
+  const terminalId = normalizedSession.slice(normalizedPrefix.length + 1);
+  if (!terminalId) return null;
 
-  const ownerId = remainder.slice(0, separatorIndex);
-  const terminalId = remainder.slice(separatorIndex + 1);
-  if (!ownerId || !terminalId) return null;
-
-  return { ownerId, terminalId };
+  return { terminalId };
 }

@@ -530,13 +530,35 @@ async function recoverTmuxSessions(): Promise<number> {
       .trim()
       .split("\n")
       .filter((s) => s.startsWith(`${TMUX_SESSION_PREFIX}_`));
+    if (sessions.length === 0) return 0;
+
     let recovered = 0;
+    const state = await getFoundationState();
 
     for (const sessionName of sessions) {
       const parsed = parseTmuxSessionName(sessionName, TMUX_SESSION_PREFIX);
       if (!parsed) continue;
 
-      const { ownerId, terminalId: id } = parsed;
+      const { terminalId: id } = parsed;
+      const recordedSession = getTerminalSession(state.db, id);
+      if (!recordedSession) {
+        console.warn(
+          `[tmux] Orphan session found: ${sessionName}, skipping recovery`,
+        );
+        continue;
+      }
+      if (recordedSession.status !== "active") {
+        console.warn(
+          `[tmux] Inactive database session found for ${sessionName} (${recordedSession.status}), skipping recovery`,
+        );
+        continue;
+      }
+
+      const ownerId = recordedSession.actorUserId || "unknown";
+      const ownerEmail = resolveRecoveredOwnerEmail(
+        state,
+        recordedSession.actorUserId,
+      );
 
       const { cwd, cols, rows, panePid, paneCurrentCommand } =
         await getTmuxSessionInfo(sessionName);
@@ -557,11 +579,11 @@ async function recoverTmuxSessions(): Promise<number> {
       });
       await createManagedTerminal({
         id,
-        cwd,
+        cwd: recordedSession.cwd || cwd,
         cols,
         rows,
         ownerId,
-        ownerEmail: "recovered",
+        ownerEmail,
         sessionName,
         initialRuntimeState: recoveredRuntimeState,
         initialLastExitCode: recoveredRuntimeState.lastExitCode,
@@ -569,7 +591,9 @@ async function recoverTmuxSessions(): Promise<number> {
       });
 
       recovered++;
-      console.log(`[tmux] Recovered session: ${sessionName} -> terminal ${id}`);
+      console.log(
+        `[tmux] Recovered session: ${sessionName} -> terminal ${id} (root: ${recordedSession.rootId || "unknown"})`,
+      );
     }
 
     return recovered;
@@ -578,6 +602,17 @@ async function recoverTmuxSessions(): Promise<number> {
     console.log("[tmux] No existing sessions to recover");
     return 0;
   }
+}
+
+function resolveRecoveredOwnerEmail(
+  state: FoundationState,
+  actorUserId: string | null,
+): string {
+  if (!actorUserId) return "recovered";
+  const row = state.db
+    .query("SELECT email FROM users WHERE id = ?")
+    .get(actorUserId) as { email: string | null } | null;
+  return row?.email || actorUserId;
 }
 
 // Debug logger
@@ -1774,7 +1809,6 @@ async function createOwnedTerminal({
   const sessionName = TMUX_BACKEND
     ? buildTmuxSessionName({
         namespace: TMUX_SESSION_NAMESPACE,
-        ownerId,
         terminalId: id,
       })
     : undefined;
