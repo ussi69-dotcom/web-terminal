@@ -41,10 +41,12 @@ import {
 } from "./tmux-session-names";
 import {
   bootstrapFirstAdmin,
+  appendTerminalEvent,
   getTerminalSession,
   hasScopedGrant,
   initializeFoundationState,
   isBootstrapComplete,
+  listTerminalEventsAfter,
   listTerminalSessionsForActor,
   markTerminalSessionEnded,
   recordTerminalSession,
@@ -56,6 +58,7 @@ import {
 import {
   authorizeTerminalAttach,
   authorizeTerminalSessionAccess,
+  authorizeTerminalWrite,
   getRouteCapability,
   isLegacyBootstrapBypassAllowed,
 } from "./services/foundation-authorization";
@@ -129,7 +132,11 @@ type TerminalWsData = {
   type: "terminal";
   terminalId: string;
   ownerId: string;
+  actorUserId: string;
+  mode: "read" | "write";
+  protocol: "legacy" | "v2";
   clientId: string | null;
+  lastEventId: number | null;
 };
 type OpenCodeWsData = { type: "opencode_proxy"; upstream: WebSocket };
 type WsData = TerminalWsData | OpenCodeWsData;
@@ -299,16 +306,36 @@ function sendReconnectLifecycle(
   ws.send(JSON.stringify({ type: "reconnect_lifecycle", phase, ...extra }));
 }
 
+function appendTerminalRuntimeEvent(
+  terminalId: string,
+  kind: "output" | "state" | "exit" | "lifecycle",
+  payload: { data?: string | Uint8Array | null; dataJson?: Record<string, unknown> | null } = {},
+): void {
+  void getFoundationState()
+    .then((state) => {
+      if (!getTerminalSession(state.db, terminalId)) return;
+      appendTerminalEvent(state.db, {
+        terminalId,
+        kind,
+        data: payload.data ?? null,
+        dataJson: payload.dataJson ?? null,
+      });
+    })
+    .catch((err) => debug(`[events] Failed to append ${kind} event for ${terminalId}:`, err));
+}
+
 function broadcastTerminalState(term: Terminal) {
   const sockets = terminalSockets.get(term.id);
-  if (!sockets || sockets.size === 0) return;
-  const payload = JSON.stringify({
-    type: "terminal_state",
+  const statePayload = {
+    type: "terminal_state" as const,
     running: term.running,
     lastExitCode: term.lastExitCode,
     agentName: term.agentName,
     agentState: term.agentState,
-  });
+  };
+  appendTerminalRuntimeEvent(term.id, "state", { dataJson: statePayload });
+  if (!sockets || sockets.size === 0) return;
+  const payload = JSON.stringify(statePayload);
   for (const ws of sockets) {
     try {
       ws.send(payload);
@@ -1031,6 +1058,8 @@ function appendScrollback(terminalId: string, data: string) {
   const term = terminals.get(terminalId);
   if (!term) return;
 
+  appendTerminalRuntimeEvent(terminalId, "output", { data });
+
   const chunks = data.split(/(?<=\n)/g);
   for (const chunk of chunks) {
     if (!chunk) continue;
@@ -1331,7 +1360,17 @@ function broadcastTerminalOutput(id: string, data: string) {
       continue;
     }
     try {
-      ws.send(data);
+      if (ws.data.type === "terminal" && ws.data.protocol === "v2") {
+        ws.send(
+          JSON.stringify({
+            type: "terminal_event",
+            kind: "output",
+            data,
+          }),
+        );
+      } else {
+        ws.send(data);
+      }
     } catch {
       // WebSocket closed
     }
@@ -1590,6 +1629,28 @@ async function completeTmuxReconnectReplay(
   reconnectState.replaying = true;
   reconnectState.pendingReady = true;
   try {
+    // Attempt delta replay if lastEventId is provided
+    if (ws.data.type === "terminal" && ws.data.lastEventId !== null) {
+      const state = await getFoundationState();
+      const events = listTerminalEventsAfter(state.db, terminalId, ws.data.lastEventId);
+      if (events.length > 0) {
+        for (const ev of events) {
+          if (ev.kind === "output" && ev.data) {
+            if (ws.data.protocol === "v2") {
+              ws.send(JSON.stringify({ type: "terminal_event", kind: "output", data: ev.data }));
+            } else {
+              ws.send(ev.data);
+            }
+          } else if (ev.kind === "state" && ev.dataJson) {
+            ws.send(JSON.stringify({ type: "terminal_state", ...ev.dataJson }));
+          }
+        }
+        debug(`[reconnect] Delta-replayed ${events.length} events after ${ws.data.lastEventId} for ${terminalId}`);
+        sendReconnectLifecycle(ws, "replay-complete", { requiresRedraw: false });
+        return;
+      }
+    }
+
     if (term.sessionName) {
       await syncTmuxSessionSize(term.sessionName, term.cols, term.rows, {
         waitForClient: reason === "client-ready",
@@ -3541,13 +3602,41 @@ export async function startWebServer(host: string, port: number) {
         });
 
         const clientId = url.searchParams.get("clientId")?.trim() || null;
+        const requestedMode = url.searchParams.get("mode")?.trim();
+        const isV2 = url.searchParams.get("protocol")?.trim() === "v2";
+        const lastEventIdStr = url.searchParams.get("lastEventId")?.trim();
+        const lastEventId = lastEventIdStr ? parseInt(lastEventIdStr, 10) : null;
+
+        let mode: "read" | "write" = "read";
+        if (requestedMode === "write") {
+          const writeDecision = authorizeTerminalWrite(state.db, {
+            actorUserId: ownerId,
+            terminalId: id,
+          });
+          if (writeDecision.allow) {
+            mode = "write";
+          }
+        } else if (requestedMode === "read") {
+          mode = "read";
+        } else {
+          // No explicit mode requested, decide based on permissions
+          const writeDecision = authorizeTerminalWrite(state.db, {
+            actorUserId: ownerId,
+            terminalId: id,
+          });
+          mode = writeDecision.allow ? "write" : "read";
+        }
 
         const success = server.upgrade(req, {
           data: {
             type: "terminal" as const,
             terminalId: id,
-            ownerId,
+            ownerId: term.ownerId,
+            actorUserId: ownerId,
+            mode,
+            protocol: isV2 ? "v2" : "legacy",
             clientId,
+            lastEventId: Number.isFinite(lastEventId) ? lastEventId : null,
           },
         });
         if (success) return undefined;
@@ -3642,6 +3731,28 @@ export async function startWebServer(host: string, port: number) {
           }
 
           const { terminalId } = data;
+
+          if (data.type === "terminal" && data.mode === "read") {
+            // Discard any non-ping/non-resume message for read-only mode
+            if (typeof message === "string") {
+              try {
+                const parsed = JSON.parse(message);
+                if (parsed.type !== "ping" && parsed.type !== "resume-ready") {
+                  debug(`[ws-security] Blocked message type "${parsed.type}" for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+                  return;
+                }
+              } catch {
+                // Raw input message
+                debug(`[ws-security] Blocked raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+                return;
+              }
+            } else {
+              // Binary / raw buffer input message
+              debug(`[ws-security] Blocked binary/raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+              return;
+            }
+          }
+
           const term = terminals.get(terminalId);
 
           if (!term) {

@@ -6,6 +6,7 @@ export type FoundationEnv = Record<string, string | undefined>;
 export type FoundationCapability =
   | "terminal.create"
   | "terminal.attach"
+  | "terminal.write"
   | "terminal.manage"
   | "root.use";
 
@@ -32,7 +33,7 @@ export function authorizeTerminalSessionAccess(
   request: {
     actorUserId: string;
     terminalId: string;
-    capability: "terminal.attach" | "terminal.manage";
+    capability: "terminal.attach" | "terminal.write" | "terminal.manage";
   },
 ):
   | { allow: true; reason: "owner" | "granted" }
@@ -64,6 +65,16 @@ export function authorizeTerminalAttach(
   return authorizeTerminalSessionAccess(db, {
     ...request,
     capability: "terminal.attach",
+  });
+}
+
+export function authorizeTerminalWrite(
+  db: Database,
+  request: { actorUserId: string; terminalId: string },
+) {
+  return authorizeTerminalSessionAccess(db, {
+    ...request,
+    capability: "terminal.write",
   });
 }
 

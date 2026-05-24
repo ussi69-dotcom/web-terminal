@@ -140,6 +140,7 @@ test("foundation C1 records and ends terminal session metadata", async () => {
     createdAt: "2026-05-13T10:00:00.000Z",
     updatedAt: "2026-05-13T10:00:00.000Z",
     endedAt: null,
+    lastEventId: 0,
   });
 
   markTerminalSessionEnded(state.db, "term_abc", new Date("2026-05-13T10:05:00Z"));

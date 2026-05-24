@@ -34,8 +34,14 @@ export type InitializeFoundationStateOptions = {
 
 const INITIAL_MIGRATION = 1;
 const C1_AUTH_GRANTS_MIGRATION = 2;
+const C1B_TERMINAL_EVENTS_MIGRATION = 3;
 
-export type ScopedGrantCapability = "terminal.create" | "terminal.attach" | "terminal.manage" | "root.use";
+export type ScopedGrantCapability =
+  | "terminal.create"
+  | "terminal.attach"
+  | "terminal.write"
+  | "terminal.manage"
+  | "root.use";
 
 export type RecordedTerminalSession = {
   id: string;
@@ -46,6 +52,18 @@ export type RecordedTerminalSession = {
   createdAt: string;
   updatedAt: string;
   endedAt: string | null;
+  lastEventId: number;
+};
+
+export type TerminalEventKind = "output" | "state" | "exit" | "lifecycle";
+
+export type RecordedTerminalEvent = {
+  id: number;
+  terminalId: string;
+  kind: TerminalEventKind;
+  data: string | null;
+  dataJson: Record<string, unknown> | null;
+  createdAt: string;
 };
 
 const ADMIN_DEFAULT_GRANTS: Array<{
@@ -55,6 +73,7 @@ const ADMIN_DEFAULT_GRANTS: Array<{
 }> = [
   { capability: "terminal.create", resourceType: "*", resourceId: "*" },
   { capability: "terminal.attach", resourceType: "*", resourceId: "*" },
+  { capability: "terminal.write", resourceType: "*", resourceId: "*" },
   { capability: "terminal.manage", resourceType: "*", resourceId: "*" },
   { capability: "root.use", resourceType: "*", resourceId: "*" },
 ];
@@ -65,6 +84,13 @@ function createId(prefix: string): string {
 
 function isoDate(now: Date): string {
   return now.toISOString();
+}
+
+function tableColumnExists(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{
+    name: string;
+  }>;
+  return rows.some((row) => row.name === columnName);
 }
 
 export function openFoundationDb(stateDir: string): Database {
@@ -110,8 +136,22 @@ export function migrateFoundationDb(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       ended_at TEXT,
+      last_event_id INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(root_id) REFERENCES project_roots(id)
     );
+
+    CREATE TABLE IF NOT EXISTS terminal_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      terminal_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      data_blob BLOB,
+      data_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(terminal_id) REFERENCES terminal_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_events_terminal_id_id
+      ON terminal_events(terminal_id, id);
 
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
@@ -166,6 +206,21 @@ export function migrateFoundationDb(db: Database): void {
     db.query(
       "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
     ).run(C1_AUTH_GRANTS_MIGRATION, new Date().toISOString());
+  }
+
+  if (!tableColumnExists(db, "terminal_sessions", "last_event_id")) {
+    db.exec(
+      "ALTER TABLE terminal_sessions ADD COLUMN last_event_id INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  const c1bExisting = db
+    .query("SELECT version FROM schema_migrations WHERE version = ?")
+    .get(C1B_TERMINAL_EVENTS_MIGRATION);
+  if (!c1bExisting) {
+    db.query(
+      "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+    ).run(C1B_TERMINAL_EVENTS_MIGRATION, new Date().toISOString());
   }
 }
 
@@ -336,21 +391,23 @@ export function recordTerminalSession(
     rootId?: string | null;
     cwd: string;
     status?: "active" | "ended";
+    lastEventId?: number;
     now?: Date;
   },
 ): void {
   const timestamp = isoDate(session.now || new Date());
   db.query(
     `INSERT INTO terminal_sessions
-      (id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at, last_event_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        actor_user_id = excluded.actor_user_id,
        root_id = excluded.root_id,
        cwd = excluded.cwd,
        status = excluded.status,
        updated_at = excluded.updated_at,
-       ended_at = excluded.ended_at`,
+       ended_at = excluded.ended_at,
+       last_event_id = MAX(terminal_sessions.last_event_id, excluded.last_event_id)`,
   ).run(
     session.id,
     session.actorUserId || null,
@@ -360,6 +417,7 @@ export function recordTerminalSession(
     timestamp,
     timestamp,
     session.status === "ended" ? timestamp : null,
+    session.lastEventId || 0,
   );
 }
 
@@ -382,7 +440,7 @@ export function getTerminalSession(
 ): RecordedTerminalSession | null {
   const row = db
     .query(
-      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at
+      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at, last_event_id
        FROM terminal_sessions
        WHERE id = ?`,
     )
@@ -396,6 +454,7 @@ export function getTerminalSession(
         created_at: string;
         updated_at: string;
         ended_at: string | null;
+        last_event_id: number;
       }
     | null;
 
@@ -409,6 +468,7 @@ export function getTerminalSession(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
+    lastEventId: row.last_event_id || 0,
   };
 }
 
@@ -418,7 +478,7 @@ export function listTerminalSessionsForActor(
 ): RecordedTerminalSession[] {
   const rows = db
     .query(
-      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at
+      `SELECT id, actor_user_id, root_id, cwd, status, created_at, updated_at, ended_at, last_event_id
        FROM terminal_sessions
        WHERE actor_user_id = ?
        ORDER BY created_at DESC`,
@@ -432,6 +492,7 @@ export function listTerminalSessionsForActor(
     created_at: string;
     updated_at: string;
     ended_at: string | null;
+    last_event_id: number;
   }>;
 
   return rows.map((row) => ({
@@ -443,7 +504,98 @@ export function listTerminalSessionsForActor(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
+    lastEventId: row.last_event_id || 0,
   }));
+}
+
+function decodeTerminalEventData(data: unknown): string | null {
+  if (data == null) return null;
+  if (typeof data === "string") return data;
+  if (data instanceof Uint8Array) {
+    return new TextDecoder().decode(data);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(data));
+  }
+  return String(data);
+}
+
+export function appendTerminalEvent(
+  db: Database,
+  event: {
+    terminalId: string;
+    kind: TerminalEventKind;
+    data?: string | Uint8Array | null;
+    dataJson?: Record<string, unknown> | null;
+    now?: Date;
+  },
+): number {
+  const timestamp = isoDate(event.now || new Date());
+  const dataBlob = event.data == null ? null : Buffer.from(event.data);
+  const dataJson = event.dataJson ? JSON.stringify(event.dataJson) : null;
+
+  db.query(
+    `INSERT INTO terminal_events (terminal_id, kind, data_blob, data_json, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(event.terminalId, event.kind, dataBlob, dataJson, timestamp);
+
+  const idRow = db.query("SELECT last_insert_rowid() AS id").get() as {
+    id: number | bigint;
+  };
+  const id = Number(idRow.id);
+  db.query(
+    `UPDATE terminal_sessions
+     SET last_event_id = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(id, timestamp, event.terminalId);
+  return id;
+}
+
+export function listTerminalEventsAfter(
+  db: Database,
+  terminalId: string,
+  lastEventId: number,
+  limit = 1000,
+): RecordedTerminalEvent[] {
+  const safeLastEventId = Number.isFinite(lastEventId)
+    ? Math.max(0, Math.floor(lastEventId))
+    : 0;
+  const safeLimit = Math.max(1, Math.min(10_000, Math.floor(limit)));
+  const rows = db
+    .query(
+      `SELECT id, terminal_id, kind, data_blob, data_json, created_at
+       FROM terminal_events
+       WHERE terminal_id = ? AND id > ?
+       ORDER BY id ASC
+       LIMIT ?`,
+    )
+    .all(terminalId, safeLastEventId, safeLimit) as Array<{
+    id: number;
+    terminal_id: string;
+    kind: TerminalEventKind;
+    data_blob: unknown;
+    data_json: string | null;
+    created_at: string;
+  }>;
+
+  return rows.map((row) => {
+    let dataJson: Record<string, unknown> | null = null;
+    if (row.data_json) {
+      try {
+        dataJson = JSON.parse(row.data_json) as Record<string, unknown>;
+      } catch {
+        dataJson = null;
+      }
+    }
+    return {
+      id: row.id,
+      terminalId: row.terminal_id,
+      kind: row.kind,
+      data: decodeTerminalEventData(row.data_blob),
+      dataJson,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 export function writeAuditEvent(
