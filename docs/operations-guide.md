@@ -219,3 +219,19 @@ systemctl --user status deckterm.service
 3. Merge to `dev`
 4. Promote `dev` to `main`
 5. Let `Deploy Main` verify and deploy automatically
+
+## Security and Multiuser Isolation Model
+
+### Multiuser Permissions
+
+DeckTerm enforces multiuser boundaries at the **application level**:
+- Each terminal session (`terminal_sessions`) is owned by a specific user identity resolved via Cloudflare Access (`sub`).
+- Attaching to a terminal session requires owner status or a matching `terminal.attach` scoped grant.
+- Writing to a terminal session (sending input) requires owner status or a matching `terminal.write` scoped grant.
+
+### OS-Level Isolation Disclaimer
+
+> ⚠️ **IMPORTANT SECURITY NOTICE:** DeckTerm's multiuser permissions isolate access within the application layer. However, under the hood, all terminal processes and tmux sessions are executed by the **same Unix user** (e.g. `deploy`) running the Bun/Hono server. 
+>
+> Therefore, DeckTerm **does not provide OS-level containerization or process/file sandbox isolation** between different users' sessions. Any user with interactive shell access (`terminal.write`) can inspect other processes or access files owned by this Unix account. For multi-tenant hosting with strong security boundaries, you must use separate container/VM deployments or different OS-level Unix accounts.
+

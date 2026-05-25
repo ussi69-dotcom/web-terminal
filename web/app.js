@@ -4952,7 +4952,17 @@ class TerminalManager {
       rows.appendChild(row);
     });
 
-    section.append(header, rows);
+    const disclaimer = document.createElement("div");
+    disclaimer.className = "setup-disclaimer";
+    disclaimer.innerHTML = `⚠️ <strong>OS-Level Isolation Note:</strong> DeckTerm enforces multiuser boundaries at the application level. However, all terminal processes run under the same Unix user account on the host. Application permissions do not provide process or filesystem sandboxing between users.`;
+    disclaimer.style.marginTop = "1rem";
+    disclaimer.style.fontSize = "0.8rem";
+    disclaimer.style.opacity = "0.75";
+    disclaimer.style.lineHeight = "1.3";
+    disclaimer.style.borderLeft = "2px solid var(--border-color, #30363d)";
+    disclaimer.style.paddingLeft = "0.75rem";
+
+    section.append(header, rows, disclaimer);
     target.appendChild(section);
   }
 

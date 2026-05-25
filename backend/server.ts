@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import type { ServerWebSocket, Subprocess } from "bun";
+import { Database } from "bun:sqlite";
 import {
   cloudflareAccess,
   type CloudflareAccessPayload,
@@ -110,6 +111,7 @@ type Terminal = {
   rows: number;
   createdAt: number;
   lastActivityAt: number; // Last user input timestamp for idle detection
+  lastDetachedAt?: number; // Last client socket disconnection timestamp for detached reaper
   ownerId: string; // User sub from JWT
   ownerEmail: string; // User email for display
   sessionName?: string; // tmux session name (when TMUX_BACKEND=1)
@@ -566,6 +568,28 @@ async function cleanupClipboardImages() {
 setInterval(cleanupClipboardImages, 15 * 60 * 1000);
 // Ensure directory exists on startup
 ensureClipboardDir();
+
+export async function reconcileSessionsOnStartup(db: Database): Promise<number> {
+  if (!TMUX_BACKEND) return 0;
+  let fixed = 0;
+  try {
+    const activeSessions = db.query("SELECT id FROM terminal_sessions WHERE status = 'active'").all() as { id: string }[];
+    for (const session of activeSessions) {
+      const sessionName = buildTmuxSessionName({
+        namespace: TMUX_SESSION_NAMESPACE,
+        terminalId: session.id,
+      });
+      if (!(await tmuxSessionExists(sessionName))) {
+        markTerminalSessionEnded(db, session.id);
+        fixed++;
+        console.log(`[reconciliation] Closed zombie session ${session.id} (DB was active, but tmux session was missing)`);
+      }
+    }
+  } catch (err) {
+    console.error("[reconciliation] Error during startup session reconciliation:", err);
+  }
+  return fixed;
+}
 
 // Recover existing tmux sessions on startup (for TMUX_BACKEND)
 async function recoverTmuxSessions(): Promise<number> {
@@ -1882,6 +1906,7 @@ async function createManagedTerminal({
     rows,
     createdAt: now,
     lastActivityAt: now,
+    lastDetachedAt: now, // starts as detached/unattached
     ownerId,
     ownerEmail,
     sessionName,
@@ -3477,6 +3502,11 @@ export async function startWebServer(host: string, port: number) {
     console.log(
       "[tmux] TMUX_BACKEND enabled - checking for existing sessions...",
     );
+    const state = await getFoundationState();
+    const reconciled = await reconcileSessionsOnStartup(state.db);
+    if (reconciled > 0) {
+      console.log(`[reconciliation] Reconciled ${reconciled} zombie session(s) on startup`);
+    }
     const recovered = await recoverTmuxSessions();
     if (recovered > 0) {
       console.log(`[tmux] Recovered ${recovered} session(s)`);
@@ -3690,6 +3720,7 @@ export async function startWebServer(host: string, port: number) {
         }
 
         sockets.add(ws);
+        term.lastDetachedAt = undefined;
         const socketsCount = sockets.size;
         const isReconnect = term.hadSocketConnection;
         term.hadSocketConnection = true;
@@ -3861,6 +3892,12 @@ export async function startWebServer(host: string, port: number) {
         const sockets = terminalSockets.get(terminalId);
         if (sockets) {
           sockets.delete(ws);
+          if (sockets.size === 0) {
+            const term = terminals.get(terminalId);
+            if (term) {
+              term.lastDetachedAt = Date.now();
+            }
+          }
         }
       },
     },
@@ -3868,47 +3905,106 @@ export async function startWebServer(host: string, port: number) {
 
   console.log(`🚀 DeckTerm running at http://${host}:${port}`);
 
+  const DECKTERM_ORPHAN_TTL_HOURS = parseInt(
+    process.env.DECKTERM_ORPHAN_TTL_HOURS || "8",
+    10,
+  );
+  const DECKTERM_ORPHAN_TTL_MS = DECKTERM_ORPHAN_TTL_HOURS * 60 * 60 * 1000;
+
   const cleanupIdleTerminals = async () => {
     const now = Date.now();
 
     for (const [id, term] of terminals) {
-      const idleTime = now - term.lastActivityAt;
+      const sockets = terminalSockets.get(id);
+      const activeSocketsCount = sockets ? sockets.size : 0;
 
-      if (idleTime > TERMINAL_IDLE_TIMEOUT_MS) {
-        const sockets = terminalSockets.get(id);
-        console.log(
-          `[cleanup] Closing idle terminal ${id} (idle: ${Math.round(idleTime / 1000 / 60)}min, owner: ${term.ownerEmail})`,
-        );
-        if (sockets) {
-          for (const ws of sockets) {
-            try {
-              ws.send(JSON.stringify({ type: "idle_timeout" }));
-              ws.close();
-            } catch {}
+      // Only clean up idle active/attached terminals. Detached terminals are reaped after 8 hours!
+      if (activeSocketsCount > 0) {
+        const idleTime = now - term.lastActivityAt;
+
+        if (idleTime > TERMINAL_IDLE_TIMEOUT_MS) {
+          console.log(
+            `[cleanup] Closing idle active terminal ${id} (idle: ${Math.round(idleTime / 1000 / 60)}min, owner: ${term.ownerEmail})`,
+          );
+          if (sockets) {
+            for (const ws of sockets) {
+              try {
+                ws.send(JSON.stringify({ type: "idle_timeout" }));
+                ws.close();
+              } catch {}
+            }
+          }
+
+          closeTerminalSockets(id);
+          removeTerminalState(id);
+          try {
+            await killTmuxSessionIfLast(term.sessionName);
+          } catch (err) {
+            if (term.sessionName) {
+              debug(`[cleanup] tmux kill-session error for ${id}:`, err);
+            }
+          }
+
+          try {
+            term.proc.kill();
+            term.terminal.close();
+          } catch (err) {
+            debug(`Cleanup error for ${id}:`, err);
           }
         }
+      }
+    }
+  };
 
-        closeTerminalSockets(id);
-        removeTerminalState(id);
-        try {
-          await killTmuxSessionIfLast(term.sessionName);
-        } catch (err) {
-          if (term.sessionName) {
-            debug(`[cleanup] tmux kill-session error for ${id}:`, err);
+  const reapDetachedSessions = async () => {
+    const now = Date.now();
+    const state = await getFoundationState();
+
+    for (const [id, term] of terminals) {
+      const sockets = terminalSockets.get(id);
+      const activeSocketsCount = sockets ? sockets.size : 0;
+
+      // Only reap detached sessions (0 active connections)
+      if (activeSocketsCount === 0 && term.lastDetachedAt) {
+        const detachedTime = now - term.lastDetachedAt;
+        const idleTime = now - term.lastActivityAt;
+        // Detached and inactive for DECKTERM_ORPHAN_TTL_MS
+        const timeSinceLastActivityOrDetach = Math.max(detachedTime, idleTime);
+
+        if (timeSinceLastActivityOrDetach > DECKTERM_ORPHAN_TTL_MS) {
+          console.log(
+            `[reaper] Reaping expired detached terminal ${id} (detached/inactive: ${Math.round(timeSinceLastActivityOrDetach / 1000 / 60)}min, owner: ${term.ownerEmail})`,
+          );
+
+          try {
+            await markTerminalSessionEnded(state.db, id);
+          } catch (err) {
+            debug(`[reaper] Failed to mark session ${id} ended in DB:`, err);
           }
-        }
 
-        try {
-          term.proc.kill();
-          term.terminal.close();
-        } catch (err) {
-          debug(`Cleanup error for ${id}:`, err);
+          removeTerminalState(id);
+
+          try {
+            await killTmuxSessionIfLast(term.sessionName);
+          } catch (err) {
+            if (term.sessionName) {
+              debug(`[reaper] tmux kill-session error for ${id}:`, err);
+            }
+          }
+
+          try {
+            term.proc.kill();
+            term.terminal.close();
+          } catch (err) {
+            debug(`[reaper] Cleanup error for ${id}:`, err);
+          }
         }
       }
     }
   };
 
   setInterval(cleanupIdleTerminals, 5 * 60 * 1000);
+  setInterval(reapDetachedSessions, 15 * 60 * 1000);
 
   process.on("SIGINT", () => {
     for (const term of terminals.values()) {

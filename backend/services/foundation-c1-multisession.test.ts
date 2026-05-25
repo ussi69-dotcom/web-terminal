@@ -144,3 +144,43 @@ test("foundation C1b: terminal events and sequence log", async () => {
 
   state.db.close();
 });
+
+test("foundation C1b: reconcileSessionsOnStartup", async () => {
+  const stateDir = await createTempDir(".deckterm-c1b-reconcile-state-");
+  const projectRoot = await createTempDir(".deckterm-c1b-reconcile-root-");
+  const state = await initializeFoundationState({
+    stateDir,
+    allowedFileRoots: [projectRoot],
+    env: {},
+    now: new Date("2026-05-24T12:00:00Z"),
+  });
+
+  const termId = "term-reconcile-test";
+  recordTerminalSession(state.db, {
+    id: termId,
+    actorUserId: "user_owner",
+    rootId: state.roots[0]?.id,
+    cwd: projectRoot,
+    now: new Date("2026-05-24T12:01:00Z"),
+  });
+
+  const originalBackend = process.env.TMUX_BACKEND;
+  process.env.TMUX_BACKEND = "1";
+
+  const { reconcileSessionsOnStartup } = require("../server");
+  const reconciled = await reconcileSessionsOnStartup(state.db);
+
+  expect(reconciled).toBe(1);
+
+  const session = getTerminalSession(state.db, termId);
+  expect(session?.status).toBe("ended");
+  expect(session?.endedAt).not.toBeNull();
+
+  if (originalBackend !== undefined) {
+    process.env.TMUX_BACKEND = originalBackend;
+  } else {
+    delete process.env.TMUX_BACKEND;
+  }
+
+  state.db.close();
+});
