@@ -1,0 +1,320 @@
+# DeckTerm — přehled vývoje a stav projektu
+
+> **Datum:** 2026-05-29
+> **Účel:** Jeden dokument, ze kterého pochopíš, kde DeckTerm je, jak vznikal, jak se nasazuje na nový server, co je autoconfig, jak je navržen multisession a k čemu slouží tasky.
+> **Pro koho:** pro tebe (orientace po delší době) i pro někoho nového, kdo by projekt přebíral.
+
+Tohle je živý přehledový dokument. Detailní rozhodnutí a plány jsou v `docs/plans/`; tady je propojuju do celkového obrázku.
+
+---
+
+## 1. Co DeckTerm je (v jedné větě)
+
+Browser-based terminálový workspace pro dlouhoběžící vzdálené dev session: perzistentní tmux shelly, plovoucí/dlaždicový window manager, mobile-first ovládání, file explorer + git panel omezený na povolené rooty, agent-aware status badge a supervizovaný task runner.
+
+**Stack:** Bun runtime (kvůli `Bun.Terminal` PTY API) · Hono (routing/CORS) + nativní Bun WebSocket · vanilla JS + xterm.js frontend · `bun:sqlite` pro foundation state · tmux pro perzistenci. Jediné runtime dependency: `hono`, `@hono/cloudflare-access`.
+
+Klíčová vlastnost z hlediska rizika: **je to mocný nástroj na host-shell a filesystem.** Proto poslední ~3 měsíce vývoje nejsou nové terminálové fíčury, ale **bezpečnostní foundation**.
+
+---
+
+## 2. Časová osa vývoje
+
+Vývoj má dvě jasně oddělené éry:
+
+### Éra A — produktové UI fíčury (leden–duben 2026)
+
+Většina commitů do ~dubna byla o použitelnosti terminálu a UI:
+
+- terminal UI stabilita, scaling fix, clipboard overhaul, platform-adaptivní UI
+- lazygit-style git panel + git API
+- file explorer sidebar
+- command palette + navigation layer, jump-layer MVP, recent workspaces
+- shell action hierarchy + customizovatelné layouty toolbaru
+- desktop tab wrap, toolbar overflow density, tab signal priority, merged workspace tab summary
+- agent state badges (telemetry klasifikuje výstupní fázi agenta)
+- foreground-running detekce
+
+Tyhle věci dělají z DeckTermu příjemný terminál v prohlížeči. Plány k nim jsou v `docs/plans/2026-01-*` až `2026-04-*`.
+
+### Éra B — bezpečnostní foundation (květen 2026 → teď)
+
+V květnu proběhl review (`docs/plans/2026-05-12-deckterm-foundation-decisions.md`) s jedním zásadním rozhodnutím:
+
+> **DeckTerm nepřepisovat. Posilovat funkční produkt malými, mergeable, bezpečnostně orientovanými řezy.**
+
+Z toho vznikla série řezů **C0 → C1a → C1b → C2**, každý se ships _s testy_. Tohle je dominantní recent work a to, v čem ses začal ztrácet — rozepisuju to v sekci 3.
+
+```
+9462319  docs: capture DeckTerm foundation plan      ← rozhodnutí (C0/C1/C2 split)
+4df04e3  feat: foundation bootstrap gate             ← C0
+c85e992  feat: foundation capability grants          ← C0/C1 příprava
+1ce7245  feat: C1a Multiuser Foundation + C1b design  ← C1a (actor/grants/sessions)
+b1c8324  feat(tmux): opaque session names            ← C1b-01
+4ffc893  feat(tmux): isolated tmux socket            ← C1b-02
+1fda83b  feat(sessions): catalog reconnect flow      ← C1b-03
+3768fe5  refactor: TerminalBackend interface         ← C1b-04
+38b082c  feat: terminal.write mode + events log      ← C1b-05 & C1b-06
+bb256e0  feat(ui): sessions drawer + mode indicators ← C1b-07
+a908737  feat(cleanup): zombie reconciliation + reapers + OS isolation warnings ← C1b-08
+ac208cd  feat(security): file/git/task gates + doctor hardening ← C2  (HEAD)
+```
+
+---
+
+## 3. Bezpečnostní foundation — jak to dnes funguje
+
+Princip: **strangler refactor.** Doménová logika postupně migruje z monolitického `server.ts` do `backend/services/foundation-*.ts`. Route handlery zůstávají tenké a volají služby.
+
+### 3.1 Datový model (`backend/services/foundation-state.ts`)
+
+`bun:sqlite` databáze v `$DECKTERM_STATE_DIR/deckterm.db` (default `$HOME/.deckterm`) s číslovanými migracemi. Tabulky:
+
+| Tabulka             | Co drží                                                        | Řez    |
+| ------------------- | -------------------------------------------------------------- | ------ |
+| `users`             | uživatelské identity                                           | C0     |
+| `project_roots`     | povolené rooty (import z `ALLOWED_FILE_ROOTS`)                 | C0     |
+| `terminal_sessions` | vlastnictví + metadata terminálů (zdroj pravdy pro autorizaci) | C0/C1a |
+| `audit_events`      | allow/deny rozhodnutí (actor, resource, action, reason, ts)    | C0     |
+| `auth_identities`   | mapování Cloudflare Access `sub` → user                        | C1a    |
+| `scoped_grants`     | konkrétní granty (capability + resource_type + resource_id)    | C1a    |
+| `terminal_events`   | sekvenční log výstupu/control událostí pro recovery cursor     | C1b    |
+
+Capabilities (granty): `terminal.create`, `terminal.attach`, `terminal.write`, `terminal.manage`, `root.use`.
+
+**Gotcha:** `foundationStatePromise` je **module-level singleton** — jeden foundation state na proces. Proto API testy drží jeden foundation-bearing test na soubor (viz `task-api.test.ts`).
+
+### 3.2 Bootstrap gate (C0)
+
+Čerstvý/produkční start zablokuje host-terminal přístup, dokud neexistuje admin. Dvě cesty k prvnímu adminovi:
+
+1. **Env-admin (preferováno pro prod):** když `CF_ACCESS_REQUIRED=1` a přijde validní Cloudflare Access identita shodující se s `DECKTERM_BOOTSTRAP_ADMIN_EMAIL`, vytvoří se první admin a bootstrap mód se spotřebuje.
+2. **One-time token (self-hosted/local):** token v `$DECKTERM_STATE_DIR/bootstrap-token`, mód `0600`, single-use, TTL 1h.
+
+Escape hatche (jen pro migraci/dev, tvrdě guardované proti produkci):
+
+- `DECKTERM_LEGACY_NO_BOOTSTRAP=1` — obejde bootstrap (jen CI/test/dev; **migrace path, nezahazovat**). Hlučný warning při startu + doctor warning.
+- `DECKTERM_DEV_INSECURE_LOCAL_ADMIN=1` — jen explicitní dev/local, ignoruje se v produkci / při CF Access / non-localhost bind.
+
+### 3.3 Actor a granty (C1a)
+
+- **Identita aktéra** se v produkci řeší **výhradně z Cloudflare Access** (`backend/services/foundation-actors.ts`): `sub` = stabilní subjekt, `email` = zobrazované jméno. Vlastní login/heslo je explicitně mimo scope.
+- `backend/services/foundation-authorization.ts` — `canUseCapability()` / `authorizeTerminalSessionAccess()`, route capability registry, admin/wildcard sémantika.
+- **Auth flow host-access endpointu:** vyřeš aktéra → namapuj path/resource na povolený root → vyžaduj capability grant → zapiš allow/deny audit row.
+
+### 3.4 File/git/task gates (C2)
+
+Sdílený `requireFileAccess()` gate v `server.ts` rozšiřuje stejnou actor/root/grant rezoluci na file API, git endpointy (přes `validateGitCwd`) a task create (`projectRoot`). Legacy path-only volání se neloguje spamem, ale zapisuje jako queryable audit-lite signál (`legacy_path_resolution`).
+
+### 3.5 OS-level disclaimer (důležité!)
+
+Multiuser permissions izolují přístup **na aplikační úrovni**. Všechny terminály a tmux session ale běží pod **stejným Unix uživatelem** (`deploy`). DeckTerm tedy **neposkytuje OS-level izolaci** procesů/souborů/secrets mezi uživateli. Pro tvrdou multi-tenant izolaci jsou potřeba kontejnery/VM/samostatní Unix uživatelé — to je plánováno (viz sekce 5), ale není hotové. Tenhle disclaimer je v `docs/operations-guide.md` a v onboarding/admin statusu.
+
+---
+
+## 4. Multisession — návrh a stav
+
+Plný návrh: `docs/plans/2026-05-24-multisession-design.md`. Schváleno Lukášem 2026-05-24.
+
+### 4.1 Závazná architektonická rozhodnutí
+
+1. **tmux je implementační detail backendu.** Frontend ani autorizace nikdy neparsuje tmux session names. Identita terminálu žije v SQLite (`terminal_sessions`) přes opaque ID.
+2. **tmux session names jsou opaque** — `deckterm_<instance>_<opaqueTerminalId>`, žádný email/owner/sub. (Dřív leakoval `ownerId` do `ps`/`tmux ls`.)
+3. **izolovaný tmux socket** — `tmux -S $DECKTERM_STATE_DIR/tmux/<instance>.sock`, dir `0700`. Dev (4174) a prod (4173) instance se nekříží.
+4. **bezpečnostní hranice je aplikační, ne OS-level** (viz 3.5).
+5. **granulární autorizace** — `terminal.attach` = read-only monitoring, `terminal.write` = interaktivní vstup. Linked view není implicitně write.
+6. **session recovery** — UI ukazuje active/detached session, explicitní reconnect, reconnect protokol s `lastEventId` cursorem.
+
+### 4.2 Co je HOTOVO (C1b-01 až C1b-08, na `dev`)
+
+- ✅ Opaque tmux session names + odstraněn owner parsing z recovery
+- ✅ Izolovaný tmux socket wrapper
+- ✅ `TerminalBackend` interface se dvěma impl: `raw-terminal-backend.ts` (přímý `Bun.Terminal`) a `tmux-terminal-backend.ts` (perzistence; `TMUX_BACKEND=1`, default v nasazení). tmux helpery vytaženy ze `server.ts`.
+- ✅ Session catalog + reconnect flow
+- ✅ `terminal.write` capability + WS `mode=read|write` (read-only attach blokuje input, audituje deny)
+- ✅ `terminal_events` sekvenční log + `lastEventId` recovery cursor
+- ✅ Sessions drawer v UI + mode indikátory (read-only / write / detached / reconnecting…)
+- ✅ Zombie reconciliation, detached reapers (osiřelé session se zabíjejí po **8 h** neaktivity), OS isolation warnings
+
+### 4.3 Cílový rozhodovací model (kdo smí co)
+
+- Owner má implicitně `attach` + `write` + `manage` nad svým terminálem.
+- Admin/global grant může mít wildcard.
+- Non-owner s pouhým `terminal.attach` dostane **read-only** view; "take control" vyžaduje explicitní `terminal.write`.
+- **Plán do budoucna:** každý aktér (dle své Cloudflare OTP identity) má vlastní dedikované session; cílem je plná kontejnerizace uživatelských profilů.
+
+### 4.4 Persistence po reloadu
+
+Po reloadu prohlížeče se automaticky obnovují session, které běžely předtím (frontend layout cache v `localStorage` přes `SessionRegistry`), backend to podpoří stabilní perzistencí v DB + plynulým reconnectem. Pravda o existenci a oprávnění session je **vždy server**, localStorage je jen layout cache.
+
+### 4.5 Co ještě NENÍ (multisession backlog)
+
+- `terminal_clients` tabulka byla v plánu jen jako volitelná — online clients se drží in-memory + audit connect/disconnect.
+- Plný structured-event protokol "v2" pro všechny clienty (zatím se posílá i raw output kvůli kompatibilitě).
+- Permission editor UI pro správu grantů.
+
+---
+
+## 5. Tasks — k čemu jsou
+
+`backend/task-runner.ts` — **supervizovaný task runner.** Rozdíl proti "quick terminálu":
+
+- **Quick terminal** = low-friction, otevřu shell a píšu. Zůstává.
+- **Task** = strukturovaný workflow pro práci agenta/člověka s historií a výsledkem.
+
+Co task dělá: rozjede pracovní workspace s **worker/judge terminály**, spouští **checks**, volitelně používá **git worktrees** pro izolaci. Provideři přes `DECKTERM_TASK_PROVIDERS` (`codex,claude`), max kol `DECKTERM_TASK_MAX_ROUNDS` (5). Task má registrovaný `projectRoot`, který od C2 prochází stejným file-access gate jako všechno ostatní.
+
+Záměr (z foundation rozhodnutí #18): **hybrid** — terminál pro rychlou práci, task pro strukturovanou agentní práci s auditovatelným outcome. Terminálové session můžou být buď připojené k tasku, nebo standalone.
+
+> Pozn.: v C2 byla parkována změna defaultního providera `codex → claude` — je to _mimo_ bezpečnostní řez a čeká na samostatné rozhodnutí (model-research doporučuje držet codex jako delegátora). Default zatím zůstává `codex`.
+
+**Co NENÍ:** native agent adaptéry (Claude/Codex/OpenCode/Hermes jako first-class) jsou zatím jen command-template profily. Plný redesign task/run/event-logu je odložený.
+
+---
+
+## 6. Nasazení na nový server — co jde z GitHubu a co ručně
+
+Návod: `docs/install-dedicated-server.md`. Stručná pravda na otázku _"dotáhl by to někdo nový jen z GitHubu včetně CF?"_:
+
+### Co jde "z GitHubu" (aplikace samotná)
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+sudo apt-get install -y git tmux curl
+git clone https://github.com/ussi69-dotcom/deckterm.git /home/deploy/deckterm
+cd /home/deploy/deckterm
+bun install --frozen-lockfile
+cp .env.example .env   # a vyplnit
+# systemd user service (šablona je v install docu) → enable --now
+```
+
+Aplikace samotná se rozjede z gitu bez problému. Bootstrap gate tě donutí vytvořit prvního admina (token nebo CF env-admin).
+
+### Co ručně (Cloudflare a okolí)
+
+**Tohle z GitHubu samo nepřijede** — vyžaduje to konfiguraci v Cloudflare Zero Trust dashboardu:
+
+1. Vytvořit self-hosted **Access application** pro `https://deckterm.example.com`.
+2. Přidat email/domain/group policy.
+3. Zkopírovat **application audience tag** do `CF_ACCESS_AUD`, team name do `CF_ACCESS_TEAM_NAME`.
+4. Vytvořit **Cloudflare Tunnel** a nasměrovat hostname na `http://127.0.0.1:4174`.
+5. `cloudflared` nainstalovat a spustit jako službu (config šablona: `deploy/cloudflared/config.example.yml`).
+
+To je inherentně manuální/dashboard krok — nedá se commitnout do repa (jsou to účty, tokeny, DNS).
+
+### Publish módy (`DECKTERM_PUBLISH_MODE`)
+
+- `cloudflare-tunnel` — tunel; enforcement na CF edge, server-side JWT validace **vypnutá**.
+- `cloudflare-access` — tunel + DeckTerm si **sám validuje** Cf-Access JWT (potřebuje `CF_ACCESS_TEAM_NAME` + `CF_ACCESS_AUD`).
+- `nginx` / `local` / `direct` — jiné tvary nasazení.
+
+### Závěr
+
+**Aplikace ano, Cloudflare ne plně automaticky.** Z GitHubu rozjedeš server jednou sérií příkazů, ale Cloudflare Zero Trust (Access policy + Tunnel) je vždy ruční dashboard setup. Neexistuje (a ani nemůže existovat) jeden skript, co ti nakonfiguruje cizí CF účet.
+
+---
+
+## 7. Autoconfig — co existuje a co je v plánu
+
+### Co UŽ existuje: Setup Doctor / Setup Wizard
+
+`backend/onboarding-doctor.ts` je nejblíž "autoconfigu", co dnes máme. Není to plně automatický bootstrap, ale **asistovaná konfigurace**:
+
+- **Health checks** — ověří state-dir + práva, DB writability, bootstrap-token práva, přítomnost binárek (`cloudflared`/`nginx`/`tmux`), bind adresu, CF Access nastavení, trusted origins.
+- **Profilově orientovaná doporučení** — vybereš publish profil (`cloudflare-tunnel`, `cloudflare-access`, `nginx`, `local`, `direct`) a doctor vygeneruje:
+  - `.env` updaty,
+  - **systemd snippet**, **cloudflared snippet**, **nginx snippet**, **firewall snippet**,
+  - manuální kroky, co musíš dodělat (např. CF dashboard).
+- **Remediace** — `applyOnboardingRemediation()` (C2) umí aplikovat fix (např. zapsat `.env` updaty) a znovu spustit doctor. Endpointy:
+  - `GET /api/onboarding/doctor?profile=cloudflare-tunnel`
+  - `POST /api/onboarding/apply`
+  - `POST /api/onboarding/remediate`
+- Dostupné i z prohlížeče: **More → Setup → Run Doctor**, plus CLI `bash scripts/doctor.sh .env`.
+
+Takže: **doctor ti vygeneruje konfiguráky a ukáže, co dodělat ručně. Negeneruje Cloudflare účet ani sám nespustí systemd.**
+
+### Co je v plánu (a co ne)
+
+Z foundation rozhodnutí (#27 config hierarchy): `defaults < config file < env vars < CLI flags + config doctor`, plus "effective config printing s redakcí" — částečně se rozvíjí přes doctor. Plný "one-command bootstrap" pro nový server **není explicitně naplánovaný**; směr je spíš dotahovat setup wizard (víc remediací, víc profilů), ne psát black-box installer.
+
+---
+
+## 8. CI/CD a prostředí
+
+Detail: `docs/operations-guide.md`.
+
+### Prostředí
+
+|        | Dev                         | Prod                                                      |
+| ------ | --------------------------- | --------------------------------------------------------- |
+| Cesta  | `/home/deploy/deckterm_dev` | release symlink `/home/deploy/apps/deckterm/prod/current` |
+| Branch | `dev`                       | `main`                                                    |
+| Port   | **4174**                    | **4173**                                                  |
+| Služba | `deckterm-dev.service`      | `deckterm.service`                                        |
+
+**Všechny testy běží proti 4174, nikdy proti prod 4173.** Prod už neběží z live checkoutu — `main` se deployuje přes GitHub Actions.
+
+### Git flow
+
+`feature/*` → `dev` (validace na 4174) → `main` (produkce, atomický rollout).
+
+### Workflows
+
+- **`ci.yml`** — joby `unit` + `smoke-e2e` na push/PR.
+- **`deploy-main.yml`** — verify-and-package (testy + smoke E2E + tarball) → deploy přes SSH (gated `ENABLE_PROD_DEPLOY=1`): release dir, symlink env, install, candidate na `PROD_CANDIDATE_PORT`, health check, repoint `current`, restart služby, verify, **rollback na `previous` při selhání**.
+- **`promote-dev-to-main.yml`** — vytvoří/aktualizuje promotion PR `dev → main`.
+
+Po "push to main" vždy ověř, že workflow **Deploy Main** prošel, než prohlásíš prod za aktualizovaný. Prod ručně nedeployovat, pokud to není explicitně vyžádané.
+
+### Testy
+
+- `bun run test:unit` — kanonický correctness gate. Nový `*.test.ts/js` **musí** být přidán do `test:unit` v `package.json`, jinak ho CI přeskočí.
+- `tsc --noEmit` na čistém HEAD **padá** (pre-existing errors) — neslouží jako gate, testy ano.
+- E2E: `bun run test:e2e:smoke` / `test:e2e` / `test:all`.
+
+---
+
+## 9. Roadmapa / co dál (backlog)
+
+Explicitně **odloženo** (z foundation rozhodnutí — nestaví se teď):
+
+- Permission editor UI (správa grantů z UI)
+- Secrets manager (později: 1Password/Vault/Doppler/SOPS adaptéry)
+- Native agent adaptéry (zatím command-template profily)
+- Plný task/run/event-log redesign
+- Artifacts auto-collection
+- **Docker/kontejnerová izolace** uživatelských profilů (cílový stav pro tvrdou multi-tenant izolaci)
+- Transcript policy UI (modes `none`/`commands`/`full`)
+- Postgres/S3 storage (dnes SQLite + filesystem)
+- Stabilní veřejné REST API garance
+
+Nejbližší logické pokračování po C2: dotáhnout multisession backlog (sekce 4.5), případně začít permission editor UI nebo kontejnerizaci podle priority.
+
+---
+
+## 10. Mapa klíčových souborů a dokumentů
+
+**Kód:**
+
+- `backend/server.ts` — ~3.5k řádků, celý HTTP/WS povrch. Seamy: `createWebApp()`, `startWebServer()`, `reconcileSessionsOnStartup()`.
+- `backend/services/foundation-state.ts` — DB, migrace, granty, sessions, audit.
+- `backend/services/foundation-authorization.ts` — autorizační rozhodnutí, route registry.
+- `backend/services/foundation-actors.ts` — Cloudflare Access → aktér.
+- `backend/services/{raw,tmux}-terminal-backend.ts` — `TerminalBackend` impl.
+- `backend/task-runner.ts` — supervizovaný task runner.
+- `backend/onboarding-doctor.ts` — setup wizard / autoconfig asistent.
+- `backend/telemetry.ts` — agent badge klasifikace.
+- `web/app.js` — ~280k řádků frontendu (TileManager, TerminalManager, ReconnectingWebSocket, SessionRegistry).
+
+**Dokumenty:**
+
+- `docs/plans/2026-05-12-deckterm-foundation-decisions.md` — **kořenová rozhodnutí** (C0/C1/C2 split, grant model, 35 decision-log bodů).
+- `docs/plans/2026-05-13-c1a-multiuser-foundation.md` — C1a plán.
+- `docs/plans/2026-05-24-multisession-design.md` — **kompletní multisession návrh** (C1b).
+- `docs/plans/2026-05-29-c2-file-git-task-gates.md` — C2 plán.
+- `docs/install-dedicated-server.md` — instalace na nový server.
+- `docs/operations-guide.md` — prostředí, CI/CD, deploy/rollback, security model.
+- `docs/product-guide.md` — produktový pohled.
+- `docs/plans/2026-05-12-comparable-projects-research.md` — srovnání s konkurencí.
+  </content>
+  </invoke>

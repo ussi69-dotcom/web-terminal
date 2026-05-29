@@ -1,75 +1,65 @@
-# CLAUDE.md - DeckTerm Development
+# CLAUDE.md
 
-## Environment
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-| Property        | Value                                           |
-| --------------- | ----------------------------------------------- |
-| **Environment** | Development                                     |
-| **Port**        | 4174                                            |
-| **URL**         | https://deckterm-dev.learnai.cz (if configured) |
-| **Folder**      | `/home/deploy/deckterm_dev`                     |
-| **Systemd**     | `systemctl --user status deckterm-dev.service`  |
+## What DeckTerm Is
 
-## Related Environments
+Browser-based terminal workspace for long-running remote dev sessions: persistent tmux-backed shells, a floating/tiling window manager, mobile-first controls, a file explorer + git panel scoped to allowed roots, agent-aware status badges, and a supervised task runner. It is a powerful host-shell/filesystem tool, so most recent work is **security foundation** (below), not new terminal features.
 
-| Env             | Port | Folder                      | Purpose               |
-| --------------- | ---- | --------------------------- | --------------------- |
-| **Production**  | 4173 | `/home/deploy/deckterm`     | Stable, user-facing   |
-| **Development** | 4174 | `/home/deploy/deckterm_dev` | Testing, new features |
+**Stack:** Bun runtime (needs `Bun.Terminal` PTY API) · Hono (routing/CORS) + native Bun WebSocket backend · vanilla JS + xterm.js frontend · `bun:sqlite` for foundation state · tmux for session persistence. Only runtime deps: `hono`, `@hono/cloudflare-access`.
 
-## Critical Rules
+## Environment & Critical Rules
 
-1. **ALL tests MUST run against port 4174** - never 4173 (production)
-2. **ALL development happens here** - not in production folder
-3. **Playwright baseURL must be `http://localhost:4174`**
-4. **Backend default port is 4174** (set in `backend/index.ts`)
+- **Dev** (all work happens here): `/home/deploy/deckterm_dev`, branch `dev`, port **4174**, service `deckterm-dev.service` (user systemd).
+- **Prod:** port 4173, release symlink under `/home/deploy/apps/deckterm/prod/current`, service `deckterm.service`.
+- **ALL tests run against 4174, never 4173.** Playwright `baseURL` / `PW_BASE_URL` = `http://localhost:4174`. Backend default port is 4174 (`backend/index.ts`).
+- Prod no longer runs from a live checkout — `main` deploys via GitHub Actions (`.github/workflows/deploy-main.yml`). After "push to main", verify the `Deploy Main` workflow succeeded before claiming prod is updated. Don't manually deploy prod unless explicitly asked.
+
+```bash
+systemctl --user restart deckterm-dev.service   # restart · journalctl --user -u deckterm-dev.service -f for logs
+curl http://localhost:4174/api/health
+```
 
 ## Commands
 
 ```bash
-# Check status
-systemctl --user status deckterm-dev.service
-
-# Restart
-systemctl --user restart deckterm-dev.service
-
-# View logs
-journalctl --user -u deckterm-dev.service -f
-
-# Health check
-curl http://localhost:4174/api/health
-
-# Run tests (must be against 4174!)
-cd tests && npx playwright test
+bun install
+bun run dev                                          # DECKTERM_RUNTIME_ENV=development, serves on 4174
+bun run test:unit                                    # Bun test runner — the canonical correctness gate
+bun test ./backend/foundation-c1.test.ts -t "name"   # single file / single test
+bun run test:e2e:smoke                               # Playwright; bun run test:e2e for full suite, test:all for both
+cd tests && PW_BASE_URL=http://localhost:4174 npx playwright test some.spec.ts
 ```
 
-## Test Configuration
+- `tsc --noEmit` currently **fails on clean HEAD** (pre-existing errors) — do not rely on it; tests are the gate.
+- `test:unit` lists every unit-test file explicitly. New `*.test.ts`/`*.test.js` must be added to that script in `package.json` or CI skips it.
 
-**IMPORTANT:** All test files must use port 4174:
+## Architecture
 
-```typescript
-// tests/playwright.config.ts
-baseURL: "http://localhost:4174"; // NEVER 4173!
+**Backend (`backend/`)**
 
-// In spec files
-const APP_URL = "http://localhost:4174"; // NEVER 4173!
-```
+- `index.ts` — thin entry, calls `startWebServer(host, port)`.
+- `server.ts` — **~3.5k lines, the entire HTTP/WS surface.** Seams: `createWebApp()` (Hono routes), `startWebServer()` (`Bun.serve` + WS handlers), `reconcileSessionsOnStartup()`. All terminal/file/git/task/onboarding routes live here.
+- `task-runner.ts` — supervised Codex/Claude task workspaces (worker/judge terminals, checks, optional git worktrees).
+- `telemetry.ts` — agent output-phase classification, tmux state, shell-integration parsing, worktree detection (powers agent badges).
+- `onboarding-doctor.ts` — Setup wizard: profiles, health checks, `applyOnboardingRemediation()`.
+- Helpers with co-located `*.test.ts`: `cloudflare-access-guards.ts`, `terminal-capabilities.ts`, `tmux-*.ts`.
 
-## Planning Files
+**Terminal backend abstraction (`backend/services/`)** — `TerminalBackend` interface with two impls: `raw-terminal-backend.ts` (direct `Bun.Terminal` PTY) and `tmux-terminal-backend.ts` (persistence that survives reconnects/restarts; enabled via `TMUX_BACKEND=1`, default in deployed envs).
 
-- `.planning/PROJECT.md` - Project vision and goals
-- `.planning/ROADMAP.md` - Implementation phases
-- `.planning/STATE.md` - Current progress (update after each session)
+**Foundation security layer (dominant recent work).** Commits labeled **C0 / C1 / C1b / C2** are security "foundation" slices (rationale: `docs/plans/2026-05-12-deckterm-foundation-decisions.md`). Principle: strengthen the working product with small mergeable security slices, don't rewrite.
 
-## Workflow
+- `services/foundation-state.ts` — `bun:sqlite` DB with numbered migrations, bootstrap status (env-admin or one-time token), allowed roots, scoped capability grants (`terminal.create/attach/write/manage`, `root.use`), recorded sessions + events sequence log, audit rows.
+- `services/foundation-authorization.ts` — `authorizeTerminalSessionAccess()`, route-capability resolution, legacy-bypass logic.
+- **Auth flow:** host-access endpoints (terminal/file/git/task) resolve actor → map path/resource to an allowed root → require a capability grant, writing allow/deny audit rows. Shared `requireFileAccess()` gate in `server.ts` enforces this for file/git.
+- **Gotchas:** `foundationStatePromise` is a **module-level singleton** (one foundation state per process — API tests keep to one foundation-bearing test per file, see `task-api.test.ts`). `DECKTERM_LEGACY_NO_BOOTSTRAP=1` bypasses bootstrap but only in CI/test/dev — preserve it; it's the migration path.
 
-1. Make changes in this folder (`deckterm_dev`)
-2. Run tests: `cd tests && npx playwright test`
-3. Verify on http://localhost:4174
-4. Commit changes
-5. Deploy to production (copy to `/home/deploy/deckterm`)
+**Frontend (`web/`, no build step — served static)** — `app.js` is **~280k lines, mostly one file**: `TileManager` (floating/tiling WM), `TerminalManager` (lifecycle), `ReconnectingWebSocket` (heartbeat reconnect), `ExtraKeysManager` (mobile keys), `KEY_SEQUENCES`. Extracted modules with `*.test.js`: `action-registry`, `command-palette`, `navigation-surface`, `file-explorer`, `terminal-colors`, `terminal-sizing`, `bootstrap-routing`, `input-fallback`. **Don't modify `vendor/`** (xterm.js). WS protocol on `/ws/terminals/:id`: client `{type:"input"|"resize"|"ping"}`, server `{type:"pong"|"exit"}` + raw PTY output.
 
-## Cloudflare Tunnel
+## Config & Conventions
 
-- Subdomain: `deckterm-dev.learnai.cz` (configure in CF Zero Trust)
-- Target: `http://localhost:4174`
+- Config via `.env` (see `.env.example`); full table in `README.md`. Key: `PORT` (4174), `TMUX_BACKEND`, `ALLOWED_FILE_ROOTS` (`$HOME`), `DECKTERM_STATE_DIR` (`$HOME/.deckterm`), `MAX_TERMINALS_PER_USER` (10), `CF_ACCESS_*` / `TRUSTED_ORIGINS` (Cloudflare Access).
+- **Per-slice plan docs:** non-trivial features get a design + impl doc pair in `docs/plans/` (`YYYY-MM-DD-name-design.md` + `-name.md`); security slices ship _with tests_.
+- Use native `Bun.Terminal` (not Node PTY). Don't drop CORS, `/api/terminals` rate limits, or WS disconnect cleanup. Don't hardcode paths — use env vars / allowed roots.
+- Legacy OpenCode proxy routes still exist in `server.ts` but OpenCode is **not** an active workflow. `gateway.py` is a separate FastAPI prototype, not part of the Bun server.
+- Branch flow: `feature/*` → `dev` (validate on 4174) → `main` (production; `Deploy Main` CI packages + atomically rolls out).
