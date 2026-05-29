@@ -66,6 +66,7 @@ import {
 } from "./services/foundation-authorization";
 import {
   resolveActorFromAccessPayload,
+  isEdgeProtectedTunnelMode,
   type DeckTermActor,
 } from "./services/foundation-actors";
 
@@ -803,6 +804,25 @@ async function requireFoundationCapability({
     return { ok: true };
   }
 
+  // Edge-trusted cloudflare-tunnel mode: the Cloudflare Access edge already
+  // authenticated the human (the app binds loopback, so it is only reachable
+  // through the tunnel). Allow host-access without a per-actor grant, but audit
+  // the real identity for accountability. Root mapping still happens upstream,
+  // so this does not widen filesystem scope.
+  if (isEdgeProtectedTunnelMode(process.env)) {
+    const state = await getFoundationState();
+    writeAuditEvent(state.db, {
+      actorUserId,
+      action: capability,
+      resourceType,
+      resourceId,
+      decision: "allow",
+      reason: "edge_trusted_tunnel",
+      data,
+    });
+    return { ok: true };
+  }
+
   const state = await getFoundationState();
   if (!isBootstrapComplete(state)) {
     writeAuditEvent(state.db, {
@@ -1144,6 +1164,7 @@ async function authenticateWebSocketRequest(req: Request): Promise<{
 
   const actorResult = resolveActorFromAccessPayload({
     accessPayload,
+    tunnelUserEmail: req.headers.get("cf-access-authenticated-user-email"),
     env: process.env,
   });
   if (!actorResult.ok) {
@@ -1202,9 +1223,12 @@ class UnauthorizedRequestError extends Error {
 
 function getCurrentActor(c: {
   get: (key: string) => CloudflareAccessPayload | undefined;
+  req?: { header: (name: string) => string | undefined };
 }): DeckTermActor {
   const actorResult = resolveActorFromAccessPayload({
     accessPayload: c.get("accessPayload") || null,
+    tunnelUserEmail:
+      c.req?.header("cf-access-authenticated-user-email") ?? null,
     env: process.env,
   });
   if (!actorResult.ok) {
