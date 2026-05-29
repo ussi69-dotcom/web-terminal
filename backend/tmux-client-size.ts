@@ -79,10 +79,7 @@ async function listTmuxSessionClients(
     "-F",
     "#{client_tty}\t#{client_pid}\t#{session_name}",
   ];
-  const clientProc = Bun.spawn(
-    command,
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  const clientProc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
   const output = await new Response(clientProc.stdout).text();
   await clientProc.exited;
   return parseTmuxSessionClients(output, sessionName);

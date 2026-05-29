@@ -35,14 +35,19 @@ beforeAll(async () => {
     allowedFileRoots: [allowedRoot],
     env: {},
   });
-  const token = (await readFile(join(stateDir, "bootstrap-token"), "utf8")).trim();
+  const token = (
+    await readFile(join(stateDir, "bootstrap-token"), "utf8")
+  ).trim();
   const bootstrapped = await bootstrapFirstAdmin({
     state,
     stateDir,
     actorUserId: "anonymous",
     actorEmail: "anonymous",
     token,
-    authIdentity: { provider: "cloudflare_access", providerSubject: "anonymous" },
+    authIdentity: {
+      provider: "cloudflare_access",
+      providerSubject: "anonymous",
+    },
     env: {},
   });
   if (!bootstrapped.ok) {
@@ -62,7 +67,10 @@ afterAll(async () => {
   );
 });
 
-function queryAudit(where: string, ...params: unknown[]): Array<Record<string, unknown>> {
+function queryAudit(
+  where: string,
+  ...params: unknown[]
+): Array<Record<string, unknown>> {
   const db = new Database(join(stateDir, "deckterm.db"), { readonly: true });
   try {
     return db
@@ -104,11 +112,7 @@ test("C2-2: task create with a forbidden root is denied and writes a foundation 
 
   // taskRunner already throws for forbidden roots, but C2 routes the decision
   // through the foundation layer so it is audited consistently with file/git/terminal.
-  const rows = queryAudit(
-    "action = ? and decision = ?",
-    "task.create",
-    "deny",
-  );
+  const rows = queryAudit("action = ? and decision = ?", "task.create", "deny");
   expect(rows.length).toBeGreaterThan(0);
 });
 

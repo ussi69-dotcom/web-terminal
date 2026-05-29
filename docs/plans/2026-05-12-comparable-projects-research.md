@@ -444,7 +444,8 @@ Do not duplicate work:
    - Project display name, default root, preview ports, recommended profiles.
 
 10. **Devcontainer detection**
-   - If `.devcontainer/devcontainer.json` exists, show it and later offer container execution.
+
+- If `.devcontainer/devcontainer.json` exists, show it and later offer container execution.
 
 ## Scope-creep traps to avoid
 

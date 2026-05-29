@@ -20,7 +20,8 @@ function hasExplicitLegacyDevActorMode(env: FoundationActorEnv): boolean {
     env.DECKTERM_RUNTIME_ENV === "development" ||
     env.DECKTERM_RUNTIME_ENV === "dev" ||
     (env.DECKTERM_DEV_INSECURE_LOCAL_ADMIN === "1" &&
-      (env.DECKTERM_RUNTIME_ENV === "development" || env.DECKTERM_RUNTIME_ENV === "dev"))
+      (env.DECKTERM_RUNTIME_ENV === "development" ||
+        env.DECKTERM_RUNTIME_ENV === "dev"))
   );
 }
 

@@ -39,7 +39,8 @@ test("foundation C0 initializes minimal DB, bootstrap token, and imported roots"
     }),
   );
 
-  const tokenMode = (await stat(join(stateDir, "bootstrap-token"))).mode & 0o777;
+  const tokenMode =
+    (await stat(join(stateDir, "bootstrap-token"))).mode & 0o777;
   expect(tokenMode).toBe(0o600);
 
   const tables = state.db

@@ -458,14 +458,12 @@ async function buildDeploymentChecks({
   );
 
   // 1. State Directory Presence and Permissions Check
-  const stateDir = env.DECKTERM_STATE_DIR || join(env.HOME || "/home/deploy", ".deckterm");
+  const stateDir =
+    env.DECKTERM_STATE_DIR || join(env.HOME || "/home/deploy", ".deckterm");
   try {
     const dirStat = await stat(stateDir);
     checks.push(
-      createConfigCheck(
-        "ok",
-        `State directory exists at ${stateDir}`,
-      ),
+      createConfigCheck("ok", `State directory exists at ${stateDir}`),
     );
     const isSecureDir = (dirStat.mode & 0o077) === 0;
     checks.push(
@@ -493,10 +491,7 @@ async function buildDeploymentChecks({
   try {
     await access(dbPath, constants.W_OK);
     checks.push(
-      createConfigCheck(
-        "ok",
-        "State database file exists and is writable",
-      ),
+      createConfigCheck("ok", "State database file exists and is writable"),
     );
   } catch (err: any) {
     if (err.code === "ENOENT") {

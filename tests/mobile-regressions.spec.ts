@@ -99,7 +99,9 @@ test.describe("Mobile regressions", () => {
         )
         .toBe(root);
 
-      await page.locator("#dir-list .dir-item", { hasText: "child" }).dblclick();
+      await page
+        .locator("#dir-list .dir-item", { hasText: "child" })
+        .dblclick();
       await expect
         .poll(() =>
           page.evaluate(() => window.terminalManager.currentDirPath || ""),

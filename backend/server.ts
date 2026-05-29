@@ -312,7 +312,10 @@ function sendReconnectLifecycle(
 function appendTerminalRuntimeEvent(
   terminalId: string,
   kind: "output" | "state" | "exit" | "lifecycle",
-  payload: { data?: string | Uint8Array | null; dataJson?: Record<string, unknown> | null } = {},
+  payload: {
+    data?: string | Uint8Array | null;
+    dataJson?: Record<string, unknown> | null;
+  } = {},
 ): void {
   void getFoundationState()
     .then((state) => {
@@ -324,7 +327,9 @@ function appendTerminalRuntimeEvent(
         dataJson: payload.dataJson ?? null,
       });
     })
-    .catch((err) => debug(`[events] Failed to append ${kind} event for ${terminalId}:`, err));
+    .catch((err) =>
+      debug(`[events] Failed to append ${kind} event for ${terminalId}:`, err),
+    );
 }
 
 function broadcastTerminalState(term: Terminal) {
@@ -570,11 +575,15 @@ setInterval(cleanupClipboardImages, 15 * 60 * 1000);
 // Ensure directory exists on startup
 ensureClipboardDir();
 
-export async function reconcileSessionsOnStartup(db: Database): Promise<number> {
+export async function reconcileSessionsOnStartup(
+  db: Database,
+): Promise<number> {
   if (!TMUX_BACKEND) return 0;
   let fixed = 0;
   try {
-    const activeSessions = db.query("SELECT id FROM terminal_sessions WHERE status = 'active'").all() as { id: string }[];
+    const activeSessions = db
+      .query("SELECT id FROM terminal_sessions WHERE status = 'active'")
+      .all() as { id: string }[];
     for (const session of activeSessions) {
       const sessionName = buildTmuxSessionName({
         namespace: TMUX_SESSION_NAMESPACE,
@@ -583,11 +592,16 @@ export async function reconcileSessionsOnStartup(db: Database): Promise<number> 
       if (!(await tmuxSessionExists(sessionName))) {
         markTerminalSessionEnded(db, session.id);
         fixed++;
-        console.log(`[reconciliation] Closed zombie session ${session.id} (DB was active, but tmux session was missing)`);
+        console.log(
+          `[reconciliation] Closed zombie session ${session.id} (DB was active, but tmux session was missing)`,
+        );
       }
     }
   } catch (err) {
-    console.error("[reconciliation] Error during startup session reconciliation:", err);
+    console.error(
+      "[reconciliation] Error during startup session reconciliation:",
+      err,
+    );
   }
   return fixed;
 }
@@ -597,7 +611,8 @@ async function recoverTmuxSessions(): Promise<number> {
   if (!TMUX_BACKEND) return 0;
 
   try {
-    const sessions = (await tmuxTerminalBackend!.listSessions(TMUX_SESSION_PREFIX));
+    const sessions =
+      await tmuxTerminalBackend!.listSessions(TMUX_SESSION_PREFIX);
     if (sessions.length === 0) return 0;
 
     let recovered = 0;
@@ -781,7 +796,9 @@ async function requireFoundationCapability({
   resourceType: string;
   resourceId?: string | null;
   data?: Record<string, unknown>;
-}): Promise<{ ok: true } | { ok: false; status: 403; message: string; reason: string }> {
+}): Promise<
+  { ok: true } | { ok: false; status: 403; message: string; reason: string }
+> {
   if (isFoundationLegacyBypassEnabled()) {
     return { ok: true };
   }
@@ -849,7 +866,8 @@ function foundationGateJson(error: { message: string; reason: string }) {
   }
   return {
     error: error.message,
-    message: "The current user is missing the required DeckTerm capability grant.",
+    message:
+      "The current user is missing the required DeckTerm capability grant.",
   };
 }
 
@@ -872,7 +890,9 @@ async function requireTerminalSessionAccess({
   actorUserId: string;
   term: Terminal;
   capability: "terminal.attach" | "terminal.manage";
-}): Promise<{ ok: true } | { ok: false; status: 403; reason: string; message: string }> {
+}): Promise<
+  { ok: true } | { ok: false; status: 403; reason: string; message: string }
+> {
   if (isFoundationLegacyBypassEnabled()) {
     return term.ownerId === actorUserId
       ? { ok: true }
@@ -987,7 +1007,10 @@ function resolveFoundationRootIdForPath(
   pathValue: string,
 ): string | null {
   const matchingRoots = state.roots
-    .filter((root) => pathValue === root.path || pathValue.startsWith(`${root.path}/`))
+    .filter(
+      (root) =>
+        pathValue === root.path || pathValue.startsWith(`${root.path}/`),
+    )
     .sort((a, b) => b.path.length - a.path.length);
   return matchingRoots[0]?.id || null;
 }
@@ -1048,7 +1071,9 @@ async function requireFileAccess(
     reason: "legacy_path_resolution",
     data: { path: resolvedPath },
   });
-  debug(`[deprecation] Legacy path-only resolution for ${resolvedPath} -> root ${rootId}`);
+  debug(
+    `[deprecation] Legacy path-only resolution for ${resolvedPath} -> root ${rootId}`,
+  );
 
   return { ok: true };
 }
@@ -1190,7 +1215,11 @@ function getCurrentActor(c: {
 
 function getCurrentUser(c: {
   get: (key: string) => CloudflareAccessPayload | undefined;
-}): { ownerId: string; ownerEmail: string; ownerSource: DeckTermActor["source"] } {
+}): {
+  ownerId: string;
+  ownerEmail: string;
+  ownerSource: DeckTermActor["source"];
+} {
   const actor = getCurrentActor(c);
   return {
     ownerId: actor.id,
@@ -1207,7 +1236,9 @@ async function getFoundationStatus(c: {
   return {
     runtime: {
       environment:
-        process.env.DECKTERM_RUNTIME_ENV || process.env.NODE_ENV || "production",
+        process.env.DECKTERM_RUNTIME_ENV ||
+        process.env.NODE_ENV ||
+        "production",
       backendMode: getBackendMode(),
       port: process.env.PORT || "4174",
     },
@@ -1718,12 +1749,22 @@ async function completeTmuxReconnectReplay(
     // Attempt delta replay if lastEventId is provided
     if (ws.data.type === "terminal" && ws.data.lastEventId !== null) {
       const state = await getFoundationState();
-      const events = listTerminalEventsAfter(state.db, terminalId, ws.data.lastEventId);
+      const events = listTerminalEventsAfter(
+        state.db,
+        terminalId,
+        ws.data.lastEventId,
+      );
       if (events.length > 0) {
         for (const ev of events) {
           if (ev.kind === "output" && ev.data) {
             if (ws.data.protocol === "v2") {
-              ws.send(JSON.stringify({ type: "terminal_event", kind: "output", data: ev.data }));
+              ws.send(
+                JSON.stringify({
+                  type: "terminal_event",
+                  kind: "output",
+                  data: ev.data,
+                }),
+              );
             } else {
               ws.send(ev.data);
             }
@@ -1731,8 +1772,12 @@ async function completeTmuxReconnectReplay(
             ws.send(JSON.stringify({ type: "terminal_state", ...ev.dataJson }));
           }
         }
-        debug(`[reconnect] Delta-replayed ${events.length} events after ${ws.data.lastEventId} for ${terminalId}`);
-        sendReconnectLifecycle(ws, "replay-complete", { requiresRedraw: false });
+        debug(
+          `[reconnect] Delta-replayed ${events.length} events after ${ws.data.lastEventId} for ${terminalId}`,
+        );
+        sendReconnectLifecycle(ws, "replay-complete", {
+          requiresRedraw: false,
+        });
         return;
       }
     }
@@ -1950,7 +1995,11 @@ async function createManagedTerminal({
     rows,
     terminal,
     waitForClient: TMUX_BACKEND,
-    onExit(_proc: Subprocess, exitCode: number | null, signalCode?: number | null) {
+    onExit(
+      _proc: Subprocess,
+      exitCode: number | null,
+      signalCode?: number | null,
+    ) {
       closeAndRemoveTerminal(exitCode ?? 0, signalCode);
     },
   });
@@ -2122,9 +2171,10 @@ export function createWebApp() {
       actorUserId: ownerId,
       actorEmail: ownerEmail,
       token: typeof body.token === "string" ? body.token : null,
-      authIdentity: ownerSource === "cloudflare_access"
-        ? { provider: "cloudflare_access", providerSubject: ownerId }
-        : null,
+      authIdentity:
+        ownerSource === "cloudflare_access"
+          ? { provider: "cloudflare_access", providerSubject: ownerId }
+          : null,
       env: process.env,
     });
     if (!result.ok) {
@@ -2702,8 +2752,10 @@ export function createWebApp() {
           recordedSession.status === "active"
             ? !TMUX_BACKEND
               ? (markTerminalSessionEnded(state.db, recordedSession.id),
-                getTerminalSession(state.db, recordedSession.id) || recordedSession)
-              : getTerminalSession(state.db, recordedSession.id) || recordedSession
+                getTerminalSession(state.db, recordedSession.id) ||
+                  recordedSession)
+              : getTerminalSession(state.db, recordedSession.id) ||
+                recordedSession
             : recordedSession;
         const serialized = serializeRecordedTerminalSession(effectiveSession);
         return {
@@ -2830,7 +2882,7 @@ export function createWebApp() {
     const pathModule = await import("path");
     const fallbackPath = await getDefaultBrowseRoot();
     let path = (await resolveAllowedPath(requestedPath)) || fallbackPath;
-    
+
     const fileAccess = await requireFileAccess(c, path);
     if (!fileAccess.ok) {
       return c.json(fileAccess.body, { status: fileAccess.status as any });
@@ -3640,7 +3692,9 @@ export async function startWebServer(host: string, port: number) {
     const state = await getFoundationState();
     const reconciled = await reconcileSessionsOnStartup(state.db);
     if (reconciled > 0) {
-      console.log(`[reconciliation] Reconciled ${reconciled} zombie session(s) on startup`);
+      console.log(
+        `[reconciliation] Reconciled ${reconciled} zombie session(s) on startup`,
+      );
     }
     const recovered = await recoverTmuxSessions();
     if (recovered > 0) {
@@ -3724,7 +3778,8 @@ export async function startWebServer(host: string, port: number) {
         if (!term) {
           const recordedSession = getTerminalSession(state.db, id);
           term = recordedSession
-            ? ((await restoreRecordedTmuxSession(state, recordedSession)) ?? undefined)
+            ? ((await restoreRecordedTmuxSession(state, recordedSession)) ??
+              undefined)
             : undefined;
         }
 
@@ -3770,7 +3825,9 @@ export async function startWebServer(host: string, port: number) {
         const requestedMode = url.searchParams.get("mode")?.trim();
         const isV2 = url.searchParams.get("protocol")?.trim() === "v2";
         const lastEventIdStr = url.searchParams.get("lastEventId")?.trim();
-        const lastEventId = lastEventIdStr ? parseInt(lastEventIdStr, 10) : null;
+        const lastEventId = lastEventIdStr
+          ? parseInt(lastEventIdStr, 10)
+          : null;
 
         let mode: "read" | "write" = "read";
         if (requestedMode === "write") {
@@ -3904,17 +3961,23 @@ export async function startWebServer(host: string, port: number) {
               try {
                 const parsed = JSON.parse(message);
                 if (parsed.type !== "ping" && parsed.type !== "resume-ready") {
-                  debug(`[ws-security] Blocked message type "${parsed.type}" for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+                  debug(
+                    `[ws-security] Blocked message type "${parsed.type}" for read-only actor ${data.actorUserId} on terminal ${terminalId}`,
+                  );
                   return;
                 }
               } catch {
                 // Raw input message
-                debug(`[ws-security] Blocked raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+                debug(
+                  `[ws-security] Blocked raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`,
+                );
                 return;
               }
             } else {
               // Binary / raw buffer input message
-              debug(`[ws-security] Blocked binary/raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`);
+              debug(
+                `[ws-security] Blocked binary/raw input message for read-only actor ${data.actorUserId} on terminal ${terminalId}`,
+              );
               return;
             }
           }

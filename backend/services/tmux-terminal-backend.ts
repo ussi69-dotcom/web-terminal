@@ -180,7 +180,9 @@ export class TmuxTerminalBackend implements TerminalBackend {
     const killProc = await this.spawnTmux(["kill-session", "-t", sessionName]);
     const exitCode = await killProc.exited;
     if (exitCode !== 0) {
-      throw new Error(`tmux kill-session returned ${exitCode} for ${sessionName}`);
+      throw new Error(
+        `tmux kill-session returned ${exitCode} for ${sessionName}`,
+      );
     }
   }
 

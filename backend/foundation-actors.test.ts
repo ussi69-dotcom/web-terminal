@@ -42,16 +42,21 @@ test("resolveActorFromAccessPayload allows anonymous actor only for explicit dev
     { NODE_ENV: "test" },
     { BUN_ENV: "test" },
     { CI: "true" },
-    { DECKTERM_DEV_INSECURE_LOCAL_ADMIN: "1", DECKTERM_RUNTIME_ENV: "development" },
+    {
+      DECKTERM_DEV_INSECURE_LOCAL_ADMIN: "1",
+      DECKTERM_RUNTIME_ENV: "development",
+    },
   ]) {
-    expect(resolveActorFromAccessPayload({ accessPayload: null, env })).toEqual({
-      ok: true,
-      actor: {
-        id: "anonymous",
-        email: "anonymous",
-        source: "legacy_dev",
+    expect(resolveActorFromAccessPayload({ accessPayload: null, env })).toEqual(
+      {
+        ok: true,
+        actor: {
+          id: "anonymous",
+          email: "anonymous",
+          source: "legacy_dev",
+        },
       },
-    });
+    );
   }
 });
 

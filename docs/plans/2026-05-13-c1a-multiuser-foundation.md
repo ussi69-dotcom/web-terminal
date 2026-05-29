@@ -134,7 +134,7 @@ canUseCapability(db, {
   capability: "terminal.attach",
   resourceType: "terminal",
   resourceId: "term_123",
-})
+});
 ```
 
 Expected behavior:
@@ -197,9 +197,9 @@ Then assert row exists in `terminal_sessions`.
 Add small functions:
 
 ```ts
-recordTerminalSession(db, session)
-markTerminalSessionEnded(db, id)
-getTerminalSession(db, id)
+recordTerminalSession(db, session);
+markTerminalSessionEnded(db, id);
+getTerminalSession(db, id);
 ```
 
 Do not build a broad repository abstraction yet.
@@ -253,7 +253,7 @@ If WebSocket integration is too heavy, first write a service-level test for `can
 **Step 2: Implement attach helper**
 
 ```ts
-authorizeTerminalAttach(db, { actorUserId, terminalId })
+authorizeTerminalAttach(db, { actorUserId, terminalId });
 ```
 
 Rules:

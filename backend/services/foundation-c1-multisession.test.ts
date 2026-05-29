@@ -1,13 +1,22 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { initializeFoundationState, recordTerminalSession, getTerminalSession, appendTerminalEvent, listTerminalEventsAfter } from "./foundation-state";
+import {
+  initializeFoundationState,
+  recordTerminalSession,
+  getTerminalSession,
+  appendTerminalEvent,
+  listTerminalEventsAfter,
+} from "./foundation-state";
 import { authorizeTerminalWrite } from "./foundation-authorization";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 async function createTempDir(prefix: string): Promise<string> {
-  const path = join(tmpdir(), `${prefix}${Math.random().toString(36).slice(2)}`);
+  const path = join(
+    tmpdir(),
+    `${prefix}${Math.random().toString(36).slice(2)}`,
+  );
   await mkdir(path, { recursive: true });
   return path;
 }
@@ -48,29 +57,33 @@ test("foundation C1b: authorizeTerminalWrite", async () => {
   expect(guestDecision.reason).toBe("missing_capability");
 
   // 3. Admin user or user with grant can write
-  state.db.query(
-    `INSERT INTO users (id, email, display_name, role, created_at, updated_at)
-     VALUES (?, ?, ?, 'user', ?, ?)`
-  ).run(
-    "user_guest",
-    "guest@example.com",
-    "Guest User",
-    new Date().toISOString(),
-    new Date().toISOString()
-  );
+  state.db
+    .query(
+      `INSERT INTO users (id, email, display_name, role, created_at, updated_at)
+     VALUES (?, ?, ?, 'user', ?, ?)`,
+    )
+    .run(
+      "user_guest",
+      "guest@example.com",
+      "Guest User",
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
 
-  state.db.query(
-    `INSERT INTO scoped_grants (id, user_id, capability, resource_type, resource_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    "grant-abc",
-    "user_guest",
-    "terminal.write",
-    "terminal",
-    termId,
-    new Date().toISOString(),
-    new Date().toISOString()
-  );
+  state.db
+    .query(
+      `INSERT INTO scoped_grants (id, user_id, capability, resource_type, resource_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "grant-abc",
+      "user_guest",
+      "terminal.write",
+      "terminal",
+      termId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
 
   const grantedDecision = authorizeTerminalWrite(state.db, {
     actorUserId: "user_guest",

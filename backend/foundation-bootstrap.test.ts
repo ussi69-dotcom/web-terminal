@@ -121,16 +121,21 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
 
   const server = await startWebServer("127.0.0.1", 0);
   servers.push(server);
-  const wsRes = await fetch(new URL("/ws/terminals/fake-terminal", server.url), {
-    headers: {
-      connection: "Upgrade",
-      upgrade: "websocket",
+  const wsRes = await fetch(
+    new URL("/ws/terminals/fake-terminal", server.url),
+    {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+      },
     },
-  });
+  );
   expect(wsRes.status).toBe(403);
   await expect(wsRes.text()).resolves.toContain("DeckTerm bootstrap required");
 
-  const token = (await readFile(join(stateDir, "bootstrap-token"), "utf8")).trim();
+  const token = (
+    await readFile(join(stateDir, "bootstrap-token"), "utf8")
+  ).trim();
   const bootstrapRes = await app.fetch(
     new Request("http://deckterm.test/api/bootstrap", {
       method: "POST",
@@ -188,12 +193,15 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
     .query("UPDATE terminal_sessions SET actor_user_id = ? WHERE id = ?")
     .run("user_other", created.id);
 
-  const deniedAttachRes = await fetch(new URL(`/ws/terminals/${created.id}`, server.url), {
-    headers: {
-      connection: "Upgrade",
-      upgrade: "websocket",
+  const deniedAttachRes = await fetch(
+    new URL(`/ws/terminals/${created.id}`, server.url),
+    {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+      },
     },
-  });
+  );
   expect(deniedAttachRes.status).toBe(403);
   await expect(deniedAttachRes.text()).resolves.toContain("Forbidden");
 
@@ -211,7 +219,9 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
       new Date().toISOString(),
       new Date().toISOString(),
     );
-  const socket = await openWebSocket(new URL(`/ws/terminals/${created.id}`, server.url));
+  const socket = await openWebSocket(
+    new URL(`/ws/terminals/${created.id}`, server.url),
+  );
   expect(socket.readyState).toBe(WebSocket.OPEN);
   socket.close();
 

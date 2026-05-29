@@ -49,7 +49,8 @@ export class RawTerminalBackend implements TerminalBackend {
     options: TerminalBackendAttachOptions,
   ): Promise<TerminalBackendAttachResult> {
     const home = this.baseEnv.HOME || "/home/deploy";
-    const shellCommand = options.shellCommand || (await this.shellCommandResolver());
+    const shellCommand =
+      options.shellCommand || (await this.shellCommandResolver());
     const proc = Bun.spawn(shellCommand, {
       cwd: options.cwd,
       env: {
@@ -73,7 +74,11 @@ export class RawTerminalBackend implements TerminalBackend {
     return "";
   }
 
-  async resize(_sessionName: string, _cols: number, _rows: number): Promise<void> {
+  async resize(
+    _sessionName: string,
+    _cols: number,
+    _rows: number,
+  ): Promise<void> {
     // Raw Bun.Terminal sessions are resized by the server's terminal handle.
   }
 

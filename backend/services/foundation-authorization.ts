@@ -37,7 +37,10 @@ export function authorizeTerminalSessionAccess(
   },
 ):
   | { allow: true; reason: "owner" | "granted" }
-  | { allow: false; reason: "missing_capability" | "terminal_session_not_found" } {
+  | {
+      allow: false;
+      reason: "missing_capability" | "terminal_session_not_found";
+    } {
   const session = getTerminalSession(db, request.terminalId);
   if (!session) {
     return { allow: false, reason: "terminal_session_not_found" };
@@ -94,23 +97,40 @@ export function getRouteCapability(
     return { capability: "terminal.create", resourceType: "terminal" };
   }
 
-  const terminalApiMatch = normalizedPath.match(/^\/api\/terminals\/([^/]+)(?:\/([^/]+))?$/);
+  const terminalApiMatch = normalizedPath.match(
+    /^\/api\/terminals\/([^/]+)(?:\/([^/]+))?$/,
+  );
   if (terminalApiMatch) {
     const resourceId = terminalApiMatch[1]?.trim();
     const action = terminalApiMatch[2]?.trim();
     if (!resourceId) return null;
     if (normalizedMethod === "DELETE" && !action) {
-      return { capability: "terminal.manage", resourceType: "terminal", resourceId };
+      return {
+        capability: "terminal.manage",
+        resourceType: "terminal",
+        resourceId,
+      };
     }
     if (normalizedMethod === "POST" && action === "resize") {
-      return { capability: "terminal.manage", resourceType: "terminal", resourceId };
+      return {
+        capability: "terminal.manage",
+        resourceType: "terminal",
+        resourceId,
+      };
     }
   }
 
-  if (normalizedMethod === "GET" && normalizedPath.startsWith("/ws/terminals/")) {
+  if (
+    normalizedMethod === "GET" &&
+    normalizedPath.startsWith("/ws/terminals/")
+  ) {
     const resourceId = normalizedPath.split("/").pop()?.trim();
     if (!resourceId) return null;
-    return { capability: "terminal.attach", resourceType: "terminal", resourceId };
+    return {
+      capability: "terminal.attach",
+      resourceType: "terminal",
+      resourceId,
+    };
   }
 
   return null;

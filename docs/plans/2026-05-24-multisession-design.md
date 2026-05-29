@@ -93,7 +93,10 @@ Současný stav:
 ```ts
 export function buildTmuxSessionName({ namespace, ownerId, terminalId }) {
   const prefix = getTmuxSessionPrefix(namespace);
-  const safeOwnerId = sanitizeTmuxToken(ownerId, { fallback: "anonymous", maxLength: 20 });
+  const safeOwnerId = sanitizeTmuxToken(ownerId, {
+    fallback: "anonymous",
+    maxLength: 20,
+  });
   return `${prefix}_${safeOwnerId}_${String(terminalId || "").trim()}`;
 }
 
@@ -174,7 +177,9 @@ type TerminalBackendSession = {
 
 interface TerminalBackend {
   mode: TerminalBackendMode;
-  createSession(input: CreateBackendSessionInput): Promise<TerminalBackendSession>;
+  createSession(
+    input: CreateBackendSessionInput,
+  ): Promise<TerminalBackendSession>;
   attach(input: AttachBackendSessionInput): Promise<AttachedTerminalProcess>;
   capture(input: CaptureBackendSessionInput): Promise<string>;
   resize(input: ResizeBackendSessionInput): Promise<void>;
@@ -192,8 +197,11 @@ Prakticky lze začít menší třídou `TmuxTerminalBackend` + `RawBunTerminalBa
 Používat wrapper pro tmux command:
 
 ```ts
-const TMUX_SOCKET_DIR = process.env.TMUX_SOCKET_DIR || join(DECKTERM_STATE_DIR, "tmux");
-const TMUX_SOCKET_PATH = process.env.TMUX_SOCKET_PATH || join(TMUX_SOCKET_DIR, `${TMUX_SESSION_NAMESPACE}.sock`);
+const TMUX_SOCKET_DIR =
+  process.env.TMUX_SOCKET_DIR || join(DECKTERM_STATE_DIR, "tmux");
+const TMUX_SOCKET_PATH =
+  process.env.TMUX_SOCKET_PATH ||
+  join(TMUX_SOCKET_DIR, `${TMUX_SESSION_NAMESPACE}.sock`);
 
 function tmuxArgs(args: string[]) {
   return ["tmux", "-S", TMUX_SOCKET_PATH, ...args];
@@ -437,7 +445,7 @@ UUID s pomlčkami lze buď zachovat, nebo normalizovat. Důležité je, aby neob
 2. Přidat helper:
 
 ```ts
-authorizeTerminalWrite(db, { actorUserId, terminalId })
+authorizeTerminalWrite(db, { actorUserId, terminalId });
 ```
 
 Pravidla:
@@ -753,14 +761,14 @@ Pozor: podle `AGENTS.md` E2E vždy proti portu `4174`, nikdy proti produkčnímu
 
 ## 10. Rizika a mitigace
 
-| Riziko | Dopad | Mitigace |
-|---|---:|---|
-| Změna tmux names rozbije recovery starých sessions | střední | Přidat jednorázovou backward-compatible recovery větev pro legacy prefix jen v dev/admin cleanup, ne pro auth. |
-| Read-only attach s tmux `attach-session` pořád vytváří plně interaktivní attach proces | vysoký | Server musí blokovat input; dlouhodobě preferovat capture/pipe stream pro read-only místo tmux attach. |
-| Více attach clients mění velikost tmux pane | střední | Resize povolit jen write/manage clientovi; read-only klient lokálně fituje bez server resize. |
-| Event log příliš roste | střední | Retention limity, tmux capture jako snapshot, kompakce starších output eventů. |
-| OS-level multiuser očekávání | vysoký bezpečnostní/product risk | Výrazný warning v docs/onboarding/admin statusu. |
-| C1a je stále uncommitted | střední | Nezačínat velký C1b refactor bez odděleného C1a checkpointu. |
+| Riziko                                                                                 |                            Dopad | Mitigace                                                                                                       |
+| -------------------------------------------------------------------------------------- | -------------------------------: | -------------------------------------------------------------------------------------------------------------- |
+| Změna tmux names rozbije recovery starých sessions                                     |                          střední | Přidat jednorázovou backward-compatible recovery větev pro legacy prefix jen v dev/admin cleanup, ne pro auth. |
+| Read-only attach s tmux `attach-session` pořád vytváří plně interaktivní attach proces |                           vysoký | Server musí blokovat input; dlouhodobě preferovat capture/pipe stream pro read-only místo tmux attach.         |
+| Více attach clients mění velikost tmux pane                                            |                          střední | Resize povolit jen write/manage clientovi; read-only klient lokálně fituje bez server resize.                  |
+| Event log příliš roste                                                                 |                          střední | Retention limity, tmux capture jako snapshot, kompakce starších output eventů.                                 |
+| OS-level multiuser očekávání                                                           | vysoký bezpečnostní/product risk | Výrazný warning v docs/onboarding/admin statusu.                                                               |
+| C1a je stále uncommitted                                                               |                          střední | Nezačínat velký C1b refactor bez odděleného C1a checkpointu.                                                   |
 
 ---
 
@@ -769,14 +777,13 @@ Pozor: podle `AGENTS.md` E2E vždy proti portu `4174`, nikdy proti produkčnímu
 Všechna klíčová rozhodnutí byla prodiskutována a schválena:
 
 1. **Read-only vs. Interaktivní Linked View (Otázka #1):**
-   * **Rozhodnutí:** Ano, pro non-owner uživatele s přístupem pouze `terminal.attach` bude zobrazení automaticky read-only. Zápis (`terminal.write`) musí být explicitně udělen.
+   - **Rozhodnutí:** Ano, pro non-owner uživatele s přístupem pouze `terminal.attach` bude zobrazení automaticky read-only. Zápis (`terminal.write`) musí být explicitně udělen.
 
 2. **Izolace a Take Control (Otázka #2):**
-   * **Rozhodnutí:** Každý uživatel/aktér má mít vlastní dedikované sezení dle své Cloudflare OTP identity. Do budoucna se navíc plánuje plná kontejnerizace jednotlivých uživatelských profilů. Více souběžných zapisovatelů do jedné session od různých uživatelů není výchozí stav; pro stejného přihlášeného uživatele (např. více otevřených oken) platí standardní sdílení nebo znovupřipojení.
+   - **Rozhodnutí:** Každý uživatel/aktér má mít vlastní dedikované sezení dle své Cloudflare OTP identity. Do budoucna se navíc plánuje plná kontejnerizace jednotlivých uživatelských profilů. Více souběžných zapisovatelů do jedné session od různých uživatelů není výchozí stav; pro stejného přihlášeného uživatele (např. více otevřených oken) platí standardní sdílení nebo znovupřipojení.
 
 3. **Životnost osiřelých sessions (Otázka #3):**
-   * **Rozhodnutí:** Osiřelá (orphaned/detached) tmux sezení se budou **automaticky zabíjet po 8 hodinách neaktivity**, aby se nekumulovala na serveru a šetřila se paměť a výkon.
+   - **Rozhodnutí:** Osiřelá (orphaned/detached) tmux sezení se budou **automaticky zabíjet po 8 hodinách neaktivity**, aby se nekumulovala na serveru a šetřila se paměť a výkon.
 
 4. **Persistence oken po reloadu (Otázka #4):**
-   * **Rozhodnutí:** Zachová se stávající plně funkční chování na frontendu – po reloadu se automaticky obnovují a otevírají sezení, která běžela předtím. Backend toto podpoří stabilní perzistencí v DB a plynulým znovupřipojením (reconnect).
-
+   - **Rozhodnutí:** Zachová se stávající plně funkční chování na frontendu – po reloadu se automaticky obnovují a otevírají sezení, která běžela předtím. Backend toto podpoří stabilní perzistencí v DB a plynulým znovupřipojením (reconnect).

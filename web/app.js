@@ -4655,15 +4655,23 @@ class TerminalManager {
   setupSessionsPanel() {
     const panel = this.getSessionsPanel();
     if (!panel) return;
-    panel.querySelector(".task-panel-backdrop")?.addEventListener("click", () => this.closeSessionsPanel());
-    panel.querySelector("#sessions-panel-close")?.addEventListener("click", () => this.closeSessionsPanel());
-    panel.querySelector("#sessions-refresh-btn")?.addEventListener("click", () => this.refreshSessionsPanel());
-    panel.querySelector("#sessions-list")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-session-id]");
-      if (!button) return;
-      const sessionId = button.dataset.sessionId;
-      if (sessionId) this.switchTo(sessionId);
-    });
+    panel
+      .querySelector(".task-panel-backdrop")
+      ?.addEventListener("click", () => this.closeSessionsPanel());
+    panel
+      .querySelector("#sessions-panel-close")
+      ?.addEventListener("click", () => this.closeSessionsPanel());
+    panel
+      .querySelector("#sessions-refresh-btn")
+      ?.addEventListener("click", () => this.refreshSessionsPanel());
+    panel
+      .querySelector("#sessions-list")
+      ?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-session-id]");
+        if (!button) return;
+        const sessionId = button.dataset.sessionId;
+        if (sessionId) this.switchTo(sessionId);
+      });
   }
 
   openSessionsPanel() {
@@ -4691,24 +4699,30 @@ class TerminalManager {
     if (!list) return;
     list.innerHTML = "<div class='task-item'>Loading sessions…</div>";
     try {
-      const res = await fetch("/api/terminals", { headers: { "x-deckterm-client-id": this.clientInstanceId } });
+      const res = await fetch("/api/terminals", {
+        headers: { "x-deckterm-client-id": this.clientInstanceId },
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const sessions = await res.json();
       if (!sessions.length) {
         list.innerHTML = "<div class='task-item'>No sessions yet.</div>";
         return;
       }
-      list.innerHTML = sessions.map((s) => {
-        const isActive = this.terminals.has(s.id);
-        const status = s.sessionStatus || s.status || "unknown";
-        const mode = s.mode || "write";
-        const cwd = this.escapeHtml ? this.escapeHtml(s.cwd || "") : (s.cwd || "");
-        return `<button class="task-item" type="button" data-session-id="${s.id}" style="width: 100%; text-align: left;">
+      list.innerHTML = sessions
+        .map((s) => {
+          const isActive = this.terminals.has(s.id);
+          const status = s.sessionStatus || s.status || "unknown";
+          const mode = s.mode || "write";
+          const cwd = this.escapeHtml
+            ? this.escapeHtml(s.cwd || "")
+            : s.cwd || "";
+          return `<button class="task-item" type="button" data-session-id="${s.id}" style="width: 100%; text-align: left;">
           <strong>${isActive ? "●" : "○"} ${s.id.slice(0, 8)}</strong>
           <div>${cwd}</div>
           <small>${status} · ${mode}${s.sessionName ? " · tmux" : ""}</small>
         </button>`;
-      }).join("");
+        })
+        .join("");
     } catch (err) {
       list.innerHTML = `<div class='task-item'>Failed to load sessions: ${err.message}</div>`;
     }
@@ -7446,7 +7460,8 @@ class TerminalManager {
       const serverTerminals = await res.json();
       const reconnectableTerminals = serverTerminals.filter(
         (terminal) =>
-          terminal?.sessionStatus !== "ended" && terminal?.status !== "inactive",
+          terminal?.sessionStatus !== "ended" &&
+          terminal?.status !== "inactive",
       );
 
       if (reconnectableTerminals.length > 0) {

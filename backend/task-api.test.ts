@@ -40,14 +40,19 @@ test("task API creates a supervised task and runs checks for the anonymous owner
     allowedFileRoots: [allowedRoot],
     env: {},
   });
-  const token = (await readFile(join(stateDir, "bootstrap-token"), "utf8")).trim();
+  const token = (
+    await readFile(join(stateDir, "bootstrap-token"), "utf8")
+  ).trim();
   const bootstrapped = await bootstrapFirstAdmin({
     state,
     stateDir,
     actorUserId: "anonymous",
     actorEmail: "anonymous",
     token,
-    authIdentity: { provider: "cloudflare_access", providerSubject: "anonymous" },
+    authIdentity: {
+      provider: "cloudflare_access",
+      providerSubject: "anonymous",
+    },
     env: {},
   });
   if (!bootstrapped.ok) {

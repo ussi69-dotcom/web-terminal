@@ -64,7 +64,9 @@ test.describe("Onboarding setup surface", () => {
 
     const panel = page.locator("#setup-panel");
     await expect(panel).toBeVisible();
-    await panel.getByLabel("Publishing profile").selectOption("cloudflare-access");
+    await panel
+      .getByLabel("Publishing profile")
+      .selectOption("cloudflare-access");
     await panel.getByRole("button", { name: "Check" }).click();
 
     await expect(panel.locator(".setup-current")).toContainText(

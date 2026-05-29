@@ -59,7 +59,9 @@ test("foundation C1 bootstraps admin identity and seeds terminal/root grants", a
     env: {},
     now: new Date("2026-05-12T21:00:00Z"),
   });
-  const token = (await readFile(join(stateDir, "bootstrap-token"), "utf8")).trim();
+  const token = (
+    await readFile(join(stateDir, "bootstrap-token"), "utf8")
+  ).trim();
 
   const result = await bootstrapFirstAdmin({
     state,
@@ -85,9 +87,17 @@ test("foundation C1 bootstraps admin identity and seeds terminal/root grants", a
     user_id: string;
     email: string;
   };
-  expect(identity).toEqual({ user_id: "user_admin", email: "admin@example.com" });
+  expect(identity).toEqual({
+    user_id: "user_admin",
+    email: "admin@example.com",
+  });
 
-  for (const capability of ["terminal.create", "terminal.attach", "terminal.manage", "root.use"] as const) {
+  for (const capability of [
+    "terminal.create",
+    "terminal.attach",
+    "terminal.manage",
+    "root.use",
+  ] as const) {
     expect(
       hasScopedGrant(state.db, {
         userId: "user_admin",
@@ -143,7 +153,11 @@ test("foundation C1 records and ends terminal session metadata", async () => {
     lastEventId: 0,
   });
 
-  markTerminalSessionEnded(state.db, "term_abc", new Date("2026-05-13T10:05:00Z"));
+  markTerminalSessionEnded(
+    state.db,
+    "term_abc",
+    new Date("2026-05-13T10:05:00Z"),
+  );
   expect(getTerminalSession(state.db, "term_abc")).toMatchObject({
     id: "term_abc",
     status: "ended",

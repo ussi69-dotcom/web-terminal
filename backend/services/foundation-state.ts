@@ -1,5 +1,13 @@
 import { Database } from "bun:sqlite";
-import { chmod, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 export type FoundationEnv = Record<string, string | undefined>;
@@ -86,7 +94,11 @@ function isoDate(now: Date): string {
   return now.toISOString();
 }
 
-function tableColumnExists(db: Database, tableName: string, columnName: string): boolean {
+function tableColumnExists(
+  db: Database,
+  tableName: string,
+  columnName: string,
+): boolean {
   const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{
     name: string;
   }>;
@@ -238,7 +250,10 @@ async function normalizeAllowedRoot(
   env: FoundationEnv,
 ): Promise<Omit<FoundationRoot, "id">> {
   const absolute = resolve(inputPath);
-  if (isFilesystemRoot(absolute) && env.DECKTERM_ALLOW_ROOT_FILESYSTEM !== "1") {
+  if (
+    isFilesystemRoot(absolute) &&
+    env.DECKTERM_ALLOW_ROOT_FILESYSTEM !== "1"
+  ) {
     throw new Error(
       "Refusing to import / as an allowed project root without DECKTERM_ALLOW_ROOT_FILESYSTEM=1",
     );
@@ -273,7 +288,9 @@ async function importProjectRoots({
   env: FoundationEnv;
   now: Date;
 }): Promise<FoundationRoot[]> {
-  const uniqueRoots = [...new Set(allowedFileRoots.map((root) => root.trim()).filter(Boolean))];
+  const uniqueRoots = [
+    ...new Set(allowedFileRoots.map((root) => root.trim()).filter(Boolean)),
+  ];
   const roots: FoundationRoot[] = [];
   const timestamp = isoDate(now);
 
@@ -444,19 +461,17 @@ export function getTerminalSession(
        FROM terminal_sessions
        WHERE id = ?`,
     )
-    .get(id) as
-    | {
-        id: string;
-        actor_user_id: string | null;
-        root_id: string | null;
-        cwd: string;
-        status: "active" | "ended";
-        created_at: string;
-        updated_at: string;
-        ended_at: string | null;
-        last_event_id: number;
-      }
-    | null;
+    .get(id) as {
+    id: string;
+    actor_user_id: string | null;
+    root_id: string | null;
+    cwd: string;
+    status: "active" | "ended";
+    created_at: string;
+    updated_at: string;
+    ended_at: string | null;
+    last_event_id: number;
+  } | null;
 
   if (!row) return null;
   return {
@@ -754,10 +769,15 @@ export async function bootstrapFirstAdmin({
   if (state.bootstrap.mode === "env_admin") {
     const expectedEmail = state.bootstrap.expectedEmail;
     if (!expectedEmail || actorEmail !== expectedEmail) {
-      return { ok: false, status: 403, error: "Bootstrap admin identity mismatch" };
+      return {
+        ok: false,
+        status: 403,
+        error: "Bootstrap admin identity mismatch",
+      };
     }
   } else {
-    const tokenPath = state.bootstrap.tokenPath || join(stateDir, "bootstrap-token");
+    const tokenPath =
+      state.bootstrap.tokenPath || join(stateDir, "bootstrap-token");
     const tokenStat = await stat(tokenPath).catch(() => null);
     if (!tokenStat) {
       return { ok: false, status: 410, error: "Bootstrap token not found" };
@@ -802,7 +822,9 @@ export async function bootstrapFirstAdmin({
         `SELECT id FROM auth_identities
          WHERE provider = ? AND provider_subject = ?`,
       )
-      .get(authIdentity.provider, authIdentity.providerSubject) as { id: string } | null;
+      .get(authIdentity.provider, authIdentity.providerSubject) as {
+      id: string;
+    } | null;
     state.db
       .query(
         `INSERT INTO auth_identities
