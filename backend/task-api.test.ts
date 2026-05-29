@@ -1,6 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  bootstrapFirstAdmin,
+  initializeFoundationState,
+} from "./services/foundation-state";
 
 const tempDirs: string[] = [];
 
@@ -25,8 +29,32 @@ test("task API creates a supervised task and runs checks for the anonymous owner
   );
   await writeFile(join(projectRoot, "bun.lock"), "");
 
+  const allowedRoot = process.env.HOME || "/tmp";
   process.env.DECKTERM_STATE_DIR = stateDir;
-  process.env.ALLOWED_FILE_ROOTS = process.env.HOME || "/tmp";
+  process.env.ALLOWED_FILE_ROOTS = allowedRoot;
+
+  // C2 routes task project roots through the foundation gate, which requires a
+  // completed bootstrap. Make the anonymous test actor the first admin.
+  const state = await initializeFoundationState({
+    stateDir,
+    allowedFileRoots: [allowedRoot],
+    env: {},
+  });
+  const token = (await readFile(join(stateDir, "bootstrap-token"), "utf8")).trim();
+  const bootstrapped = await bootstrapFirstAdmin({
+    state,
+    stateDir,
+    actorUserId: "anonymous",
+    actorEmail: "anonymous",
+    token,
+    authIdentity: { provider: "cloudflare_access", providerSubject: "anonymous" },
+    env: {},
+  });
+  if (!bootstrapped.ok) {
+    throw new Error(`test bootstrap failed: ${bootstrapped.error}`);
+  }
+  state.db.close();
+
   const { createWebApp } = await import("./server");
   const app = createWebApp();
 

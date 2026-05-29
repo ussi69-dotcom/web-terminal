@@ -21,6 +21,7 @@ import { isCloudflareAudienceAllowed } from "./cloudflare-access-guards";
 import {
   applyOnboardingProfile,
   runOnboardingDoctor,
+  applyOnboardingRemediation,
 } from "./onboarding-doctor";
 import { supportsLinkedView as supportsTerminalLinkedView } from "./terminal-capabilities";
 import { RawTerminalBackend } from "./services/raw-terminal-backend";
@@ -989,6 +990,67 @@ function resolveFoundationRootIdForPath(
     .filter((root) => pathValue === root.path || pathValue.startsWith(`${root.path}/`))
     .sort((a, b) => b.path.length - a.path.length);
   return matchingRoots[0]?.id || null;
+}
+
+async function requireFileAccess(
+  c: any,
+  resolvedPath: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: any }> {
+  if (isFoundationLegacyBypassEnabled()) {
+    return { ok: true };
+  }
+
+  const { ownerId } = getCurrentUser(c);
+  const state = await getFoundationState();
+  const rootId = resolveFoundationRootIdForPath(state, resolvedPath);
+
+  if (!rootId) {
+    writeAuditEvent(state.db, {
+      actorUserId: ownerId,
+      action: "file.access",
+      resourceType: "root",
+      decision: "deny",
+      reason: "no_matching_root",
+      data: { path: resolvedPath },
+    });
+    return {
+      ok: false,
+      status: 403,
+      body: { error: "Forbidden path (no matching registered root)" },
+    };
+  }
+
+  const rootAuth = await requireFoundationCapability({
+    actorUserId: ownerId,
+    capability: "root.use",
+    resourceType: "root",
+    resourceId: rootId,
+    data: { cwd: resolvedPath },
+  });
+
+  if (!rootAuth.ok) {
+    return {
+      ok: false,
+      status: rootAuth.status,
+      body: foundationGateJson(rootAuth),
+    };
+  }
+
+  // Audit-lite telemetry for legacy path-only resolution. Every current file/git
+  // call is path-only (no rootId param yet), so this is a queryable migration
+  // signal rather than per-request console spam.
+  writeAuditEvent(state.db, {
+    actorUserId: ownerId,
+    action: "file.access",
+    resourceType: "root",
+    resourceId: rootId,
+    decision: "allow",
+    reason: "legacy_path_resolution",
+    data: { path: resolvedPath },
+  });
+  debug(`[deprecation] Legacy path-only resolution for ${resolvedPath} -> root ${rootId}`);
+
+  return { ok: true };
 }
 
 async function getDefaultBrowseRoot(): Promise<string> {
@@ -2173,6 +2235,21 @@ export function createWebApp() {
     );
   });
 
+  app.post("/api/onboarding/remediate", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const remediationId = String(body.remediationId || "").trim();
+    if (!remediationId) {
+      return c.json({ error: "remediationId is required" }, 400);
+    }
+    const result = await applyOnboardingRemediation(remediationId, {
+      profile: body.profile,
+      publicOrigin: body.publicOrigin,
+      cfAccessTeamName: body.cfAccessTeamName,
+      cfAccessAud: body.cfAccessAud,
+    });
+    return c.json(result);
+  });
+
   // OpenCode health check
   app.get("/api/apps/opencode/health", async (c) => {
     try {
@@ -2280,6 +2357,31 @@ export function createWebApp() {
   app.post("/api/tasks", async (c) => {
     const { ownerId } = getCurrentUser(c);
     const body = await c.req.json().catch(() => ({}));
+
+    // C2: route the task's project root through the same actor/root/grant
+    // resolution as terminal/file/git so it is gated and audited consistently
+    // (taskRunner only does a path-allowlist check, without bootstrap/grant).
+    const requestedRoot = String(body.projectRoot || "").trim();
+    if (requestedRoot) {
+      const resolvedRoot = await resolveAllowedPath(requestedRoot);
+      if (!resolvedRoot) {
+        const state = await getFoundationState();
+        writeAuditEvent(state.db, {
+          actorUserId: ownerId,
+          action: "task.create",
+          resourceType: "root",
+          decision: "deny",
+          reason: "forbidden_root",
+          data: { projectRoot: requestedRoot },
+        });
+        return c.json({ error: "Forbidden project root" }, 403);
+      }
+      const access = await requireFileAccess(c, resolvedRoot);
+      if (!access.ok) {
+        return c.json(access.body, { status: access.status as any });
+      }
+    }
+
     try {
       const task = await taskRunner.createTask(body, { ownerId });
       return c.json(task);
@@ -2728,6 +2830,12 @@ export function createWebApp() {
     const pathModule = await import("path");
     const fallbackPath = await getDefaultBrowseRoot();
     let path = (await resolveAllowedPath(requestedPath)) || fallbackPath;
+    
+    const fileAccess = await requireFileAccess(c, path);
+    if (!fileAccess.ok) {
+      return c.json(fileAccess.body, { status: fileAccess.status as any });
+    }
+
     let fellBack = path === fallbackPath && requestedPath !== fallbackPath;
 
     const readDirectory = async (targetPath: string) => {
@@ -2791,6 +2899,10 @@ export function createWebApp() {
     if (!filePath) {
       return c.json({ error: "Forbidden path" }, 403);
     }
+    const fileAccess = await requireFileAccess(c, filePath);
+    if (!fileAccess.ok) {
+      return c.json(fileAccess.body, { status: fileAccess.status as any });
+    }
 
     const fs = await import("fs/promises");
 
@@ -2824,6 +2936,10 @@ export function createWebApp() {
     const targetPath = await resolveAllowedPath(requestedPath);
     if (!targetPath) {
       return c.json({ error: "Forbidden path" }, 403);
+    }
+    const fileAccess = await requireFileAccess(c, targetPath);
+    if (!fileAccess.ok) {
+      return c.json(fileAccess.body, { status: fileAccess.status as any });
     }
 
     const fs = await import("fs/promises");
@@ -2874,6 +2990,10 @@ export function createWebApp() {
     if (!dirPath) {
       return c.json({ error: "Forbidden path" }, 403);
     }
+    const fileAccess = await requireFileAccess(c, dirPath);
+    if (!fileAccess.ok) {
+      return c.json(fileAccess.body, { status: fileAccess.status as any });
+    }
 
     const fs = await import("fs/promises");
 
@@ -2898,6 +3018,10 @@ export function createWebApp() {
     const filePath = await resolveAllowedPath(requestedPath);
     if (!filePath) {
       return c.json({ error: "Forbidden path" }, 403);
+    }
+    const fileAccess = await requireFileAccess(c, filePath);
+    if (!fileAccess.ok) {
+      return c.json(fileAccess.body, { status: fileAccess.status as any });
     }
 
     // Security: don't allow deleting filesystem roots
@@ -2934,6 +3058,14 @@ export function createWebApp() {
     if (!from || !to) {
       return c.json({ error: "Forbidden path" }, 403);
     }
+    const fromAccess = await requireFileAccess(c, from);
+    if (!fromAccess.ok) {
+      return c.json(fromAccess.body, { status: fromAccess.status as any });
+    }
+    const toAccess = await requireFileAccess(c, to);
+    if (!toAccess.ok) {
+      return c.json(toAccess.body, { status: toAccess.status as any });
+    }
 
     const fs = await import("fs/promises");
 
@@ -2949,14 +3081,17 @@ export function createWebApp() {
   // GIT API - Secure git operations with realpath validation
   // =============================================================================
 
-  async function validateGitCwd(cwd: string): Promise<boolean> {
-    return (await resolveAllowedPath(cwd)) !== null;
+  async function validateGitCwd(c: any, cwd: string): Promise<boolean> {
+    const resolved = await resolveAllowedPath(cwd);
+    if (!resolved) return false;
+    const fileAccess = await requireFileAccess(c, resolved);
+    return fileAccess.ok;
   }
 
   // GET /api/git/status?cwd=/path/to/repo
   app.get("/api/git/status", async (c) => {
     const cwd = c.req.query("cwd") || process.env.HOME;
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3035,7 +3170,7 @@ export function createWebApp() {
     const path = c.req.query("path");
     const staged = c.req.query("staged");
     const commit = c.req.query("commit");
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3109,7 +3244,7 @@ export function createWebApp() {
     const body = await c.req.json().catch(() => ({}));
     const { cwd, paths } = body;
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3139,7 +3274,7 @@ export function createWebApp() {
     const body = await c.req.json().catch(() => ({}));
     const { cwd, paths } = body;
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3169,7 +3304,7 @@ export function createWebApp() {
     const body = await c.req.json().catch(() => ({}));
     const { cwd, message } = body;
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3203,7 +3338,7 @@ export function createWebApp() {
   // GET /api/git/branches?cwd=...
   app.get("/api/git/branches", async (c) => {
     const cwd = c.req.query("cwd") || process.env.HOME;
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3233,7 +3368,7 @@ export function createWebApp() {
     const cwd = c.req.query("cwd") || process.env.HOME;
     const limit = parseInt(c.req.query("limit") || "50");
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3294,7 +3429,7 @@ export function createWebApp() {
     const body = await c.req.json().catch(() => ({}));
     const { cwd, branch } = body;
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 
@@ -3337,7 +3472,7 @@ export function createWebApp() {
     const commit = c.req.query("commit");
     const path = c.req.query("path");
 
-    if (!cwd || !(await validateGitCwd(cwd))) {
+    if (!cwd || !(await validateGitCwd(c, cwd))) {
       return c.json({ error: "Forbidden path" }, 403);
     }
 

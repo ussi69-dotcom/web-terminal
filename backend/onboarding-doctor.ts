@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile, stat, chmod } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
 
 export type DoctorCheckStatus = "ok" | "warning" | "failed";
@@ -456,6 +456,80 @@ async function buildDeploymentChecks({
         : "ALLOWED_FILE_ROOTS is not configured",
     ),
   );
+
+  // 1. State Directory Presence and Permissions Check
+  const stateDir = env.DECKTERM_STATE_DIR || join(env.HOME || "/home/deploy", ".deckterm");
+  try {
+    const dirStat = await stat(stateDir);
+    checks.push(
+      createConfigCheck(
+        "ok",
+        `State directory exists at ${stateDir}`,
+      ),
+    );
+    const isSecureDir = (dirStat.mode & 0o077) === 0;
+    checks.push(
+      createConfigCheck(
+        isSecureDir ? "ok" : "warning",
+        isSecureDir
+          ? "State directory permissions are secure (0700)"
+          : `State directory permissions should be 0700 (currently ${dirStat.mode.toString(8).slice(-3)})`,
+      ),
+    );
+  } catch {
+    // First-run: the state dir is created automatically on start, so its
+    // absence is expected and must not downgrade the overall doctor status
+    // (consistent with the state-DB check below).
+    checks.push(
+      createConfigCheck(
+        "ok",
+        `State directory at ${stateDir} will be created automatically on start`,
+      ),
+    );
+  }
+
+  // 2. State DB Writable Check
+  const dbPath = join(stateDir, "deckterm.db");
+  try {
+    await access(dbPath, constants.W_OK);
+    checks.push(
+      createConfigCheck(
+        "ok",
+        "State database file exists and is writable",
+      ),
+    );
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      checks.push(
+        createConfigCheck(
+          "ok",
+          "State database will be initialized automatically on start",
+        ),
+      );
+    } else {
+      checks.push(
+        createConfigCheck(
+          "failed",
+          `State database file at ${dbPath} is not writable: ${err.message}`,
+        ),
+      );
+    }
+  }
+
+  // 3. Bootstrap Token Check
+  const tokenPath = join(stateDir, "bootstrap-token");
+  try {
+    const tokenStat = await stat(tokenPath);
+    const isSecureToken = (tokenStat.mode & 0o077) === 0;
+    checks.push(
+      createConfigCheck(
+        isSecureToken ? "ok" : "failed",
+        isSecureToken
+          ? "Bootstrap token file permissions are secure (0600)"
+          : `Bootstrap token file permissions should be 0600 (currently ${tokenStat.mode.toString(8).slice(-3)})`,
+      ),
+    );
+  } catch {}
 
   return checks;
 }
@@ -1116,5 +1190,67 @@ export async function applyOnboardingProfile(
       env,
       profile,
     }),
+  };
+}
+
+export async function applyOnboardingRemediation(
+  remediationId: string,
+  options: ApplyOnboardingOptions = {},
+): Promise<{
+  success: boolean;
+  applied: string[];
+  report?: OnboardingDoctorResult;
+}> {
+  const cwd = options.cwd || process.cwd();
+  const env = options.env || process.env;
+  const envFile = resolve(
+    cwd,
+    options.envFile || env.DECKTERM_DOCTOR_ENV || ".env",
+  );
+
+  const config = await readEnvConfig({ envFile, env });
+  const profile = normalizePublishMode(options.profile || config.publishMode);
+  const remediations = buildWizardRemediations({ config, env, profile });
+  const found = remediations.find((r) => r.id === remediationId);
+
+  if (!found) {
+    return { success: false, applied: [] };
+  }
+
+  const updates: Record<string, string> = { ...found.env };
+
+  // Handle placeholders
+  if (remediationId === "cloudflare-access") {
+    if (options.cfAccessTeamName) {
+      updates.CF_ACCESS_TEAM_NAME = String(options.cfAccessTeamName).trim();
+    }
+    if (options.cfAccessAud) {
+      updates.CF_ACCESS_AUD = String(options.cfAccessAud).trim();
+    }
+  } else if (remediationId === "trusted-origins" && options.publicOrigin) {
+    updates.TRUSTED_ORIGINS = String(options.publicOrigin).trim();
+  }
+
+  let currentContent = "";
+  try {
+    currentContent = await readFile(envFile, "utf8");
+  } catch {
+    currentContent = "";
+  }
+
+  await writeFile(envFile, upsertEnvContent(currentContent, updates));
+
+  const report = await runOnboardingDoctor({
+    ...options,
+    cwd,
+    envFile,
+    env,
+    profile,
+  });
+
+  return {
+    success: true,
+    applied: Object.keys(updates),
+    report,
   };
 }
