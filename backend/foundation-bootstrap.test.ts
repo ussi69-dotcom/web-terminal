@@ -12,6 +12,7 @@ const ISOLATED_ENV_KEYS = [
   "TMUX_BACKEND",
   "CF_ACCESS_REQUIRED",
   "DECKTERM_RUNTIME_ENV",
+  "DECKTERM_PUBLISH_MODE",
   "SHELL",
 ] as const;
 const previousEnv: Record<string, string | undefined> = {};
@@ -84,6 +85,11 @@ test("foundation C0 bootstraps first admin with one-time token and allows termin
   process.env.TMUX_BACKEND = "0";
   process.env.CF_ACCESS_REQUIRED = "0";
   process.env.DECKTERM_RUNTIME_ENV = "development";
+  // Pin non-tunnel mode so this test deterministically exercises the
+  // bootstrap-required gate. In cloudflare-tunnel mode that gate is bypassed by
+  // design (see foundation-tunnel.test.ts), and a local .env enabling tunnel
+  // mode would otherwise leak in and make this test pass in CI but fail locally.
+  delete process.env.DECKTERM_PUBLISH_MODE;
   process.env.SHELL = "/bin/bash";
 
   const { createWebApp, startWebServer } = await import("./server");
