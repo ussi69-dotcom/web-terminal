@@ -164,6 +164,8 @@ Po reloadu prohlížeče se automaticky obnovují session, které běžely před
 
 Co task dělá: rozjede pracovní workspace s **worker/judge terminály**, spouští **checks**, volitelně používá **git worktrees** pro izolaci. Provideři přes `DECKTERM_TASK_PROVIDERS` (`codex,claude`), max kol `DECKTERM_TASK_MAX_ROUNDS` (5). Task má registrovaný `projectRoot`, který od C2 prochází stejným file-access gate jako všechno ostatní.
 
+> **Status sync & worktree deps (2026-05-31).** Když worker/judge terminál skončí, task se sám posune z `worker-running`/`judge-running` na `needs-user` (`taskRunner.handleTerminalExit`, napojeno přes module-level `onTerminalExit` registry v `closeAndRemoveTerminal`) — dřív visel navždy. A `createWorktree` symlinkuje `node_modules` z repo rootu do worktree, takže dep-importující checks (`bun run test:unit`) v izolovaném worktree nepadají na `Cannot find package`.
+
 Záměr (z foundation rozhodnutí #18): **hybrid** — terminál pro rychlou práci, task pro strukturovanou agentní práci s auditovatelným outcome. Terminálové session můžou být buď připojené k tasku, nebo standalone.
 
 > Pozn.: v C2 byla parkována změna defaultního providera `codex → claude` — je to _mimo_ bezpečnostní řez a čeká na samostatné rozhodnutí (model-research doporučuje držet codex jako delegátora). Default zatím zůstává `codex`.
