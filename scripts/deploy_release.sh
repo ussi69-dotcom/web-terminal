@@ -37,9 +37,22 @@ fi
 
 export PATH="$(dirname "$bun_bin"):$PATH"
 
+# Kill a process and all of its descendants (children first). `bun run start`
+# spawns a child (`bun run backend/index.ts`) that is NOT reaped by killing the
+# parent alone - it reparents to init and keeps listening on the candidate port.
+# That leak is what accumulated stale candidates poisoning later deploys.
+kill_tree() {
+  local pid=$1
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 cleanup_candidate() {
   if [[ -n "$candidate_pid" ]] && kill -0 "$candidate_pid" 2>/dev/null; then
-    kill "$candidate_pid" 2>/dev/null || true
+    kill_tree "$candidate_pid"
     wait "$candidate_pid" 2>/dev/null || true
   fi
 }
@@ -84,6 +97,17 @@ fi
   "$bun_bin" install --frozen-lockfile
 )
 
+# Refuse to deploy if something is already listening on the candidate port.
+# A stale/orphan process there would answer the health check below and let a
+# broken build pass the gate (a 20-day-old orphan candidate once did exactly
+# this, masking repeated rollbacks behind a green deploy).
+if ss -ltnH "sport = :${candidate_port}" 2>/dev/null | grep -q .; then
+  echo "Candidate port ${candidate_port} is already in use - refusing to deploy." >&2
+  echo "A stale candidate there would falsely pass the health gate. Investigate:" >&2
+  ss -ltnp "sport = :${candidate_port}" 2>/dev/null >&2 || true
+  exit 1
+fi
+
 candidate_log=$(mktemp)
 (
   cd "$release_dir"
@@ -92,6 +116,16 @@ candidate_log=$(mktemp)
 candidate_pid=$!
 
 "$source_dir/scripts/wait_for_health.sh" "http://127.0.0.1:${candidate_port}${health_path}" 45
+
+# The health check above only proves *something* answered on the candidate port.
+# Confirm it was actually our candidate process and that it is still alive,
+# otherwise we would promote a build that never came up.
+if [[ -z "$candidate_pid" ]] || ! kill -0 "$candidate_pid" 2>/dev/null; then
+  echo "Candidate process is not running after health check - aborting deploy." >&2
+  [[ -f "$candidate_log" ]] && cat "$candidate_log" >&2 || true
+  exit 1
+fi
+
 cleanup_candidate
 candidate_pid=""
 
