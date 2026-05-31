@@ -2921,7 +2921,7 @@ class GitManager {
       const data = await res.json();
 
       if (data.error) {
-        alert(`Checkout failed: ${data.error}`);
+        alert(formatGitCheckoutError(data));
         return;
       }
 
@@ -6596,7 +6596,7 @@ class TerminalManager {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || payload.error) {
-        alert(payload.error || "Checkout failed");
+        alert(formatGitCheckoutError(payload));
         return;
       }
 

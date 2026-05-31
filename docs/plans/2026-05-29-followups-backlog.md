@@ -19,8 +19,9 @@
 
 ## Git panel
 
-4. **Surfacovat git stderr** místo holého „Checkout failed". Checkout typicky selže kvůli konfliktu (větev už checked-out v jiném worktree / dirty tree); panel by měl ukázat důvod. Backend stderr už vrací (`server.ts:3509`), jde o frontend zobrazení.
+4. ✅ **HOTOVO (2026-05-31).** **Surfacovat git stderr** místo holého „Checkout failed". Checkout typicky selže kvůli konfliktu (větev už checked-out v jiném worktree / dirty tree); panel by měl ukázat důvod. Backend stderr už vrací (`server.ts:3509`), jde o frontend zobrazení.
    - _Velikost:_ malý.
+   - _Řešení:_ nový `web/git-error.js` → `formatGitCheckoutError({error, message})` složí `error: <stderr>`; napojeno v obou checkout call-sites (`switchBranch`, `switchGitBranchFromPalette`).
 
 5. **Tlačítka working tree / staged / commit** — endpointy `/api/git/stage|unstage|commit` existují (`server.ts:3294–3389`), ale frontend napojení tabů zřejmě chybí/nefunguje. Ověřit a dopojit.
    - _Velikost:_ malý–střední.
