@@ -8,6 +8,7 @@ import {
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   classifyAgentOutputPhase,
@@ -189,6 +190,22 @@ const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
 const DECKTERM_STATE_DIR =
   process.env.DECKTERM_STATE_DIR ||
   join(process.env.HOME || "/home/deploy", ".deckterm");
+// Identifies which build is actually running, so a deploy can verify that prod
+// is serving the release it just promoted (not a rolled-back / stale process).
+// Sourced from env, then a RELEASE_ID marker written next to the app at deploy
+// time, falling back to "dev" for local checkouts.
+const DECKTERM_RELEASE = ((): string => {
+  const fromEnv = process.env.DECKTERM_RELEASE?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const marker = resolve(import.meta.dir, "../RELEASE_ID");
+    const text = readFileSync(marker, "utf8").trim();
+    if (text) return text;
+  } catch {
+    // no marker (local dev or pre-marker release) - fall through
+  }
+  return "dev";
+})();
 const DECKTERM_TASK_MAX_ROUNDS = parseInt(
   process.env.DECKTERM_TASK_MAX_ROUNDS || "5",
   10,
@@ -2179,6 +2196,7 @@ export function createWebApp() {
   app.get("/api/health", (c) => {
     return c.json({
       status: "ok",
+      release: DECKTERM_RELEASE,
       terminals: terminals.size,
       maxTerminals: MAX_TERMINALS,
       uptime: process.uptime(),

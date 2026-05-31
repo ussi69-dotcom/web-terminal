@@ -159,20 +159,32 @@ Primary script: [scripts/deploy_release.sh](/home/deploy/deckterm_dev/scripts/de
 Current deployment flow:
 
 1. copy unpacked source into a versioned release directory
-2. symlink shared env file
+2. symlink shared env file and write a `RELEASE_ID` marker into the release
 3. install dependencies inside the release
-4. start a candidate instance on `PROD_CANDIDATE_PORT`
-5. wait for candidate health
-6. repoint `current` symlink
-7. restart production systemd service
-8. verify live health on `PROD_PORT`
-9. rollback to `previous` on failure
+4. refuse to deploy if `PROD_CANDIDATE_PORT` is already in use (stale candidate)
+5. start a candidate instance on `PROD_CANDIDATE_PORT`
+6. wait for candidate health, then confirm the candidate process is still alive
+7. repoint `current` symlink
+8. restart production systemd service
+9. verify live health on `PROD_PORT`
+10. verify `/api/health` reports the release id just promoted (proof prod is
+    actually serving this build, not a rolled-back/stale one)
+11. rollback to `previous` and exit non-zero on any failure
 
 Important hardening already in place:
 
 - startup failures exit non-zero instead of leaving a fake alive process
 - SSH deploy key is written with trailing newline
 - deploy script uses an explicit Bun path for non-interactive SSH shells
+- candidates are killed as a whole process tree (`kill_tree`) so the real
+  server child does not leak onto the candidate port after each deploy
+- the candidate port is checked free before starting, and the candidate PID is
+  re-checked alive after the health probe, so "something healthy on the port"
+  can no longer be mistaken for "the new build is healthy"
+- promotion is verified end to end via the `release` field of `/api/health`;
+  a silent rollback can no longer be reported as a successful deploy
+- the remote deploy script runs under an explicit non-interactive `bash` so a
+  failing/rolled-back deploy propagates its exit code and fails the job
 
 ## Rollback
 
@@ -205,12 +217,33 @@ systemctl --user status deckterm-dev.service
 systemctl --user status deckterm.service
 ```
 
+`/api/health` returns a `release` field: the deployed release id (commit SHA) in
+production, or `"dev"` for a local checkout. To confirm prod is serving the
+expected build without trusting the CI badge:
+
+```bash
+curl -s http://127.0.0.1:4173/api/health | grep -o '"release":"[^"]*"'
+readlink /home/deploy/apps/deckterm/prod/current   # should end in the same SHA
+```
+
 ## Known Operational Notes
 
 - Production now deploys cleanly from `main` via GitHub Actions
 - `deckterm.service` is the production service name
 - browser tests target `4174`
 - stale local git checkouts can exist without affecting runtime because production runs from release directories
+- **A green `Deploy Main` run now means prod is actually serving the new build.**
+  The deploy verifies `/api/health` reports the promoted release id and fails
+  (with automatic rollback) otherwise. Before this guarantee was added, a deploy
+  could silently roll back while the job stayed green.
+- History (2026-05): prod was stuck ~17 days on an old build because `bun run
+start` leaked its server child onto the candidate port; that stale process
+  answered the candidate health probe, so every deploy "passed" the gate, then
+  failed live promotion and rolled back behind a green badge. Fixed by killing
+  the candidate process tree, gating on a free candidate port, and verifying the
+  served release id. If a deploy ever fails with "Candidate port ... already in
+  use", a candidate leaked — `kill` the PID on `PROD_CANDIDATE_PORT` (it is not
+  the live server, which is on `PROD_PORT`).
 
 ## Recommended Team Workflow
 

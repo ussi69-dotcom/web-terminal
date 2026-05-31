@@ -92,6 +92,10 @@ if [[ -f "$shared_env" ]]; then
   ln -sfn "$shared_env" "$release_dir/.env"
 fi
 
+# Marker the running server reads back via /api/health so the deploy can prove
+# prod is actually serving this release (see post-promote verification below).
+printf '%s\n' "$release_id" > "$release_dir/RELEASE_ID"
+
 (
   cd "$release_dir"
   "$bun_bin" install --frozen-lockfile
@@ -151,6 +155,18 @@ if ! "$source_dir/scripts/wait_for_health.sh" "http://127.0.0.1:${target_port}${
   rollback_live
   exit 1
 fi
+
+# A healthy response is not enough - confirm prod is serving *this* release and
+# not a build that silently rolled back or never restarted. /api/health echoes
+# the RELEASE_ID marker written above.
+live_release=$(curl -fsS "http://127.0.0.1:${target_port}${health_path}" 2>/dev/null \
+  | grep -o '"release":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+if [[ "$live_release" != "$release_id" ]]; then
+  echo "Promotion verification failed: prod reports release '${live_release:-<none>}', expected '${release_id}' - rolling back." >&2
+  rollback_live
+  exit 1
+fi
+echo "Verified: prod is serving release ${release_id}."
 
 mapfile -t old_releases < <(find "$releases_dir" -mindepth 1 -maxdepth 1 -type d | sort)
 if (( ${#old_releases[@]} > keep_releases )); then
