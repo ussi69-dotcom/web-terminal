@@ -8,6 +8,7 @@ import {
   type CloudflareAccessPayload,
 } from "@hono/cloudflare-access";
 import { mkdir, readdir, unlink, stat, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   classifyAgentOutputPhase,
@@ -66,6 +67,7 @@ import {
 } from "./services/foundation-authorization";
 import {
   resolveActorFromAccessPayload,
+  isEdgeProtectedTunnelMode,
   type DeckTermActor,
 } from "./services/foundation-actors";
 
@@ -188,6 +190,22 @@ const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD || "";
 const DECKTERM_STATE_DIR =
   process.env.DECKTERM_STATE_DIR ||
   join(process.env.HOME || "/home/deploy", ".deckterm");
+// Identifies which build is actually running, so a deploy can verify that prod
+// is serving the release it just promoted (not a rolled-back / stale process).
+// Sourced from env, then a RELEASE_ID marker written next to the app at deploy
+// time, falling back to "dev" for local checkouts.
+const DECKTERM_RELEASE = ((): string => {
+  const fromEnv = process.env.DECKTERM_RELEASE?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const marker = resolve(import.meta.dir, "../RELEASE_ID");
+    const text = readFileSync(marker, "utf8").trim();
+    if (text) return text;
+  } catch {
+    // no marker (local dev or pre-marker release) - fall through
+  }
+  return "dev";
+})();
 const DECKTERM_TASK_MAX_ROUNDS = parseInt(
   process.env.DECKTERM_TASK_MAX_ROUNDS || "5",
   10,
@@ -803,6 +821,25 @@ async function requireFoundationCapability({
     return { ok: true };
   }
 
+  // Edge-trusted cloudflare-tunnel mode: the Cloudflare Access edge already
+  // authenticated the human (the app binds loopback, so it is only reachable
+  // through the tunnel). Allow host-access without a per-actor grant, but audit
+  // the real identity for accountability. Root mapping still happens upstream,
+  // so this does not widen filesystem scope.
+  if (isEdgeProtectedTunnelMode(process.env)) {
+    const state = await getFoundationState();
+    writeAuditEvent(state.db, {
+      actorUserId,
+      action: capability,
+      resourceType,
+      resourceId,
+      decision: "allow",
+      reason: "edge_trusted_tunnel",
+      data,
+    });
+    return { ok: true };
+  }
+
   const state = await getFoundationState();
   if (!isBootstrapComplete(state)) {
     writeAuditEvent(state.db, {
@@ -1144,6 +1181,7 @@ async function authenticateWebSocketRequest(req: Request): Promise<{
 
   const actorResult = resolveActorFromAccessPayload({
     accessPayload,
+    tunnelUserEmail: req.headers.get("cf-access-authenticated-user-email"),
     env: process.env,
   });
   if (!actorResult.ok) {
@@ -1202,9 +1240,12 @@ class UnauthorizedRequestError extends Error {
 
 function getCurrentActor(c: {
   get: (key: string) => CloudflareAccessPayload | undefined;
+  req?: { header: (name: string) => string | undefined };
 }): DeckTermActor {
   const actorResult = resolveActorFromAccessPayload({
     accessPayload: c.get("accessPayload") || null,
+    tunnelUserEmail:
+      c.req?.header("cf-access-authenticated-user-email") ?? null,
     env: process.env,
   });
   if (!actorResult.ok) {
@@ -2155,6 +2196,7 @@ export function createWebApp() {
   app.get("/api/health", (c) => {
     return c.json({
       status: "ok",
+      release: DECKTERM_RELEASE,
       terminals: terminals.size,
       maxTerminals: MAX_TERMINALS,
       uptime: process.uptime(),

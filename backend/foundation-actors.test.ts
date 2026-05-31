@@ -72,3 +72,59 @@ test("resolveActorFromAccessPayload rejects anonymous actor in production-like m
     reason: "cloudflare_access_required",
   });
 });
+
+test("resolveActorFromAccessPayload derives a per-user actor from the edge header in cloudflare-tunnel mode", () => {
+  expect(
+    resolveActorFromAccessPayload({
+      accessPayload: null,
+      tunnelUserEmail: "lukas@example.com",
+      env: {
+        DECKTERM_PUBLISH_MODE: "cloudflare-tunnel",
+        NODE_ENV: "production",
+      },
+    }),
+  ).toEqual({
+    ok: true,
+    actor: {
+      id: "lukas@example.com",
+      email: "lukas@example.com",
+      source: "cloudflare_tunnel",
+    },
+  });
+});
+
+test("resolveActorFromAccessPayload falls back to a default tunnel actor when the edge header is missing", () => {
+  expect(
+    resolveActorFromAccessPayload({
+      accessPayload: null,
+      env: {
+        DECKTERM_PUBLISH_MODE: "cloudflare-tunnel",
+        NODE_ENV: "production",
+      },
+    }),
+  ).toEqual({
+    ok: true,
+    actor: {
+      id: "tunnel",
+      email: "tunnel",
+      source: "tunnel_default",
+    },
+  });
+});
+
+test("resolveActorFromAccessPayload keeps strict 401 for cloudflare-access mode without identity", () => {
+  expect(
+    resolveActorFromAccessPayload({
+      accessPayload: null,
+      tunnelUserEmail: "spoofed@example.com",
+      env: {
+        DECKTERM_PUBLISH_MODE: "cloudflare-access",
+        NODE_ENV: "production",
+      },
+    }),
+  ).toEqual({
+    ok: false,
+    status: 401,
+    reason: "cloudflare_access_required",
+  });
+});

@@ -142,7 +142,12 @@ jobs:
           remote_archive="/tmp/${archive}"
           remote_source="${DEPLOY_ROOT}/incoming/${RELEASE_ID}"
           scp -P "$DEPLOY_PORT" "$archive" "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_archive}"
-          ssh -p "$DEPLOY_PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" <<EOF
+          # Run the remote script under an explicit non-interactive bash so that
+          # `set -e` is honored and a failing deploy_release.sh (e.g. a rollback)
+          # propagates its non-zero exit code back through ssh and fails the job.
+          # Without this the remote login shell swallowed the exit code, leaving
+          # the deploy job green even when promotion rolled back.
+          ssh -p "$DEPLOY_PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" bash <<EOF
           set -euo pipefail
           rm -rf "${remote_source}"
           mkdir -p "${remote_source}"

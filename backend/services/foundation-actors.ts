@@ -3,7 +3,11 @@ import type { CloudflareAccessPayload } from "@hono/cloudflare-access";
 export type DeckTermActor = {
   id: string;
   email: string;
-  source: "cloudflare_access" | "legacy_dev";
+  source:
+    | "cloudflare_access"
+    | "cloudflare_tunnel"
+    | "tunnel_default"
+    | "legacy_dev";
 };
 
 export type ActorResolutionResult =
@@ -11,6 +15,15 @@ export type ActorResolutionResult =
   | { ok: false; status: 401; reason: "cloudflare_access_required" };
 
 type FoundationActorEnv = Record<string, string | undefined>;
+
+// In `cloudflare-tunnel` publish mode the Cloudflare Access edge authenticates
+// the human before the request reaches DeckTerm; the app does not verify the
+// JWT itself. Trusting the forwarded identity header is safe only because such
+// deployments bind to a loopback host, so the app is reachable solely through
+// the tunnel. The setup doctor warns if HOST is not loopback in this mode.
+export function isEdgeProtectedTunnelMode(env: FoundationActorEnv): boolean {
+  return env.DECKTERM_PUBLISH_MODE === "cloudflare-tunnel";
+}
 
 function hasExplicitLegacyDevActorMode(env: FoundationActorEnv): boolean {
   return (
@@ -27,9 +40,11 @@ function hasExplicitLegacyDevActorMode(env: FoundationActorEnv): boolean {
 
 export function resolveActorFromAccessPayload({
   accessPayload,
+  tunnelUserEmail,
   env,
 }: {
   accessPayload?: CloudflareAccessPayload | null;
+  tunnelUserEmail?: string | null;
   env: FoundationActorEnv;
 }): ActorResolutionResult {
   if (accessPayload?.sub && accessPayload.email) {
@@ -40,6 +55,23 @@ export function resolveActorFromAccessPayload({
         email: accessPayload.email,
         source: "cloudflare_access",
       },
+    };
+  }
+
+  if (isEdgeProtectedTunnelMode(env)) {
+    const email = tunnelUserEmail?.trim();
+    if (email) {
+      return {
+        ok: true,
+        actor: { id: email, email, source: "cloudflare_tunnel" },
+      };
+    }
+    console.warn(
+      "[auth] cloudflare-tunnel mode: missing Cf-Access-Authenticated-User-Email header; falling back to default tunnel actor",
+    );
+    return {
+      ok: true,
+      actor: { id: "tunnel", email: "tunnel", source: "tunnel_default" },
     };
   }
 
