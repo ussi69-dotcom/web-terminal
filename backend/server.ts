@@ -289,6 +289,27 @@ const HOP_BY_HOP_HEADERS = [
 
 // Terminal sessions (PTY processes)
 const terminals = new Map<string, Terminal>();
+
+// Listeners notified when any terminal exits. The task runner uses this to
+// advance tasks stuck on worker-running/judge-running once their agent
+// terminal ends (status otherwise only changes on explicit user actions).
+const terminalExitListeners: Array<
+  (ownerId: string, terminalId: string) => void
+> = [];
+function onTerminalExit(
+  listener: (ownerId: string, terminalId: string) => void,
+) {
+  terminalExitListeners.push(listener);
+}
+function notifyTerminalExit(ownerId: string, terminalId: string) {
+  for (const listener of terminalExitListeners) {
+    try {
+      listener(ownerId, terminalId);
+    } catch (err) {
+      debug("Terminal exit listener failed:", err);
+    }
+  }
+}
 const terminalSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
 type TerminalReconnectState = {
   pendingReady: boolean;
@@ -2006,6 +2027,7 @@ async function createManagedTerminal({
     getFoundationState()
       .then((state) => markTerminalSessionEnded(state.db, id))
       .catch((err) => debug("Failed to mark terminal session ended:", err));
+    notifyTerminalExit(ownerId, id);
     removeTerminalState(id);
     terminal.close();
   };
@@ -2142,6 +2164,13 @@ export function createWebApp() {
     resolveAllowedPath,
     maxRounds: DECKTERM_TASK_MAX_ROUNDS,
     allowedProviders: DECKTERM_TASK_PROVIDERS,
+  });
+
+  // Advance worker/judge tasks when their agent terminal exits.
+  onTerminalExit((ownerId, terminalId) => {
+    taskRunner
+      .handleTerminalExit(ownerId, terminalId)
+      .catch((err) => debug("Task terminal-exit sync failed:", err));
   });
 
   app.onError((err, c) => {

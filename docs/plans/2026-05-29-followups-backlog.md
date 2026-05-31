@@ -4,13 +4,15 @@
 
 ## Task runner (nejvyšší hodnota — uživatel ho aktivně zkoušel a nefunguje end-to-end)
 
-1. **Worker → status sync.** Status `worker-running` se nikdy sám neposune — mění se jen explicitními akcemi (`task-runner.ts:647/675/695`), není listener na exit worker terminálu/agenta. Po ukončení session task visí na `worker-running`.
+1. ✅ **HOTOVO (2026-05-31).** **Worker → status sync.** Status `worker-running` se nikdy sám neposune — mění se jen explicitními akcemi (`task-runner.ts:647/675/695`), není listener na exit worker terminálu/agenta. Po ukončení session task visí na `worker-running`.
    - _Fix:_ detekovat ukončení workeru (exit terminálu / tmux session gone přes telemetrii) a posunout status (→ `checks-running` nebo `needs-user`).
    - _Velikost:_ střední.
+   - _Řešení:_ `taskRunner.handleTerminalExit(ownerId, terminalId)` posune `worker-running`/`judge-running` task na `needs-user` + zaloguje `worker-exited`/`judge-exited`; napojeno přes module-level `onTerminalExit` registry volaný v `closeAndRemoveTerminal` (raw i tmux backend).
 
-2. **Worktree nemá `node_modules`.** `Run checks` v git worktree (`~/.deckterm/worktrees/...`) padá `Cannot find package 'hono'` — git worktree nekopíruje `node_modules`, takže jakýkoli dep-importující check (`test:unit`) selže. Vidět jako 11 fail testů, není to regrese kódu.
+2. ✅ **HOTOVO (2026-05-31).** **Worktree nemá `node_modules`.** `Run checks` v git worktree (`~/.deckterm/worktrees/...`) padá `Cannot find package 'hono'` — git worktree nekopíruje `node_modules`, takže jakýkoli dep-importující check (`test:unit`) selže. Vidět jako 11 fail testů, není to regrese kódu.
    - _Fix:_ při vytvoření worktree spustit `bun install` nebo nasymlinkovat `node_modules` z project rootu.
    - _Velikost:_ malý–střední.
+   - _Řešení:_ `createWorktree` symlinkuje `node_modules` z repo rootu do worktree (`ln -s`), pokud repo má nainstalované závislosti — instantní a sdílené, bez per-task `bun install`.
 
 3. **Model / reasoning picker + kanban (à la Hermes).** Možnost vybrat model a reasoning level (ideálně auto) per task; větší kus → vlastní kanban board nad tasky.
    - _Velikost:_ velký (samostatný projekt, chce brainstorming).
