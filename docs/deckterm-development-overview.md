@@ -1,6 +1,6 @@
 # DeckTerm — přehled vývoje a stav projektu
 
-> **Datum:** 2026-05-29
+> **Datum:** 2026-06-01
 > **Účel:** Jeden dokument, ze kterého pochopíš, kde DeckTerm je, jak vznikal, jak se nasazuje na nový server, co je autoconfig, jak je navržen multisession a k čemu slouží tasky.
 > **Pro koho:** pro tebe (orientace po delší době) i pro někoho nového, kdo by projekt přebíral.
 
@@ -57,7 +57,11 @@ b1c8324  feat(tmux): opaque session names            ← C1b-01
 38b082c  feat: terminal.write mode + events log      ← C1b-05 & C1b-06
 bb256e0  feat(ui): sessions drawer + mode indicators ← C1b-07
 a908737  feat(cleanup): zombie reconciliation + reapers + OS isolation warnings ← C1b-08
-ac208cd  feat(security): file/git/task gates + doctor hardening ← C2  (HEAD)
+ac208cd  feat(security): file/git/task gates + doctor hardening ← C2
+bbab0b4  docs: rewrite CLAUDE.md + development overview         ← docs
+e92a5db  feat(security): edge-trusted cloudflare-tunnel actor   ← post-C2 security fix
+e96557d  fix(deploy): stop candidate leak + harden health gate  ← deploy hardening
+3dbf7b8  feat(deploy): release SHA verification in /api/health  ← deploy hardening  (HEAD)
 ```
 
 ---
@@ -109,6 +113,16 @@ Sdílený `requireFileAccess()` gate v `server.ts` rozšiřuje stejnou actor/roo
 ### 3.5 OS-level disclaimer (důležité!)
 
 Multiuser permissions izolují přístup **na aplikační úrovni**. Všechny terminály a tmux session ale běží pod **stejným Unix uživatelem** (`deploy`). DeckTerm tedy **neposkytuje OS-level izolaci** procesů/souborů/secrets mezi uživateli. Pro tvrdou multi-tenant izolaci jsou potřeba kontejnery/VM/samostatní Unix uživatelé — to je plánováno (viz sekce 5), ale není hotové. Tenhle disclaimer je v `docs/operations-guide.md` a v onboarding/admin statusu.
+
+### 3.6 Edge-trusted Cloudflare Tunnel actor resolution (post-C2)
+
+Commit `e92a5db`. Opravuje 401 lockout po povýšení C1a→C2 v `cloudflare-tunnel` módu.
+
+**Jak to funguje:** `resolveActorFromAccessPayload` má novou `tunnel` větev — odvodí per-user aktéra z `Cf-Access-Authenticated-User-Email`, nebo při absenci headeru vrátí stabilní `"tunnel"` aktér (nikdy 401). `requireFoundationCapability` v tunnel módu povolí přístup bez per-actor grantu, ale zapíše audit row `edge_trusted_tunnel` s reálnou identitou. Root mapping probíhá upstream — filesystem scope se nerozšiřuje.
+
+**Proč je to bezpečné:** tunnel nasazení vždy svazuje loopback (doctor odmítne non-loopback HOST v proxy/tunnel módu), takže aplikace je dostupná výhradně přes tunel a header nelze podvrhnout. `authorizeTerminalSessionAccess` zůstalo beze změny — owner-match zajišťuje per-user izolaci pro attach/write.
+
+Přísné `cloudflare`/`cloudflare-access` módy zachovávají původní 401 chování. Design: `docs/plans/2026-05-29-cloudflare-tunnel-actor-design.md`.
 
 ---
 
@@ -265,6 +279,12 @@ Detail: `docs/operations-guide.md`.
 - **`promote-dev-to-main.yml`** — vytvoří/aktualizuje promotion PR `dev → main`.
 
 Po "push to main" vždy ověř, že workflow **Deploy Main** prošel, než prohlásíš prod za aktualizovaný. Prod ručně nedeployovat, pokud to není explicitně vyžádané.
+
+**Deploy hardening (commity `e96557d` + `3dbf7b8`, červen 2026):**
+- `cleanup_candidate` zabíjí celý process tree (ne jen shell) — zabrání candidate leak, kde stale bun grandchild-proces přežíval a odpovídal na health check místo nového buildu.
+- Pre-flight odmítne deploy při obsazeném candidate portu; PID assert po health checku ověří, že odpovídá náš kandidát.
+- `/api/health` hlásí pole `release` (commit SHA; `"dev"` pro lokální checkout); deploy script po promote ověří shodu — mismatch = rollback + non-zero exit.
+- Záruka: **zelený badge `Deploy Main` = prod skutečně běží nový build.** Dříve mohl job svítit zeleně při tichém rollbacku.
 
 ### Testy
 
