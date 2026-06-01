@@ -3443,13 +3443,19 @@ export function createWebApp() {
       });
 
       const timeoutId = setTimeout(() => proc.kill(), 10000);
-      const output = await new Response(proc.stdout).text();
-      const code = await proc.exited;
+      const [output, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
       clearTimeout(timeoutId);
 
       if (code !== 0) {
-        const stderr = await new Response(proc.stderr).text();
-        return c.json({ error: "Commit failed", message: stderr }, 400);
+        // git reports the common failure ("nothing to commit") on stdout, not
+        // stderr — fall back to stdout so the panel shows a real reason instead
+        // of an empty "Commit failed:" line.
+        const reason = stderr.trim() || output.trim() || "git commit failed";
+        return c.json({ error: "Commit failed", message: reason }, 400);
       }
 
       return c.json({ ok: true, output });

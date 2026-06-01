@@ -2676,6 +2676,7 @@ class GitManager {
         <div class="git-commit-area">
           <textarea id="git-message" placeholder="Commit message..." rows="2"></textarea>
           <button id="git-commit-btn" class="btn btn-primary">Commit</button>
+          <span id="git-commit-status" class="git-commit-status"></span>
         </div>
         <div class="git-shortcuts">
           <span><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
@@ -3356,22 +3357,50 @@ class GitManager {
   async commit() {
     const message = this.panel.querySelector("#git-message").value.trim();
     if (!message) {
-      alert("Commit message required");
+      this.showCommitStatus("Commit message required", "error");
       return;
     }
 
-    const res = await fetch("/api/git/commit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: this.currentCwd, message }),
-    });
+    const cwd = this.state.cwd || this.currentCwd;
+    try {
+      const res = await fetch("/api/git/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, message }),
+      });
 
-    const data = await res.json();
-    if (data.error) {
-      alert(data.error + ": " + data.message);
-    } else {
+      const data = await res.json();
+      if (data.error) {
+        // git puts "nothing to commit" on stdout; the backend now folds that
+        // into `message`, so surface the real reason instead of a bare error.
+        const formatGit =
+          typeof formatGitError === "function"
+            ? formatGitError
+            : (p) => (p && p.error) || "Commit failed";
+        this.showCommitStatus(formatGit(data, "Commit failed"), "error");
+        return;
+      }
+
       this.panel.querySelector("#git-message").value = "";
+      this.showCommitStatus("Committed", "success");
       await this.refresh();
+    } catch (err) {
+      console.error("Commit error:", err);
+      this.showCommitStatus("Commit failed: network error", "error");
+    }
+  }
+
+  showCommitStatus(text, kind = "info") {
+    const el = this.panel.querySelector("#git-commit-status");
+    if (!el) return;
+    el.textContent = text;
+    el.className = `git-commit-status ${kind}`;
+    clearTimeout(this._commitStatusTimer);
+    if (kind === "success") {
+      this._commitStatusTimer = setTimeout(() => {
+        el.textContent = "";
+        el.className = "git-commit-status";
+      }, 3000);
     }
   }
 

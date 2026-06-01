@@ -4648,8 +4648,24 @@ body.virtual-keyboard-open .extra-keys {
 
 .git-commit-area {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.git-commit-status {
+  flex-basis: 100%;
+  font-size: 11px;
+  min-height: 14px;
+  color: var(--text-secondary);
+}
+
+.git-commit-status.error {
+  color: var(--accent-red, #e06c75);
+}
+
+.git-commit-status.success {
+  color: var(--accent-green, #98c379);
 }
 
 .git-commit-area textarea {

@@ -23,8 +23,9 @@
    - _Velikost:_ malý.
    - _Řešení:_ nový `web/git-error.js` → `formatGitCheckoutError({error, message})` složí `error: <stderr>`; napojeno v obou checkout call-sites (`switchBranch`, `switchGitBranchFromPalette`).
 
-5. **Tlačítka working tree / staged / commit** — endpointy `/api/git/stage|unstage|commit` existují (`server.ts:3294–3389`), ale frontend napojení tabů zřejmě chybí/nefunguje. Ověřit a dopojit.
-   - _Velikost:_ malý–střední.
+5. ✅ **HOTOVO (2026-06-01).** **Tlačítka working tree / staged / commit.** Ověřeno: endpointy (`server.ts:3294–3459`) i frontend wiring (commit btn → `commit()`, per-file stage/unstage → `toggleStage()`, diff-mode taby, klávesy) byly **kompletní a funkční** — backlog tipoval „nefunguje" mylně. Reálný bug: commit bez naStageovaných změn ukázal prázdné „Commit failed:", protože git píše „nothing to commit" na **stdout**, ne stderr, a backend surfacoval jen stderr.
+   - _Velikost:_ malý.
+   - _Řešení:_ backend `/api/git/commit` při selhání fallbackuje na stdout (`reason = stderr || stdout`); `git-error.js` zobecněn na `formatGitError(payload, fallback)` (+ unit testy), `commit()` ho používá místo `alert()` a píše inline `#git-commit-status` (error/success). Paralela k surfacingu checkout stderr (9860441).
 
 6. **VSCode-like file/git panel** — plnohodnotné otevírání/editace souborů (teď file explorer jen browse + download, vytváří jen složky), bohatší git workflow. Větší product směr.
    - _Velikost:_ velký.

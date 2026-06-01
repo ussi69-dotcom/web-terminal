@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { formatGitCheckoutError } from "./git-error";
+import { formatGitError, formatGitCheckoutError } from "./git-error";
 
 test("formatGitCheckoutError surfaces the git stderr reason", () => {
   expect(
@@ -37,4 +37,25 @@ test("formatGitCheckoutError ignores whitespace-only stderr", () => {
   expect(
     formatGitCheckoutError({ error: "Checkout failed", message: "  \n  " }),
   ).toBe("Checkout failed");
+});
+
+test("formatGitError surfaces the commit reason from the message", () => {
+  expect(
+    formatGitError(
+      {
+        error: "Commit failed",
+        message: 'nothing to commit (use "git add" to track)',
+      },
+      "Commit failed",
+    ),
+  ).toBe('Commit failed: nothing to commit (use "git add" to track)');
+});
+
+test("formatGitError uses the provided fallback for an empty payload", () => {
+  expect(formatGitError({}, "Commit failed")).toBe("Commit failed");
+  expect(formatGitError(null, "Stage failed")).toBe("Stage failed");
+});
+
+test("formatGitError defaults the fallback when none is given", () => {
+  expect(formatGitError({})).toBe("Git operation failed");
 });
