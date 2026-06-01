@@ -8627,7 +8627,18 @@ class TerminalManager {
         body: JSON.stringify({ cwd, cols, rows }),
       });
 
-      if (!res.ok) throw new Error("Failed to create terminal");
+      if (!res.ok) {
+        // Surface the backend's real reason (e.g. SQLITE_BUSY-driven 500,
+        // max-terminals limit, bad cwd) instead of a generic, doubled message.
+        let reason = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          reason = body.message || body.error || reason;
+        } catch (_) {
+          /* non-JSON body — keep the status code */
+        }
+        throw new Error(reason);
+      }
 
       const terminalInfo = await res.json();
       const { id } = terminalInfo;
