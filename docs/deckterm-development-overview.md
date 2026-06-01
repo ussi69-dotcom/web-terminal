@@ -84,6 +84,8 @@ Capabilities (granty): `terminal.create`, `terminal.attach`, `terminal.write`, `
 
 **Gotcha:** `foundationStatePromise` je **module-level singleton** — jeden foundation state na proces. Proto API testy drží jeden foundation-bearing test na soubor (viz `task-api.test.ts`).
 
+**Gotcha (state dir, 2026-06-01):** `DECKTERM_STATE_DIR` je rovněž module-level const zmražený při importu `server.ts`. Runtime služby v `createWebApp()` (task runner) proto resolvují state dir **za běhu** přes `resolveStateDir()` — jinak by test, který nastaví temp dir až po importu, psal task workspace do živého `~/.deckterm/tasks` (leakly `api-task-*` do reálného UI). Prod beze změny (env je při startu stabilní). `task-api.test.ts` má guard, že task přistál pod temp dir.
+
 ### 3.2 Bootstrap gate (C0)
 
 Čerstvý/produkční start zablokuje host-terminal přístup, dokud neexistuje admin. Dvě cesty k prvnímu adminovi:
@@ -165,6 +167,8 @@ Po reloadu prohlížeče se automaticky obnovují session, které běžely před
 Co task dělá: rozjede pracovní workspace s **worker/judge terminály**, spouští **checks**, volitelně používá **git worktrees** pro izolaci. Provideři přes `DECKTERM_TASK_PROVIDERS` (`codex,claude`), max kol `DECKTERM_TASK_MAX_ROUNDS` (5). Task má registrovaný `projectRoot`, který od C2 prochází stejným file-access gate jako všechno ostatní.
 
 > **Status sync & worktree deps (2026-05-31).** Když worker/judge terminál skončí, task se sám posune z `worker-running`/`judge-running` na `needs-user` (`taskRunner.handleTerminalExit`, napojeno přes module-level `onTerminalExit` registry v `closeAndRemoveTerminal`) — dřív visel navždy. A `createWorktree` symlinkuje `node_modules` z repo rootu do worktree, takže dep-importující checks (`bun run test:unit`) v izolovaném worktree nepadají na `Cannot find package`.
+
+> **Follow-up úklid (2026-06-01).** Git panel: commit selhání teď surfacuje reálný důvod ("nothing to commit") — git ho píše na stdout, ne stderr, takže backend fallbackuje na stdout a `commit()` ho zobrazí inline (`#git-commit-status`) místo prázdného `alert()`; `git-error.js` zobecněn na `formatGitError`. Help: `?` už neotevírá help při psaní v inputu (`isEditableTarget`), `F1` funguje všude. Detaily a stav: `docs/plans/2026-05-29-followups-backlog.md` (#5/#7/#8).
 
 Záměr (z foundation rozhodnutí #18): **hybrid** — terminál pro rychlou práci, task pro strukturovanou agentní práci s auditovatelným outcome. Terminálové session můžou být buď připojené k tasku, nebo standalone.
 
