@@ -32,8 +32,9 @@
 
 ## Drobnosti
 
-7. **`?` keybinding** zapíná help i uvnitř task/textových inputů — global handler nerespektuje focus v inputu.
+7. ✅ **HOTOVO (2026-06-01).** **`?` keybinding** zapínal help i uvnitř task/textových inputů — global handler (`app.js:~7413`) nerespektoval focus.
    - _Velikost:_ malý.
+   - _Řešení:_ nový top-level helper `isEditableTarget(target)` (INPUT/TEXTAREA/SELECT/contenteditable); `?` otevře help jen mimo editovatelný focus (`F1` zůstává všude). Bonus: xterm skrytý textarea je „editable", takže `?` v terminálu jde do shellu. Ověřeno Playwrightem.
 
 8. **Test leak do živého state diru.** `task-api.test.ts` (nebo dřívější ruční API testy) nechaly reálné tasky v `~/.deckterm/tasks/anonymous/` (`api-task-*`), zobrazují se pak v UI jako „API Task — needs-judge". Izolovat testy na temp state dir + uklidit existující.
    - _Velikost:_ malý.

@@ -1020,6 +1020,16 @@ function syncInteractionModeClasses() {
   document.body.classList.toggle("touch-input-mode", platformDetector.hasTouch);
 }
 
+// True when the event target is a text-entry surface (input/textarea/select or
+// any contenteditable region). Used to stop single-character global shortcuts
+// like `?` from firing while the user is typing into a field.
+function isEditableTarget(target) {
+  if (!target || typeof target.tagName !== "string") return false;
+  const tag = target.tagName.toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable === true;
+}
+
 // =============================================================================
 // TILE MANAGER - Smart tiling window manager
 // =============================================================================
@@ -7410,7 +7420,10 @@ class TerminalManager {
         e.preventDefault();
         this.changeFontSize(-1);
       }
-      if (e.key === "F1" || e.key === "?") {
+      // `?` is a literal character in task/commit/search inputs — only treat it
+      // as the help shortcut when focus is not inside an editable field. F1 is a
+      // function key (never typed as text) so it opens help anywhere.
+      if (e.key === "F1" || (e.key === "?" && !isEditableTarget(e.target))) {
         e.preventDefault();
         this.openHelp();
       }
