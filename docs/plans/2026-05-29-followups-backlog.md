@@ -36,5 +36,6 @@
    - _Velikost:_ malý.
    - _Řešení:_ nový top-level helper `isEditableTarget(target)` (INPUT/TEXTAREA/SELECT/contenteditable); `?` otevře help jen mimo editovatelný focus (`F1` zůstává všude). Bonus: xterm skrytý textarea je „editable", takže `?` v terminálu jde do shellu. Ověřeno Playwrightem.
 
-8. **Test leak do živého state diru.** `task-api.test.ts` (nebo dřívější ruční API testy) nechaly reálné tasky v `~/.deckterm/tasks/anonymous/` (`api-task-*`), zobrazují se pak v UI jako „API Task — needs-judge". Izolovat testy na temp state dir + uklidit existující.
+8. ✅ **HOTOVO (2026-06-01).** **Test leak do živého state diru.** `~/.deckterm/tasks/anonymous/` obsahoval 5 `api-task-*` z 2. 5. (owner `anonymous` = před tunnel-actor změnou e92a5db; dnešní default actor je `tunnel`). Příčina leaku: `DECKTERM_STATE_DIR` je module-const zmražený při importu `server.ts`, takže task runner mohl psát do živého diru, když const zamrzl dřív, než test nastavil temp.
    - _Velikost:_ malý.
+   - _Řešení:_ (a) smazány stale `api-task-*` (zachován reálný `novy-task-16b6b34d`); (b) `createWebApp` resolvuje task-runner stateDir **za běhu** přes nový `resolveStateDir()` (prod beze změny — env je při startu stabilní), takže task workspace vždy následuje aktuální `DECKTERM_STATE_DIR`; (c) regresní guard v `task-api.test.ts` ověřuje, že task přistál pod temp dir (sken napříč owner segmenty). Celý `test:unit` zelený (144), 0 leaků.
