@@ -1,6 +1,11 @@
 # Sessions drawer — attach / open-here (design)
 
 > Datum: 2026-06-01 · Větev: `dev` · Souvisí: follow-ups backlog (mimo původní #1–#8, nový UX nález)
+> **Stav: ✅ implementováno (2026-06-01).** `web/session-actions.js` (+ 7 unit testů),
+> `app.js` (`createTerminal` cwd override, `refreshSessionsPanel` render, `handleSessionRowActivate`
+> dispatch + klávesová obsluha), `styles.css` `.session-row`, `index.html` script + cache bump.
+> Playwright `tests/sessions-attach.spec.ts` (focus + planner attach) zelený; živě na 4174
+> ověřeno, že klik na živou-ale-neotevřenou session reálně připojí tab (`reconnectToTerminal`).
 
 ## Problém
 

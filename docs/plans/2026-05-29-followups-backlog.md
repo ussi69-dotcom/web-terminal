@@ -39,3 +39,9 @@
 8. ✅ **HOTOVO (2026-06-01).** **Test leak do živého state diru.** `~/.deckterm/tasks/anonymous/` obsahoval 5 `api-task-*` z 2. 5. (owner `anonymous` = před tunnel-actor změnou e92a5db; dnešní default actor je `tunnel`). Příčina leaku: `DECKTERM_STATE_DIR` je module-const zmražený při importu `server.ts`, takže task runner mohl psát do živého diru, když const zamrzl dřív, než test nastavil temp.
    - _Velikost:_ malý.
    - _Řešení:_ (a) smazány stale `api-task-*` (zachován reálný `novy-task-16b6b34d`); (b) `createWebApp` resolvuje task-runner stateDir **za běhu** přes nový `resolveStateDir()` (prod beze změny — env je při startu stabilní), takže task workspace vždy následuje aktuální `DECKTERM_STATE_DIR`; (c) regresní guard v `task-api.test.ts` ověřuje, že task přistál pod temp dir (sken napříč owner segmenty). Celý `test:unit` zelený (144), 0 leaků.
+
+## UX nálezy (po #1–#8)
+
+9. ✅ **HOTOVO (2026-06-01).** **Sessions drawer nepřipojí odpojené session.** Klik na řádek volal `switchTo(id)`, který má guard `if (!this.terminals.has(id)) return` — takže pro session živou na serveru (tmux běží), ale neotevřenou v tomhle prohlížeči, klik tiše nic neudělal. Řádek navíc nevypadal jako tlačítko. Auto-reconnect i backend WS attach byly ověřeny jako funkční — drawer je manuální záchrana, když auto-reconnect vyčerpá pokusy.
+   - _Velikost:_ malý–střední. Design: `docs/plans/2026-06-01-sessions-drawer-attach-design.md`.
+   - _Řešení:_ čistá funkce `planSessionRowAction` (nový `web/session-actions.js`, 7 unit testů) rozhodne focus/attach/open-here z katalogu + lokální mapy; `refreshSessionsPanel` renderuje status badge + kontextové akční tlačítko, `handleSessionRowActivate` dispatchuje (`switchTo` / `reconnectToTerminal`→`switchTo` / `createTerminal({cwd})`), klávesová obsluha (Enter/Space) pro `role=button` řádky; `createTerminal` rozšířen o `options.cwd`. Playwright `sessions-attach.spec.ts` + živé ověření attachu na 4174. `test:unit` 151 zelený.

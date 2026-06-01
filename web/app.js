@@ -4703,14 +4703,56 @@ class TerminalManager {
     panel
       .querySelector("#sessions-refresh-btn")
       ?.addEventListener("click", () => this.refreshSessionsPanel());
-    panel
-      .querySelector("#sessions-list")
-      ?.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-session-id]");
-        if (!button) return;
-        const sessionId = button.dataset.sessionId;
-        if (sessionId) this.switchTo(sessionId);
-      });
+    const list = panel.querySelector("#sessions-list");
+    list?.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-session-id]");
+      if (!row) return;
+      void this.handleSessionRowActivate(row.dataset.sessionId);
+    });
+    // Keyboard affordance: rows are role="button", so Enter/Space activate them.
+    list?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest("[data-session-id]");
+      if (!row) return;
+      event.preventDefault();
+      void this.handleSessionRowActivate(row.dataset.sessionId);
+    });
+  }
+
+  async handleSessionRowActivate(sessionId) {
+    if (!sessionId) return;
+    const session = (this._sessionCatalog || []).find(
+      (s) => s.id === sessionId,
+    );
+    if (!session) {
+      // Catalog moved on under us — re-fetch rather than act on stale data.
+      await this.refreshSessionsPanel();
+      return;
+    }
+    const action = window.SessionActions.planSessionRowAction(session, {
+      isLocallyOpen: this.terminals.has(sessionId),
+    });
+    switch (action.kind) {
+      case "focus":
+        this.switchTo(sessionId);
+        break;
+      case "attach":
+        await this.reconnectToTerminal(
+          sessionId,
+          session.cwd,
+          this.sessionRegistry.get(sessionId),
+          {
+            backendMode: session.backendMode || null,
+            supportsLinkedView: Boolean(session.supportsLinkedView),
+          },
+        );
+        this.switchTo(sessionId);
+        break;
+      case "open-here":
+        await this.createTerminal(false, { cwd: session.cwd });
+        break;
+    }
+    this.closeSessionsPanel();
   }
 
   openSessionsPanel() {
@@ -4743,23 +4785,31 @@ class TerminalManager {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const sessions = await res.json();
+      // Keep the catalog so the click handler can resolve cwd/flags per row.
+      this._sessionCatalog = sessions;
       if (!sessions.length) {
         list.innerHTML = "<div class='task-item'>No sessions yet.</div>";
         return;
       }
+      const esc = (v) => (this.escapeHtml ? this.escapeHtml(v) : v);
       list.innerHTML = sessions
         .map((s) => {
-          const isActive = this.terminals.has(s.id);
+          const isLocallyOpen = this.terminals.has(s.id);
+          const action = window.SessionActions.planSessionRowAction(s, {
+            isLocallyOpen,
+          });
           const status = s.sessionStatus || s.status || "unknown";
           const mode = s.mode || "write";
-          const cwd = this.escapeHtml
-            ? this.escapeHtml(s.cwd || "")
-            : s.cwd || "";
-          return `<button class="task-item" type="button" data-session-id="${s.id}" style="width: 100%; text-align: left;">
-          <strong>${isActive ? "●" : "○"} ${s.id.slice(0, 8)}</strong>
-          <div>${cwd}</div>
-          <small>${status} · ${mode}${s.sessionName ? " · tmux" : ""}</small>
-        </button>`;
+          const cwd = esc(s.cwd || "");
+          const dot = action.statusClass === "active" ? "●" : "○";
+          return `<div class="session-row" role="button" tabindex="0" data-session-id="${s.id}">
+          <div class="session-row-main">
+            <strong><span class="session-badge ${action.statusClass}">${dot}</span> ${s.id.slice(0, 8)}</strong>
+            <div class="session-row-cwd">${cwd}</div>
+            <small>${esc(status)} · ${esc(mode)}${s.sessionName ? " · tmux" : ""}</small>
+          </div>
+          <button class="session-row-action" type="button" data-session-action="${s.id}">${action.label}</button>
+        </div>`;
         })
         .join("");
     } catch (err) {
@@ -8561,13 +8611,13 @@ class TerminalManager {
 
   // Create a new terminal in a new workspace (split=false) or current workspace (split=true)
   async createTerminal(split = false, options = {}) {
-    const { skipBootstrapWait = false } = options;
+    const { skipBootstrapWait = false, cwd: cwdOverride } = options;
     if (!skipBootstrapWait) {
       await this.waitForBootstrap();
     }
     await this.waitForFontMetrics();
 
-    const cwd = this.getCurrentDirectoryValue() || undefined;
+    const cwd = cwdOverride || this.getCurrentDirectoryValue() || undefined;
     const { cols, rows } = this.estimateInitialTerminalSize(split);
 
     try {
